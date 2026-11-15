@@ -231,6 +231,47 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
         case Opcode::integerAddress:
             result = builder.CreateIntToPtr(argument(0), pointer());
             break;
+        case Opcode::destroyRange: {
+            // Destroys `count` live elements of the type, in index order (decision 0025). A type that
+            // needs no destruction has nothing to do.
+            const auto id = static_cast<ir::TypeId>(instruction.integerValue);
+            if (unit(id) || !destruction->requiresDestruction(id)) break;
+            auto* base = builder.CreateIntToPtr(argument(0), pointer());
+            auto* count = argument(1);
+            auto* entryBlock = builder.GetInsertBlock();
+            auto* header = llvm::BasicBlock::Create(context(), "range.header." + temporary(), activeFunction);
+            auto* body = llvm::BasicBlock::Create(context(), "range.body." + temporary(), activeFunction);
+            auto* exit = llvm::BasicBlock::Create(context(), "range.exit." + temporary(), activeFunction);
+            builder.CreateBr(header);
+            builder.SetInsertPoint(header);
+            // Last to first, like every other destruction (spec 4.7); a count of 0 or less does nothing.
+            auto* index = builder.CreatePHI(builder.getInt64Ty(), 2, "remaining");
+            index->addIncoming(count, entryBlock);
+            builder.CreateCondBr(builder.CreateICmpSGT(index, builder.getInt64(0)), body, exit);
+            builder.SetInsertPoint(body);
+            auto* previous = builder.CreateSub(index, builder.getInt64(1), "previous");
+            builder.CreateCall(destroys.at(id), { builder.CreateGEP(llvmType(id), base, { previous }) });
+            index->addIncoming(previous, body);
+            builder.CreateBr(header);
+            builder.SetInsertPoint(exit);
+            break;
+        }
+        case Opcode::cloneAt: {
+            const auto id = static_cast<ir::TypeId>(instruction.integerValue);
+            copy(id, builder.CreateIntToPtr(argument(0), pointer()), builder.CreateIntToPtr(argument(1), pointer()));
+            break;
+        }
+        case Opcode::cloneCallback:
+        case Opcode::destroyCallback: {
+            const auto id = static_cast<ir::TypeId>(instruction.integerValue);
+            result = builder.CreatePtrToInt(helper(id, instruction.opcode == Opcode::cloneCallback),
+                                            builder.getInt64Ty());
+            break;
+        }
+        case Opcode::linearRangeGuard:
+            trap(builder.CreateICmpNE(argument(0), builder.getInt64(0), temporary()),
+                 "linear container dropped while not empty");
+            break;
         case Opcode::pointerToInteger:
             result = builder.CreatePtrToInt(argument(0), builder.getInt64Ty());
             break;

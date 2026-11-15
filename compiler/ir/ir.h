@@ -116,6 +116,16 @@ enum class Opcode {
     integerAddress,
     // Runtime-only conversion of a typed slot or function address to the scalar native ABI.
     pointerToInteger,
+    // Collection capabilities (decision 0025), all runtime-only and all for the type `integerValue`
+    // names. `destroyRange` destroys the `count` live elements at an address (operands: address, count);
+    // `cloneAt` copies the value at the second operand into the uninitialized slot at the first;
+    // `cloneCallback` and `destroyCallback` yield the address of the type's clone or destroy helper as an
+    // `Int`, or 0 when it has none; `linearRangeGuard` traps when its `count` operand is not zero.
+    destroyRange,
+    cloneAt,
+    cloneCallback,
+    destroyCallback,
+    linearRangeGuard,
 };
 
 enum class PatternKind {
@@ -233,6 +243,9 @@ struct Function {
     std::vector<Parameter> parameters;
     TypeId resultType = typing::invalidTypeId;
     bool returnsValue = false;
+    // The `array_element` addressor of a library array instance (decision 0025): the one kind of
+    // function whose result a non-runtime function may turn into an element address.
+    bool elementAddressor = false;
     bool isExternal = false;
     BlockId entry = invalidBlockId;
     std::vector<BasicBlock> blocks;
@@ -277,6 +290,12 @@ struct StructureDefinition {
     // construction sets and `take` clears with the rest of the value, so destroying moved-from
     // or uninitialized storage never runs the `deinit`.
     std::optional<FunctionId> deinitializer;
+    // A struct bound to the library array role (decision 0025): destruction runs `deinitializer` with
+    // no hidden live flag, because the all-zero value is destroyable and the destroy helper zero-fills.
+    bool inertZero = false;
+    // The method that copies such a struct (a function taking its address and returning the struct).
+    // Present exactly when the instance is copyable; without it the struct is noncopyable.
+    std::optional<FunctionId> copier;
 };
 
 inline constexpr const char* liveFieldName = "$live";

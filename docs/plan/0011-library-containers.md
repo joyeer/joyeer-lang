@@ -91,14 +91,18 @@ cannot express element-dependent copyability, linearity, and destruction through
   Evidence: 0025 section 5 (the `container_end` method role, must-transfer bodies of the `array_type`
   declaration, `destroy_range` trapping for a linear type, `consume-of-linear-element`).
 - [ ] Add failing ownership tests for mutation during a borrow, escaped borrows, partial moves,
-  linear elements, early exits, and expanding generic recursion. Part 1 written
+  linear elements, early exits, and expanding generic recursion. Written and observed failing first
   (`tests/unittests/compiler/collection_roles_test.cpp`, target `CompilerCollectionRoleTests`, 17 tests,
-  all observed failing, see the log). Still to write: the IR escape and malformed-IR cases, the
-  intrinsic lowering and callback tests, destruction and drain cases that run, the C ABI layout test, and
-  the library-array and task e2e fixtures.
-- [ ] Implement the minimum runtime-only capability and verification needed by safe library
-  collection wrappers; reject unauthorized and malformed uses.
-- [ ] Review the type/ownership and IR/ABI changes separately from their author.
+  see the log); later additions (malformed IR, escape rule, backend emission, reviewer findings) were
+  written with their fixes. Still missing, so the item stays open: a test that executes a library array
+  (inert-zero destruction, moved-out slots, drain, an array of `JoinHandle` in a task; needs the bundled
+  `Array` of Phase 3), the C ABI size/offset test, evaluation-order and trap-order fixtures, expanding
+  recursion for the role struct, `Buffer<Never>`/`Buffer<Void>`, and the destroy-order fixture.
+- [x] Implement the minimum runtime-only capability and verification needed by safe library
+  collection wrappers; reject unauthorized and malformed uses. Evidence: the log entry of 2026-11-15
+  (implementation); `CompilerCollectionRoleTests` 33 of 33; Windows x64 Debug `ctest` passes.
+- [ ] Review the type/ownership and IR/ABI changes separately from their author. First round done (log);
+  findings fixed; a re-review of the fixes and the Release/Linux/macOS validation are open.
 
 ### Phase 3: Array
 
@@ -324,3 +328,26 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   fixture's `deinit` confirmed that every other test fails on the unknown role and not on a fixture
   error.) Negative assertions require the library to load and a diagnostic that names the field or type,
   so they cannot pass because the role declaration is broken. Nothing is implemented.
+- 2026-11-15: Phase 2 implemented (Windows x64 Debug). Front end: the four roles and their closed shape
+  validation (a `deinit` and all three method roles required), ownership of the first type argument
+  (`isLinear`, `noncopyableReason`, one whole-value leaf in `linearLeafPaths`), the subscript type, the
+  read-only `count` (`Symbol::readableOutsideDeclaration`, `analyzeStorage`), the four intrinsics (parser,
+  name resolution, checker; authorized in runtime and bundled prelude sources, so the role prelude is not
+  made a runtime unit), the `container_end` exemption and `semantic-analysis.consume-of-linear-element`, and
+  instance discovery of the addressor and (when copyable) the copy method. IR: `StructureDefinition::inertZero`
+  and `copier`, `Function::elementAddressor`, five opcodes (`destroy_range`, `clone_at`, `clone_callback`,
+  `destroy_callback`, `linear_range_guard`), lowering of `a[i]` to an addressor call plus `integer_address`,
+  verifier rules (shapes, runtime-only, escape and dominance of the element address, addressor and copier
+  signatures), wire version 20. Backend: the clone helper calls the copier, the destroy helper runs `deinit`
+  unconditionally for an inert-zero struct, `destroy_range` destroys last to first. The 17 failing tests now pass
+  and 16 more were added. Two reviewers (type-system, IR/backend, separate agents) found one soundness hole,
+  fixed here: a struct holding a linear library array lost that field from its required leaves
+  (`linearLeafPaths`). Also fixed: the escape rule rejected a role element used as the receiver of
+  `array_append`, `array_remove_last`, `array_consume_empty`, `dictionary_set` and `dictionary_get`; range
+  destruction order (was first to last); the copier may not consume; `clone_callback` needs a copyable type;
+  the addressor and the element type of the place are verified; the role prelude stays a non-runtime unit;
+  the ending hint names `finish`. `ValidationScriptTests` timed out once under parallel load and passed alone.
+  Known and recorded: a library `deinit` that overwrites its whole `self` recurses (the live-flag path
+  prevented that), `-O0` calls the addressor (no `alwaysinline` yet), and the addressor and copier instances are
+  produced for every concrete instance. Not done: Release, Linux, macOS, `scripts/validate.py`, executed tests,
+  the cost gate (Phase 3). Nothing here is pushed.

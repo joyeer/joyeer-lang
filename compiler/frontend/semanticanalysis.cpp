@@ -379,8 +379,14 @@ private:
                 state.initialized.insert(*symbol);
                 state.possiblyInitialized.insert(*symbol);
                 const auto parameterType = model->typeOf(*symbol);
+                // The ending method of a library container is exempt for its `self`: it consumes the
+                // container by returning, and its destroy runs `deinit` (decision 0025).
+                const auto* functionSymbol = function.has_value() ? model->semanticModel()->symbol(*function)
+                                                                  : nullptr;
+                const bool endsContainer = parameter->isReceiver && functionSymbol != nullptr &&
+                        functionSymbol->libraryRole == semantic::LibraryRole::containerEnd;
                 if (parameter->accessEffect() == syntax::AccessEffect::consuming &&
-                    parameterType.has_value() && model->isLinear(*parameterType)) {
+                    parameterType.has_value() && model->isLinear(*parameterType) && !endsContainer) {
                     linearParameters.push_back(*symbol);
                 }
             }
@@ -978,6 +984,7 @@ private:
             analyzeExpression(expression, state);
             return;
         }
+        reportConsumeOfLinearElement(expression);
         activePaths.push_back(&*path);
         analyzeStorageOperands(expression, state);
         activePaths.pop_back();
@@ -995,6 +1002,26 @@ private:
             reportPartialConsumeOfDeinitType(expression);
             addConsumedProjection(*path, state);
         }
+    }
+
+    // `consume a[i]` of a linear element leaves a zero-filled slot that nothing could ever end
+    // (decision 0025), so it is rejected here rather than later on the array itself.
+    void reportConsumeOfLinearElement(const syntax::ExprPtr& expression) {
+        auto inner = expression;
+        while (inner != nullptr && inner->kind == syntax::Kind::parenthesizedExpr) {
+            inner = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(inner)->expression;
+        }
+        if (inner == nullptr || inner->kind != syntax::Kind::subscriptExpr) return;
+        const auto type = model->typeOf(inner);
+        if (!type.has_value() || !model->isLinear(*type)) return;
+        diagnostics.push_back(Diagnostic {
+            DiagnosticId::consumeOfLinearElement,
+            Severity::error,
+            inner->span,
+            "cannot consume an element of linear type '" + model->types().displayName(*type) +
+                    "' from a collection: the emptied slot could never be ended",
+            "drain the collection with removeLast instead",
+        });
     }
 
     // A struct with `deinit` must reach its destructor whole (decision 0015), so no part of
@@ -1956,6 +1983,8 @@ const char* diagnosticName(DiagnosticId id) {
             return "semantic-analysis.linear-not-consumed";
         case DiagnosticId::linearOverwrite:
             return "semantic-analysis.linear-overwrite";
+        case DiagnosticId::consumeOfLinearElement:
+            return "semantic-analysis.consume-of-linear-element";
         case DiagnosticId::linearResultDropped:
             return "semantic-analysis.linear-result-dropped";
         case DiagnosticId::runProcessWithTasks:

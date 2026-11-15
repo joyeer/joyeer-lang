@@ -85,6 +85,8 @@ bool producesValue(Opcode opcode) {
         case Opcode::typeAlignment:
         case Opcode::integerAddress:
         case Opcode::pointerToInteger:
+        case Opcode::cloneCallback:
+        case Opcode::destroyCallback:
             return true;
         default:
             return false;
@@ -440,7 +442,8 @@ VerificationResult Verifier::verify(const Module& module) const {
         }
     }
     for (const auto& structure : module.structures) {
-        if (structure.deinitializer.has_value() && noncopyableTypes.insert(structure.type).second) {
+        if (structure.deinitializer.has_value() && !(structure.inertZero && structure.copier.has_value()) &&
+            noncopyableTypes.insert(structure.type).second) {
             pendingNoncopyable.push_back(structure.type);
         }
         for (const auto& field : structure.fields) copyDependents[field.type].push_back(structure.type);
@@ -522,7 +525,7 @@ VerificationResult Verifier::verify(const Module& module) const {
             // symbol; it is not a lookup target.
             if (field.symbol == semantic::invalidSymbolId) {
                 const auto isLiveFlag = field.name == liveFieldName &&
-                        structure.deinitializer.has_value() &&
+                        structure.deinitializer.has_value() && !structure.inertZero &&
                         &field == &structure.fields.back();
                 if (!isLiveFlag) {
                     report(
@@ -703,7 +706,13 @@ VerificationResult Verifier::verify(const Module& module) const {
                 structure.fields.back().symbol == semantic::invalidSymbolId &&
                 types.contains(structure.fields.back().type) &&
                 types.at(structure.fields.back().type)->kind == typing::TypeKind::boolean;
-        if (!liveFlagIsLast) {
+        if (structure.inertZero) {
+            // No live flag: the zero value must itself be destroyable (decision 0025).
+            if (liveFlagIsLast) {
+                report(VerificationErrorId::invalidReference, std::nullopt, std::nullopt, std::nullopt,
+                       "structure '" + structure.name + "' is inert-zero and must not carry a hidden live flag");
+            }
+        } else if (!liveFlagIsLast) {
             report(
                     VerificationErrorId::invalidReference,
                     std::nullopt,
@@ -711,6 +720,50 @@ VerificationResult Verifier::verify(const Module& module) const {
                     std::nullopt,
                     "structure '" + structure.name +
                             "' declares a deinit but does not end with the hidden live flag");
+        }
+    }
+
+    for (const auto& function : module.functions) {
+        if (!function.elementAddressor) continue;
+        const bool shaped = function.runtimeContext && !function.isExternal && function.returnsValue &&
+                function.parameters.size() == 2 && types.contains(function.resultType) &&
+                types.at(function.resultType)->kind == typing::TypeKind::integer &&
+                function.parameters[0].value.category == ValueCategory::value && !function.parameters[0].isConsuming &&
+                types.contains(function.parameters[0].value.type) &&
+                types.at(function.parameters[0].value.type)->kind == typing::TypeKind::structure &&
+                types.contains(function.parameters[1].value.type) &&
+                types.at(function.parameters[1].value.type)->kind == typing::TypeKind::integer &&
+                [&] {
+                    const auto structure = structures.find(function.parameters[0].value.type);
+                    return structure != structures.end() && structure->second->inertZero;
+                }();
+        if (!shaped) {
+            report(VerificationErrorId::invalidInstruction, function.id, std::nullopt, std::nullopt,
+                   "element addressor '" + function.name +
+                           "' must be a runtime function borrowing an inert-zero struct and an Int and returning an Int");
+        }
+    }
+
+    for (const auto& structure : module.structures) {
+        if (structure.inertZero && !structure.deinitializer.has_value()) {
+            report(VerificationErrorId::invalidReference, std::nullopt, std::nullopt, std::nullopt,
+                   "inert-zero structure '" + structure.name + "' needs a deinit");
+        }
+        if (!structure.copier.has_value()) continue;
+        const auto copier = functions.find(*structure.copier);
+        const bool matches = structure.inertZero && copier != functions.end() &&
+                copier->second->parameters.size() == 1 &&
+                copier->second->parameters[0].value.type == structure.type &&
+                copier->second->parameters[0].value.category == ValueCategory::value &&
+                !copier->second->parameters[0].isConsuming &&
+                copier->second->returnsValue && copier->second->resultType == structure.type &&
+                !copier->second->isExternal;
+        if (!matches) {
+            report(copier == functions.end() ? VerificationErrorId::invalidReference
+                                             : VerificationErrorId::invalidInstruction,
+                   std::nullopt, std::nullopt, std::nullopt,
+                   "copier of structure '" + structure.name +
+                           "' must be a function borrowing only the structure and returning the structure");
         }
     }
 
@@ -1317,6 +1370,99 @@ VerificationResult Verifier::verify(const Module& module) const {
                 }
             }
         }
+        // The escape rule of a library array's element place (decision 0025): an element address is
+        // used only in blocks its definition dominates, and only to load, store, take, destroy, project
+        // or pass as a call argument, never converted back to an Int, returned, stored as a value or
+        // gathered into an aggregate. The rule is transitive through derived addresses.
+        {
+            std::unordered_set<ValueId> elementAddresses;
+            const auto addressorCall = [&](const Instruction& instruction) {
+                if (instruction.opcode != Opcode::call || !instruction.callee.has_value()) return false;
+                const auto callee = functions.find(*instruction.callee);
+                return callee != functions.end() && callee->second->elementAddressor;
+            };
+            for (const auto& block : function.blocks) {
+                for (const auto& instruction : block.instructions) {
+                    if (instruction.opcode != Opcode::integerAddress || !instruction.result.has_value() ||
+                        instruction.operands.size() != 1) {
+                        continue;
+                    }
+                    const auto definition = valueDefinitions.find(instruction.operands[0]);
+                    if (definition == valueDefinitions.end()) continue;
+                    const auto definingBlock = blocks.find(definition->second.first);
+                    if (definingBlock != blocks.end() &&
+                        definition->second.second < definingBlock->second->instructions.size() &&
+                        addressorCall(definingBlock->second->instructions[definition->second.second])) {
+                        elementAddresses.insert(instruction.result->id);
+                    }
+                }
+            }
+            for (bool grew = !elementAddresses.empty(); grew;) {
+                grew = false;
+                for (const auto& block : function.blocks) {
+                    for (const auto& instruction : block.instructions) {
+                        if ((instruction.opcode == Opcode::fieldAddress || instruction.opcode == Opcode::payloadAddress ||
+                             instruction.opcode == Opcode::subscriptAddress) &&
+                            instruction.result.has_value() && !instruction.operands.empty() &&
+                            elementAddresses.contains(instruction.operands[0]) &&
+                            elementAddresses.insert(instruction.result->id).second) {
+                            grew = true;
+                        }
+                    }
+                }
+            }
+            for (const auto& block : function.blocks) {
+                for (size_t index = 0; index < block.instructions.size(); ++index) {
+                    const auto& instruction = block.instructions[index];
+                    for (size_t position = 0; position < instruction.operands.size(); ++position) {
+                        const auto operand = instruction.operands[position];
+                        if (!elementAddresses.contains(operand)) continue;
+                        bool allowed = false;
+                        switch (instruction.opcode) {
+                            case Opcode::load:
+                            case Opcode::take:
+                            case Opcode::destroy:
+                            case Opcode::fieldAddress:
+                            case Opcode::payloadAddress:
+                            case Opcode::subscriptAddress:
+                            case Opcode::arrayAppend:
+                            case Opcode::arrayRemoveLast:
+                            case Opcode::arrayConsumeEmpty:
+                            case Opcode::dictionarySet:
+                            case Opcode::dictionaryGet:
+                                allowed = position == 0;
+                                break;
+                            case Opcode::store:
+                                allowed = position == 1;
+                                break;
+                            case Opcode::call:
+                                allowed = true;
+                                break;
+                            case Opcode::callIndirect:
+                                allowed = position >= 1;
+                                break;
+                            default:
+                                break;
+                        }
+                        if (!allowed) {
+                            report(VerificationErrorId::invalidInstruction, functionId, block.id, index,
+                                   std::string("an element address may not be used by ") +
+                                           opcodeName(instruction.opcode) +
+                                           ": it is only loaded, stored, taken, destroyed, projected or "
+                                           "passed as an argument");
+                        }
+                        const auto definition = valueDefinitions.find(operand);
+                        if (definition != valueDefinitions.end() &&
+                            (definition->second.first == block.id
+                                     ? definition->second.second >= index
+                                     : !dominators[block.id].contains(definition->second.first))) {
+                            report(VerificationErrorId::invalidInstruction, functionId, block.id, index,
+                                   "an element address is used where its definition does not dominate");
+                        }
+                    }
+                }
+            }
+        }
         auto verifyDebugBinding = [&](const DebugVariableBinding& binding,
                                       std::optional<BlockId> block,
                                       std::optional<size_t> instruction,
@@ -1633,6 +1779,60 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         break;
                     }
+                    case Opcode::destroyRange:
+                    case Opcode::cloneAt:
+                    case Opcode::linearRangeGuard:
+                    case Opcode::cloneCallback:
+                    case Opcode::destroyCallback: {
+                        const bool callback = instruction.opcode == Opcode::cloneCallback ||
+                                instruction.opcode == Opcode::destroyCallback;
+                        const bool guard = instruction.opcode == Opcode::linearRangeGuard;
+                        const size_t expected = callback ? 0 : guard ? 1 : 2;
+                        if (requireShape(expected, 0)) {
+                            for (const auto* operand : operands) {
+                                const auto* operandType = operand != nullptr && types.contains(operand->type)
+                                        ? types.at(operand->type) : nullptr;
+                                if (operandType == nullptr || operandType->kind != typing::TypeKind::integer ||
+                                    operand->category != ValueCategory::value) {
+                                    report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                           std::string(opcodeName(instruction.opcode)) + " takes Int operands");
+                                }
+                            }
+                        }
+                        if (callback) {
+                            const auto* result = instruction.result.has_value() && types.contains(instruction.result->type)
+                                    ? types.at(instruction.result->type) : nullptr;
+                            if (result == nullptr || result->kind != typing::TypeKind::integer ||
+                                instruction.result->category != ValueCategory::value) {
+                                report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                       "a callback query yields an Int");
+                            }
+                        } else if (instruction.result.has_value()) {
+                            report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
+                                   std::string(opcodeName(instruction.opcode)) + " yields no value");
+                        }
+                        if (!guard) {
+                            const auto queried = static_cast<TypeId>(instruction.integerValue);
+                            if (!types.contains(queried) || nonConcreteTypes.contains(queried) ||
+                                types.at(queried)->kind == typing::TypeKind::never) {
+                                report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                       std::string(opcodeName(instruction.opcode)) +
+                                               " needs a concrete type with values");
+                            } else if ((instruction.opcode == Opcode::cloneAt ||
+                                        instruction.opcode == Opcode::cloneCallback) &&
+                                       noncopyableTypes.contains(queried)) {
+                                report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                       std::string(opcodeName(instruction.opcode)) +
+                                               " needs a copyable type, but '" + types.at(queried)->name +
+                                               "' is noncopyable");
+                            }
+                        }
+                        if (!function.runtimeContext) {
+                            report(VerificationErrorId::callMismatch, functionId, block.id, location,
+                                   "a collection capability requires runtime authorization");
+                        }
+                        break;
+                    }
                     case Opcode::integerAddress: {
                         const auto* source = requireShape(1, 0) && operands[0] != nullptr && types.contains(operands[0]->type)
                                 ? types.at(operands[0]->type) : nullptr;
@@ -1651,7 +1851,32 @@ VerificationResult Verifier::verify(const Module& module) const {
                                     functionId, block.id, location,
                                     "an integer address cannot address a slot of 'Never'");
                         }
-                        if (!function.runtimeContext) {
+                        // A library array's element place is the one integer address user code may form: its
+                        // operand is the result of a call of an element addressor (decision 0025).
+                        bool fromAddressor = false;
+                        std::optional<TypeId> addressedElement;
+                        if (operands.size() == 1 && operands[0] != nullptr) {
+                            const auto definition = valueDefinitions.find(operands[0]->id);
+                            const auto definingBlock = definition == valueDefinitions.end() ? blocks.end()
+                                    : blocks.find(definition->second.first);
+                            const auto* defining = definingBlock != blocks.end() &&
+                                    definition->second.second < definingBlock->second->instructions.size()
+                                    ? &definingBlock->second->instructions[definition->second.second] : nullptr;
+                            const auto callee = defining != nullptr && defining->opcode == Opcode::call &&
+                                    defining->callee.has_value() ? functions.find(*defining->callee) : functions.end();
+                            fromAddressor = callee != functions.end() && callee->second->elementAddressor;
+                            if (fromAddressor && !callee->second->parameters.empty() &&
+                                types.contains(callee->second->parameters[0].value.type)) {
+                                const auto& receiver = *types.at(callee->second->parameters[0].value.type);
+                                if (!receiver.arguments.empty()) addressedElement = receiver.arguments[0];
+                            }
+                        }
+                        if (fromAddressor && instruction.result.has_value() &&
+                            instruction.result->type != addressedElement.value_or(instruction.result->type)) {
+                            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                   "an element address must have the element type of the array it indexes");
+                        }
+                        if (!function.runtimeContext && !fromAddressor) {
                             report(
                                     VerificationErrorId::callMismatch,
                                     functionId, block.id, location,
@@ -2725,6 +2950,11 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::typeAlignment: return "type_alignment";
         case Opcode::integerAddress: return "integer_address";
         case Opcode::pointerToInteger: return "pointer_to_integer";
+        case Opcode::destroyRange: return "destroy_range";
+        case Opcode::cloneAt: return "clone_at";
+        case Opcode::cloneCallback: return "clone_callback";
+        case Opcode::destroyCallback: return "destroy_callback";
+        case Opcode::linearRangeGuard: return "linear_range_guard";
         case Opcode::call: return "call";
         case Opcode::functionAddress: return "function_address";
         case Opcode::callIndirect: return "call_indirect";
@@ -2845,6 +3075,8 @@ std::string dump(const Module& module) {
         }
         out << (structure->fields.empty() ? "}" : " }");
         if (structure->deinitializer.has_value()) out << " deinit=@" << *structure->deinitializer;
+        if (structure->inertZero) out << " inert_zero";
+        if (structure->copier.has_value()) out << " copier=@" << *structure->copier;
         out << '\n';
     }
     for (const auto* enumeration : sortedEnumerations) {
@@ -2939,6 +3171,7 @@ std::string dump(const Module& module) {
         }
         if (function.debugScope.has_value()) out << " debug_scope#" << *function.debugScope;
         if (!function.isRootModule) out << " dependency";
+        if (function.elementAddressor) out << " element_addressor";
         out << " {\n";
         for (const auto& binding : function.entryDebugVariableBindings) {
             out << "    debug_bind #" << binding.variable << " -> "
@@ -2985,7 +3218,21 @@ std::string dump(const Module& module) {
                         break;
                     case Opcode::typeSize:
                     case Opcode::typeAlignment:
+                    case Opcode::cloneCallback:
+                    case Opcode::destroyCallback:
                         out << " of type " << instruction.integerValue;
+                        break;
+                    case Opcode::destroyRange:
+                    case Opcode::cloneAt:
+                        out << " of type " << instruction.integerValue;
+                        for (size_t index = 0; index < instruction.operands.size(); ++index) {
+                            out << (index == 0 ? " " : ", ") << valueName(instruction.operands[index]);
+                        }
+                        break;
+                    case Opcode::linearRangeGuard:
+                        for (size_t index = 0; index < instruction.operands.size(); ++index) {
+                            out << (index == 0 ? " " : ", ") << valueName(instruction.operands[index]);
+                        }
                         break;
                     case Opcode::integerAddress:
                     case Opcode::pointerToInteger:
