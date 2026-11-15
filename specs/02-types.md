@@ -283,6 +283,12 @@ temporary, and a `match` that moves the payload (§7.1.2) can take the element o
 of it. **Implementation status:** implemented; the runtime
 removes the element in constant time and does not shrink the array's capacity.
 
+**Planned library `Array` ([decision 0025](../docs/decisions/0025-library-collection-capabilities.md)).**
+The compiler capabilities that let `Array<T>` be an ordinary prelude struct bound by the role
+`array_type` (§20.12.5) are specified, but `Array<T>` and `[T]` are still builtin until Phase 3 of
+[plan 0011](../docs/plan/0011-library-containers.md). The public behavior of this section, the `[JoyeerArray]`
+layout and the trap texts do not change.
+
 #### 2.6.3 Concurrency library types
 
 The source prelude declares `JoinHandle<R>`, `ChannelSender<T>`, `ChannelReceiver<T>`, and the

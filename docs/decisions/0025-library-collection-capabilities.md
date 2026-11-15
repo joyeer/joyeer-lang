@@ -1,8 +1,8 @@
 # 0025: Capabilities for library-owned collections
 
-- Status: proposed (2026-11-15, revision 3 after two language-designer reviews)
-- Spec: not yet. On acceptance §2.6 (`Array`), §4.1.1 (copyability), §4.4 (access paths), §20.12.5
-  (layout intrinsics) and §21 (a library array stays a valid task input) change.
+- Status: accepted (2026-11-15, revision 3 after two language-designer reviews)
+- Spec: §2.6 (`Array`), §4.1.1 (copyability), §4.4 (access paths), §20.12.5 (layout intrinsics) and
+  §21 (a library array stays a valid task input) change with this record.
 - Plan: [0011](../plan/0011-library-containers.md), Phase 2.
 
 ## Context

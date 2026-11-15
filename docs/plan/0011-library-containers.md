@@ -5,7 +5,7 @@
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0023](../decisions/0023-library-concurrency.md) (completed concurrency-library migration),
   [0024](../decisions/0024-library-optional-and-result.md) (Phase 1, accepted and merged in #26; macOS validation open),
-  [0025](../decisions/0025-library-collection-capabilities.md) (Phase 2 capabilities, proposed)
+  [0025](../decisions/0025-library-collection-capabilities.md) (Phase 2 capabilities, accepted)
 - Spec: [ยง2](../../specs/02-types.md), [ยง20](../../specs/20-protocols.md), and the affected
   ownership, expression, and pattern chapters in the [spec index](../../specs/README.md)
 
@@ -82,15 +82,20 @@ cannot express element-dependent copyability, linearity, and destruction through
 
 ### Phase 2: borrowing and linear collection ownership
 
-- [ ] Record a separate decision for borrowed slot access, projection lifetime/exclusivity,
-  and element-dependent ownership of a raw-address container. Drafted as
-  [0025](../decisions/0025-library-collection-capabilities.md) (proposed); open until a
-  language-designer review accepts it.
-- [ ] Decide how generic code transfers or ends linear elements without allowing them to be
+- [x] Record a separate decision for borrowed slot access, projection lifetime/exclusivity,
+  and element-dependent ownership of a raw-address container. Evidence:
+  [0025](../decisions/0025-library-collection-capabilities.md), accepted by the user 2026-11-15 after
+  two language-designer reviews (revision 3); spec ง2.6, ง4.1.1, ง4.4, ง20.12.5 and ง21.2.2 amended.
+- [x] Decide how generic code transfers or ends linear elements without allowing them to be
   silently dropped. The closed task-transfer exception in 0023 is not a general solution.
-  Proposed in 0025 section 4 (must-transfer bodies plus an ending method); open with the item above.
+  Evidence: 0025 section 5 (the `container_end` method role, must-transfer bodies of the `array_type`
+  declaration, `destroy_range` trapping for a linear type, `consume-of-linear-element`).
 - [ ] Add failing ownership tests for mutation during a borrow, escaped borrows, partial moves,
-  linear elements, early exits, and expanding generic recursion.
+  linear elements, early exits, and expanding generic recursion. Part 1 written
+  (`tests/unittests/compiler/collection_roles_test.cpp`, target `CompilerCollectionRoleTests`, 17 tests,
+  all observed failing, see the log). Still to write: the IR escape and malformed-IR cases, the
+  intrinsic lowering and callback tests, destruction and drain cases that run, the C ABI layout test, and
+  the library-array and task e2e fixtures.
 - [ ] Implement the minimum runtime-only capability and verification needed by safe library
   collection wrappers; reject unauthorized and malformed uses.
 - [ ] Review the type/ownership and IR/ABI changes separately from their author.
@@ -303,3 +308,19 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   new `consume-of-linear-element` diagnostic changes no accepted program; an array of `JoinHandle` is a
   valid task input today, so a library array must stay sendable (ยง21). 0025 stays `proposed` until the
   user accepts it.
+- 2026-11-15: The user accepted 0025. Status set to accepted and the spec amended: ง20.12.5 (the
+  `array_type` role with its capability table, the three method roles and the four intrinsics), ง2.6
+  (a pointer, since `Array` stays builtin until Phase 3), ง4.1.1 (the role is copyable exactly when its
+  owned type is, although it has `deinit`), ง4.4 (addressor, ordering, `consume a[i]`) and ง21.2.2 (a
+  library array stays a valid task input exactly when its element is). Tests first, part 1:
+  `tests/unittests/compiler/collection_roles_test.cpp` (new target `CompilerCollectionRoleTests`, label
+  `collection-roles`) builds a small `Buffer<T>` bound by the role through the 0024 role-prelude seam and
+  covers shape validation (each malformed type and method form, a duplicate, an `extension`), use outside
+  the prelude, element typing, read-only `count`, exclusivity, copyability and linearity, ending a linear
+  container, `consume a[i]` of a linear element, the three-word layout without `$live`, the wire version
+  and the addressor lowering. Windows x64 Debug: 17 of 17 fail, for the expected reasons: the role names
+  are unknown (`name-resolution.invalid-prelude`), `count` is inaccessible, and the parser does not yet
+  know the four new intrinsic names. (An intermediate run with the new intrinsic removed from the
+  fixture's `deinit` confirmed that every other test fails on the unknown role and not on a fixture
+  error.) Negative assertions require the library to load and a diagnostic that names the field or type,
+  so they cannot pass because the role declaration is broken. Nothing is implemented.
