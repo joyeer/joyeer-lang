@@ -414,4 +414,9 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   change. Not added because fixtures already exist: native `[String]` and `[UInt8]` parameters and `main(args:)`
   (`entry_arguments`, `entry_argument_bytes`), `String.utf8()` (`string_utf8`), `[Void]` bounds (`unit_array_bounds`),
   the removeLast and consumeEmpty cases (`array_remove_last`, `array_consume_empty`).
+- 2026-11-15: `scripts/validate.py` on c72d13a (the characterization PR) passes. Windows x64: Debug and Release
+  build, `ctest` 1802 of 1802 and `fern test` 7 of 7 (`ValidationScriptTests`, `Fern.Manifest`, `Fern.Workspace` and
+  `Compression.Interoperability` passed only on the validator's rerun, the known parallel-load pattern). Linux x86_64
+  (WSL, a fresh Git clone): Debug and Release build, `ctest` 1778 of 1778 and `fern test` 7 of 7, no reruns. macOS
+  is run by the user and not reported here.
 
