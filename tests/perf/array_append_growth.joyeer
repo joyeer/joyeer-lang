@@ -1,0 +1,23 @@
+// Array construction and growth baseline (plan 0011, phase 3): arrays of several sizes are built by
+// appending one element at a time, so each one reallocates as it grows. Not a test; see README.md.
+func main() {
+    var total = 0
+    var round = 0
+    while round < 2000 {
+        var small: [Int] = []
+        var index = 0
+        while index < 16 {
+            &small.append(element: index + round)
+            index = index + 1
+        }
+        var large: [Int] = []
+        index = 0
+        while index < 4096 {
+            &large.append(element: index)
+            index = index + 1
+        }
+        total = total + small.count + large.count
+        round = round + 1
+    }
+    print(value: total)
+}

@@ -1,0 +1,60 @@
+// Characterization of moved-from and uninitialized arrays (plan 0011 phase 3, decision 0026): destroying a
+// slot that no longer owns its elements must do nothing, and ending an array twice must be impossible.
+struct Res {
+    var id: Int
+
+    deinit() {
+        print(value: self.id)
+    }
+}
+
+struct Holder {
+    var items: [Res]
+    var tag: Int
+}
+
+func movedOutField() {
+    var holder = Holder(items: [Res(id: 50), Res(id: 51)], tag: 1)
+    let taken = consume holder.items
+    print(value: taken.count)
+}
+
+func uninitialized(flag: Bool) {
+    var late: [Res]
+    if flag {
+        late = [Res(id: 60), Res(id: 61)]
+    } else {
+        late = []
+    }
+    print(value: late.count)
+}
+
+func throughOptional() {
+    let boxed: [Res]? = [Res(id: 70)]
+    match consume boxed {
+        .Some(items) => { print(value: items.count) },
+        .None => { print(value: -1) },
+    }
+    print(value: 71)
+}
+
+func drainThenEnd() {
+    var items: [Res] = [Res(id: 80), Res(id: 81)]
+    while true {
+        let popped = &items.removeLast()
+        match consume popped {
+            .Some(handle) => { print(value: 300 + handle.id) },
+            .None => { break },
+        }
+    }
+    consume items.consumeEmpty()
+    print(value: 82)
+}
+
+func main() {
+    movedOutField()
+    uninitialized(flag: true)
+    uninitialized(flag: false)
+    throughOptional()
+    drainThenEnd()
+}

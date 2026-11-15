@@ -1,0 +1,24 @@
+// Nested destruction baseline (plan 0011, phase 3): an array of arrays of strings is built and dropped,
+// so every element runs the clone/destroy helpers of the element type. Not a test; see README.md.
+func main() {
+    var total = 0
+    var round = 0
+    while round < 3000 {
+        var outer: [[String]] = []
+        var first = 0
+        while first < 8 {
+            var inner: [String] = []
+            var second = 0
+            while second < 8 {
+                &inner.append(element: "entry-" + "text")
+                second = second + 1
+            }
+            &outer.append(element: inner)
+            first = first + 1
+        }
+        let copy = outer
+        total = total + outer.count + copy.count + copy[3].count
+        round = round + 1
+    }
+    print(value: total)
+}

@@ -1,0 +1,26 @@
+// Characterization of evaluation order around array access (plan 0011 phase 3, decision 0026): an assignment
+// evaluates the index operands, then the right-hand side, and only then touches the element, so the right-hand
+// side may append to the very array it assigns into. Calls evaluate their arguments left to right.
+func noisy(value: Int): Int {
+    print(value: value)
+    return value
+}
+
+func grow(items: inout [Int]): Int {
+    &items.append(element: 99)
+    return items.count
+}
+
+func main() {
+    var items: [Int] = [1, 2, 3]
+    &items[noisy(value: 0)] = noisy(value: 40) + noisy(value: 2)
+    print(value: items[0])
+    &items[1] = grow(items: &items)
+    print(value: items[1])
+    print(value: items.count)
+    &items[noisy(value: 2)] += noisy(value: 5)
+    print(value: items[2])
+    var grid: [[Int]] = [[1, 2], [3, 4]]
+    &grid[noisy(value: 1)][noisy(value: 0)] = noisy(value: 30)
+    print(value: grid[1][0])
+}

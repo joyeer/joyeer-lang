@@ -109,6 +109,12 @@ joyeer_discover_tests(CompilerCollectionRoleTests
         PROPERTIES LABELS collection-roles
 )
 
+add_executable(CompilerArrayCharacterizationTests array_characterization_test.cpp)
+target_link_libraries(CompilerArrayCharacterizationTests PRIVATE GTest::gtest_main JoyeerCompilerCore)
+joyeer_discover_tests(CompilerArrayCharacterizationTests
+        PROPERTIES LABELS array-characterization
+)
+
 add_executable(CompilerPlatformTests platform_test.cpp)
 target_link_libraries(CompilerPlatformTests PRIVATE GTest::gtest_main JoyeerCompilerCore)
 joyeer_discover_tests(CompilerPlatformTests
@@ -1021,6 +1027,36 @@ if(JOYEER_CLANG_EXECUTABLE)
             E2EArrayConsumeEmpty array_consume_empty
             "bb\na\n1\n3\n2\n1\n6\n0\n2\n1\n0\n"
             0 1 2 3)
+    # Characterization of the builtin array (plan 0011 phase 3, decision 0026): the library array must
+    # reproduce each output exactly. The differential check below also runs every fixture at -O0 to -O3.
+    add_joyeer_native_regression(
+            E2EArrayDestroyOrder array_destroy_order
+            "100\n3\n2\n1\n101\n5\n4\n102\n6\n7\n-2\n9\n7\n2\n21\n20\n2\n103\n21\n20\n0\n30\n-3\n3\n32\n9\n30\n241\n41\n104\n42\n40\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EArrayElementClasses array_element_classes
+            "7\nde\n2\n3\n2\n2\n8\n204\n3\n6\n2\n6\n0\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EArrayZeroState array_zero_state
+            "2\n51\n50\n2\n61\n60\n0\n1\n70\n71\n381\n81\n380\n80\n82\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EArrayRecursiveTypes array_recursive_types
+            "15\n12\n10\n11\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EArrayDictionaryInterplay array_dictionary_interplay
+            "2\n3\n2\n3\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EArrayConstantUses array_constant_uses
+            "6\n8\n9\n17\n2\ncde\n6\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EArrayEvaluationOrder array_evaluation_order
+            "0\n40\n2\n42\n4\n4\n2\n5\n8\n1\n0\n30\n30\n"
+            0 1 2 3)
     add_joyeer_native_regression(
             E2ETaskBasic task_basic
             "99\n49\nhi!\njob\n4\n5\n8\n8\n10\n"
@@ -1371,6 +1407,9 @@ abcdabcd
             E2EUnitArrayBounds unit_array_bounds "array index out of bounds")
     add_joyeer_native_checked_trap(
             E2EArrayConsumeEmptyTrap array_consume_empty_trap "array not empty")
+    # The index operand is evaluated, then the access traps before the later argument: 7 is printed, 20 is not.
+    add_joyeer_native_checked_trap(
+            E2EArrayTrapOrder array_trap_order "^7[^0-9a-zA-Z]+Joyeer runtime error: array index out of bounds")
     add_joyeer_native_checked_trap(
             E2ETaskTrap task_trap "array index out of bounds")
     add_joyeer_native_checked_trap(

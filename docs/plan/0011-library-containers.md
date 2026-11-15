@@ -5,7 +5,8 @@
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0023](../decisions/0023-library-concurrency.md) (completed concurrency-library migration),
   [0024](../decisions/0024-library-optional-and-result.md) (Phase 1, accepted and merged in #26; macOS validation open),
-  [0025](../decisions/0025-library-collection-capabilities.md) (Phase 2 capabilities, accepted)
+  [0025](../decisions/0025-library-collection-capabilities.md) (Phase 2 capabilities, accepted and merged in #27),
+  [0026](../decisions/0026-library-array.md) (Phase 3 library `Array`, proposed)
 - Spec: [ยง2](../../specs/02-types.md), [ยง20](../../specs/20-protocols.md), and the affected
   ownership, expression, and pattern chapters in the [spec index](../../specs/README.md)
 
@@ -85,7 +86,7 @@ cannot express element-dependent copyability, linearity, and destruction through
 - [x] Record a separate decision for borrowed slot access, projection lifetime/exclusivity,
   and element-dependent ownership of a raw-address container. Evidence:
   [0025](../decisions/0025-library-collection-capabilities.md), accepted by the user 2026-11-15 after
-  two language-designer reviews (revision 3); spec ง2.6, ง4.1.1, ง4.4, ง20.12.5 and ง21.2.2 amended.
+  two language-designer reviews (revision 3); spec ยง2.6, ยง4.1.1, ยง4.4, ยง20.12.5 and ยง21.2.2 amended.
 - [x] Decide how generic code transfers or ends linear elements without allowing them to be
   silently dropped. The closed task-transfer exception in 0023 is not a general solution.
   Evidence: 0025 section 5 (the `container_end` method role, must-transfer bodies of the `array_type`
@@ -106,8 +107,9 @@ cannot express element-dependent copyability, linearity, and destruction through
 
 ### Phase 3: Array
 
-- [ ] Benchmark construction, append/growth, borrowed indexing, removal, nested destruction,
-  and draining arrays of linear handles before changing the implementation.
+- [x] Benchmark construction, append/growth, borrowed indexing, removal, nested destruction,
+  and draining arrays of linear handles before changing the implementation. Evidence: the baseline of the
+  2026-11-15 log entry below (`tests/perf/array_*.joyeer`, `tests/perf/benchmark_arrays.py`).
 - [ ] Implement the existing array API in Joyeer, including constant-array clone boundaries,
   exact allocation/free sizes, and `consumeEmpty` and its trap.
 - [ ] Preserve subscript/storage-path/exclusivity behavior and existing diagnostics/fixtures.
@@ -312,10 +314,10 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   new `consume-of-linear-element` diagnostic changes no accepted program; an array of `JoinHandle` is a
   valid task input today, so a library array must stay sendable (ยง21). 0025 stays `proposed` until the
   user accepts it.
-- 2026-11-15: The user accepted 0025. Status set to accepted and the spec amended: ง20.12.5 (the
-  `array_type` role with its capability table, the three method roles and the four intrinsics), ง2.6
-  (a pointer, since `Array` stays builtin until Phase 3), ง4.1.1 (the role is copyable exactly when its
-  owned type is, although it has `deinit`), ง4.4 (addressor, ordering, `consume a[i]`) and ง21.2.2 (a
+- 2026-11-15: The user accepted 0025. Status set to accepted and the spec amended: ยง20.12.5 (the
+  `array_type` role with its capability table, the three method roles and the four intrinsics), ยง2.6
+  (a pointer, since `Array` stays builtin until Phase 3), ยง4.1.1 (the role is copyable exactly when its
+  owned type is, although it has `deinit`), ยง4.4 (addressor, ordering, `consume a[i]`) and ยง21.2.2 (a
   library array stays a valid task input exactly when its element is). Tests first, part 1:
   `tests/unittests/compiler/collection_roles_test.cpp` (new target `CompilerCollectionRoleTests`, label
   `collection-roles`) builds a small `Buffer<T>` bound by the role through the 0024 role-prelude seam and
@@ -367,4 +369,54 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   on the validator's rerun, the known parallel-load timeout pattern). Linux x86_64 (WSL Ubuntu, a fresh Git clone):
   Debug and Release build, `ctest` 1727 of 1727 and `fern test` 7 of 7, no reruns. macOS is run by the user and not
   reported here. The Phase 2 review item stays open only for that and for the open items listed above.
+- 2026-11-15: Phase 3 started on `feat/library-array`. Baseline of the builtin array before any change: five
+  programs in `tests/perf/` (`array_append_growth`, `array_index`, `array_remove_last`, `array_nested_destroy`,
+  `array_linear_drain`) and `benchmark_arrays.py`, built with the compilers of the Phase 2 validation tree (the
+  merged `main` content) at -O0 (Debug compiler) and -O2 (Release compiler), checksums verified against an
+  independent Python computation. Windows x64, idle machine, 15 interleaved repetitions, minimum and median in
+  milliseconds. -O0: append_growth 444 / 997 (one noisy run set, expect a wide interval), index 229 / 239,
+  remove_last 200 / 211, nested_destroy 166 / 178, linear_drain 135 / 147. -O2: append_growth 171 / 184, index 101 /
+  112, remove_last 100 / 109, nested_destroy 102 / 106, linear_drain 134 / 151. Executable sizes: -O0 88064 to 96256
+  bytes, -O2 43008 to 45568 bytes. The executables and `report.json` are kept outside the repository; the candidate
+  is compared with `--candidate-dir` against a rebuilt baseline, never against these numbers alone. The linear
+  drain is dominated by thread creation, so it can only show a large regression.
+- 2026-11-15: Drafted [0026](../decisions/0026-library-array.md) (proposed) for Phase 3 from an inventory of the
+  array machinery: the runtime already implements the array algorithms in Joyeer behind the public
+  `joyeer_array_*_abi`, so the decision makes `Array<T>` a thin typed library struct over those functions (not a
+  per-element-type reimplementation), declared in a third bundled prelude `collections.joyeer` so it may declare C
+  bindings, with a new `array_literal` role and a place-address intrinsic, the type kind and array opcodes
+  removed, and a characterization suite written first on the builtin array. The always-inliner is expected at
+  `-O0` (`buildO0DefaultPipeline`), to be confirmed by a prototype. It awaits a language-designer review; nothing
+  is implemented.
+- 2026-11-15: Language-designer review of 0026: accept with changes. Folded into revision 2: the literal's
+  ownership on early exit and a `stack_block` opcode, `array_literal` as a method role of the struct, a fully specified
+  `place_address` (direct call argument only), the cost mechanism and the `NoInline` debug-scope hazard made
+  preconditions with predeclared gate numbers and a generic fallback, the third prelude's seam and packaging,
+  an honest residual set of array-aware code (the plan's "implement operations in Joyeer" is reworded: the
+  algorithms are already Joyeer in the runtime, the deliverable is removing compiler paths), a structure `role`
+  instead of extra marks, and the recursive-type, Dict, extension and Equatable risks. Phase 3 is staged as five
+  changes: a characterization PR on the builtin array, a measurement PR, an infrastructure PR, the switch, and the
+  cleanup. 0026 stays proposed until the measurement exists.
+- 2026-11-15: Characterization PR (stage 1 of 0026), tests only, written against the unchanged builtin array and
+  passing on it: eight e2e fixtures at -O0 to -O3 plus the automatic differential check
+  (`array_destroy_order`: end of scope, overwrite, `?`, early return, a literal with a fallible element, a nested array
+  emptied by `removeLast`; `array_element_classes`: scalars, strings, nested arrays, dictionaries, function values,
+  optionals, unit values; `array_zero_state`: a moved-out field, an uninitialized `var`, an `Optional` payload, drain
+  then `consumeEmpty`; `array_recursive_types`: `Tree`, a non-indirect `Json`, mutual recursion;
+  `array_dictionary_interplay`; `array_constant_uses`: read, copy, task input and result; `array_evaluation_order`;
+  `array_trap_order`, which pins that 7 is printed and 20 is not) and `CompilerArrayCharacterizationTests`
+  (11 tests of diagnostics: type spellings, unknown member, extension rejection, `for-in`, a user type named `Array`,
+  copy and linear reasons, markers and index types, `Never` and function-value elements). The two diagnostics
+  0026 changes are marked `CHANGES WITH 0026` in the test. Output values were checked by hand against the language
+  rules, not taken from the compiler. Windows x64 Debug: 65 of 65 pass. Findings while writing them: `[Int] == [Int]`
+  type checks today and then fails in the backend with `llvm.invalid-module` (a pre-existing defect that plan 0012
+  owns; not pinned as behavior); a user type named `Array` prints as `Array` today, which 0026 already lists as a
+  change. Not added because fixtures already exist: native `[String]` and `[UInt8]` parameters and `main(args:)`
+  (`entry_arguments`, `entry_argument_bytes`), `String.utf8()` (`string_utf8`), `[Void]` bounds (`unit_array_bounds`),
+  the removeLast and consumeEmpty cases (`array_remove_last`, `array_consume_empty`).
+- 2026-11-15: `scripts/validate.py` on c72d13a (the characterization PR) passes. Windows x64: Debug and Release
+  build, `ctest` 1802 of 1802 and `fern test` 7 of 7 (`ValidationScriptTests`, `Fern.Manifest`, `Fern.Workspace` and
+  `Compression.Interoperability` passed only on the validator's rerun, the known parallel-load pattern). Linux x86_64
+  (WSL, a fresh Git clone): Debug and Release build, `ctest` 1778 of 1778 and `fern test` 7 of 7, no reruns. macOS
+  is run by the user and not reported here.
 

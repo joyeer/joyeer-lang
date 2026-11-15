@@ -1,0 +1,23 @@
+// Array removal baseline (plan 0011, phase 3): fill an array and drain it with removeLast, which moves
+// each element into an optional. Not a test; see README.md.
+func main() {
+    var total = 0
+    var round = 0
+    while round < 3000 {
+        var items: [Int] = []
+        var index = 0
+        while index < 512 {
+            &items.append(element: index)
+            index = index + 1
+        }
+        while true {
+            let popped = &items.removeLast()
+            match popped {
+                .Some(value) => { total = total + value },
+                .None => { break },
+            }
+        }
+        round = round + 1
+    }
+    print(value: total)
+}
