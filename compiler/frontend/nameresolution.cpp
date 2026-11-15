@@ -947,6 +947,10 @@ private:
                 { addressParameter(),
                   CallableParameter { std::string("count"), true, std::nullopt, std::nullopt, intType } },
                 voidType);
+        layoutIntrinsic("joyeer_intrinsic_slot_address",
+                { CallableParameter { std::string("base"), true, std::nullopt, std::nullopt, intType },
+                  CallableParameter { std::string("index"), true, std::nullopt, std::nullopt, intType } },
+                intType);
         layoutIntrinsic("joyeer_intrinsic_clone_callback", {}, intType);
         layoutIntrinsic("joyeer_intrinsic_destroy_callback", {}, intType);
         layoutIntrinsic("joyeer_intrinsic_callback_address",

@@ -87,6 +87,7 @@ bool producesValue(Opcode opcode) {
         case Opcode::pointerToInteger:
         case Opcode::cloneCallback:
         case Opcode::destroyCallback:
+        case Opcode::slotAddress:
             return true;
         default:
             return false;
@@ -1784,12 +1785,14 @@ VerificationResult Verifier::verify(const Module& module) const {
                     case Opcode::destroyRange:
                     case Opcode::cloneAt:
                     case Opcode::linearRangeGuard:
+                    case Opcode::slotAddress:
                     case Opcode::cloneCallback:
                     case Opcode::destroyCallback: {
-                        const bool callback = instruction.opcode == Opcode::cloneCallback ||
+                        const bool noOperands = instruction.opcode == Opcode::cloneCallback ||
                                 instruction.opcode == Opcode::destroyCallback;
+                        const bool yieldsInt = noOperands || instruction.opcode == Opcode::slotAddress;
                         const bool guard = instruction.opcode == Opcode::linearRangeGuard;
-                        const size_t expected = callback ? 0 : guard ? 1 : 2;
+                        const size_t expected = noOperands ? 0 : guard ? 1 : 2;
                         if (requireShape(expected, 0)) {
                             for (const auto* operand : operands) {
                                 const auto* operandType = operand != nullptr && types.contains(operand->type)
@@ -1801,13 +1804,13 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 }
                             }
                         }
-                        if (callback) {
+                        if (yieldsInt) {
                             const auto* result = instruction.result.has_value() && types.contains(instruction.result->type)
                                     ? types.at(instruction.result->type) : nullptr;
                             if (result == nullptr || result->kind != typing::TypeKind::integer ||
                                 instruction.result->category != ValueCategory::value) {
                                 report(VerificationErrorId::typeMismatch, functionId, block.id, location,
-                                       "a callback query yields an Int");
+                                       std::string(opcodeName(instruction.opcode)) + " yields an Int");
                             }
                         } else if (instruction.result.has_value()) {
                             report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
@@ -2957,6 +2960,7 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::cloneCallback: return "clone_callback";
         case Opcode::destroyCallback: return "destroy_callback";
         case Opcode::linearRangeGuard: return "linear_range_guard";
+        case Opcode::slotAddress: return "slot_address";
         case Opcode::call: return "call";
         case Opcode::functionAddress: return "function_address";
         case Opcode::callIndirect: return "call_indirect";
@@ -3226,6 +3230,7 @@ std::string dump(const Module& module) {
                         break;
                     case Opcode::destroyRange:
                     case Opcode::cloneAt:
+                    case Opcode::slotAddress:
                         out << " of type " << instruction.integerValue;
                         for (size_t index = 0; index < instruction.operands.size(); ++index) {
                             out << (index == 0 ? " " : ", ") << valueName(instruction.operands[index]);

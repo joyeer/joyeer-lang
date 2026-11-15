@@ -256,6 +256,20 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
             builder.SetInsertPoint(exit);
             break;
         }
+        case Opcode::slotAddress: {
+            // Element `index` of a run of `T` slots: `base + index * size`, unchecked; the library checks the
+            // bounds. A plain (not `inbounds`) GEP, so an address that is never loaded through, or a zero-size
+            // element at base 0, is an ordinary value and not poison (decision 0026).
+            const auto id = static_cast<ir::TypeId>(instruction.integerValue);
+            if (unit(id)) {
+                result = argument(0);
+                break;
+            }
+            auto* base = builder.CreateIntToPtr(argument(0), pointer());
+            result = builder.CreatePtrToInt(
+                    builder.CreateGEP(llvmType(id), base, { argument(1) }), builder.getInt64Ty());
+            break;
+        }
         case Opcode::cloneAt: {
             const auto id = static_cast<ir::TypeId>(instruction.integerValue);
             copy(id, builder.CreateIntToPtr(argument(0), pointer()), builder.CreateIntToPtr(argument(1), pointer()));

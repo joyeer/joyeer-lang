@@ -32,6 +32,9 @@ struct Box<T> {
     var inner: T
 }
 
+struct Empty {
+}
+
 func sizeOf<T>(value: T): Int {
     return joyeer_intrinsic_size_of<T>()
 }
@@ -42,6 +45,10 @@ func roundTrip<T>(value: consuming T): T {
     let moved = joyeer_intrinsic_move_out<T>(address: block)
     release(address: block)
     return moved
+}
+
+func slotOf<T>(base: Int, index: Int, sample: T): Int {
+    return joyeer_intrinsic_slot_address<T>(base: base, index: index)
 }
 
 func discard<T>(value: consuming T) {
@@ -73,6 +80,14 @@ func exercise(): Int {
     let text = roundTrip(value: consume "hello")
     if text.count != 5 { return 13 }
     if joyeer_intrinsic_size_of<Bool>() != 1 { return 14 }
+
+    // slot_address is base + index * size, unchecked; a zero-size element stays at base (decision 0026).
+    if joyeer_intrinsic_slot_address<Int>(base: 1000, index: 3) != 1024 { return 15 }
+    if joyeer_intrinsic_slot_address<Pair>(base: 1000, index: 2) != 1032 { return 16 }
+    if joyeer_intrinsic_slot_address<Void>(base: 1000, index: 5) != 1000 { return 17 }
+    if joyeer_intrinsic_slot_address<Empty>(base: 0, index: 5) != 0 { return 18 }
+    if slotOf(base: 1000, index: 1, sample: "x") != 1016 { return 19 }
+    if joyeer_intrinsic_slot_address<Int>(base: 1000, index: 0 - 1) != 992 { return 20 }
 
     // destroy_at runs the deinit exactly once.
     discard(value: consume Token(id: 8))

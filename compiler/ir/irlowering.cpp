@@ -3421,6 +3421,28 @@ private:
             recordValue(result, ValueOwnership::trivial);
             return result;
         }
+        if (name == "joyeer_intrinsic_slot_address") {
+            if (expression->arguments.size() != 2) {
+                report(DiagnosticId::unsupportedSyntax, expression->span, "'" + name + "' takes a base and an index");
+                return std::nullopt;
+            }
+            std::vector<ir::ValueId> operands;
+            for (const auto& argument : expression->arguments) {
+                auto value = lowerExpression(argument->value);
+                if (!value.has_value()) return std::nullopt;
+                value = coerce(*value, model->types().intType(), argument->value->span);
+                if (!value.has_value()) return std::nullopt;
+                operands.push_back(value->id);
+            }
+            auto instruction = makeInstruction(ir::Opcode::slotAddress, expression->span);
+            instruction.integerValue = static_cast<int64_t>(type);
+            instruction.operands = std::move(operands);
+            instruction.result = makeValue(model->types().intType(), ir::ValueCategory::value);
+            const auto result = *instruction.result;
+            emit(std::move(instruction));
+            recordValue(result, ValueOwnership::trivial);
+            return result;
+        }
         if (name == "joyeer_intrinsic_destroy_range" || name == "joyeer_intrinsic_clone_at") {
             if (expression->arguments.size() != 2) {
                 report(DiagnosticId::unsupportedSyntax, expression->span, "'" + name + "' takes two Int arguments");

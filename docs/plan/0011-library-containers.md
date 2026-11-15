@@ -6,7 +6,7 @@
   [0023](../decisions/0023-library-concurrency.md) (completed concurrency-library migration),
   [0024](../decisions/0024-library-optional-and-result.md) (Phase 1, accepted and merged in #26; macOS validation open),
   [0025](../decisions/0025-library-collection-capabilities.md) (Phase 2 capabilities, accepted and merged in #27),
-  [0026](../decisions/0026-library-array.md) (Phase 3 library `Array`, proposed)
+  [0026](../decisions/0026-library-array.md) (Phase 3 library `Array`, accepted)
 - Spec: [§2](../../specs/02-types.md), [§20](../../specs/20-protocols.md), and the affected
   ownership, expression, and pattern chapters in the [spec index](../../specs/README.md)
 
@@ -110,10 +110,21 @@ cannot express element-dependent copyability, linearity, and destruction through
 - [x] Benchmark construction, append/growth, borrowed indexing, removal, nested destruction,
   and draining arrays of linear handles before changing the implementation. Evidence: the baseline of the
   2026-11-15 log entry below (`tests/perf/array_*.joyeer`, `tests/perf/benchmark_arrays.py`).
-- [ ] Implement the existing array API in Joyeer, including constant-array clone boundaries,
-  exact allocation/free sizes, and `consumeEmpty` and its trap.
-- [ ] Preserve subscript/storage-path/exclusivity behavior and existing diagnostics/fixtures.
-- [ ] Remove array-specific opcodes, type kinds, and backend layout/ownership cases.
+- [x] Record the Phase 3 decision: [0026](../decisions/0026-library-array.md). The array algorithms are already Joyeer
+  (in the runtime), so the deliverable is a library `Array<T>` over them and the removal of the compiler's
+  array-specific paths, not a rewrite of the algorithms. Evidence: accepted by the user 2026-11-15 ("accept for now")
+  after three language-designer reviews, including the `-O0` amendment of 0025's gate.
+- [x] 0026 stage 1, characterization: tests on the builtin array that the switch must keep passing. Evidence: merged
+  in #28 (eight e2e fixtures, `CompilerArrayCharacterizationTests`), `validate.py` on Windows and Linux (log).
+- [ ] 0026 stage 2, measurement: the cost of a library array's element access and drop against the builtin, the fixes
+  it requires (`alwaysinline` on the addressor, the `slot_address` intrinsic), and the gate numbers. Evidence so far:
+  the log entries of 2026-11-15; open until the measurement change is reviewed and merged.
+- [ ] 0026 stage 3, infrastructure: the collections prelude, the test seam, `place_address`, `stack_block`, the
+  `array_literal` role, internal linkage of prelude instances; tested with a `Buffer<T>` declaration.
+- [ ] 0026 stage 4, the switch: the existing array API in Joyeer (constant-array clone boundaries, exact
+  allocation/free sizes, `consumeEmpty` and its trap) as the bundled `Array`, with subscript, storage-path and
+  exclusivity behavior, diagnostics and the characterization fixtures preserved; the cost gate of 0026 Section 4.
+- [ ] 0026 stage 5, cleanup: remove array-specific opcodes, the type kind, and backend layout/ownership cases.
 - [ ] Benchmark again in both profiles, complete adversarial/role reviews, and run full
   platform validation.
 
@@ -419,4 +430,29 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   `Compression.Interoperability` passed only on the validator's rerun, the known parallel-load pattern). Linux x86_64
   (WSL, a fresh Git clone): Debug and Release build, `ctest` 1778 of 1778 and `fern test` 7 of 7, no reruns. macOS
   is run by the user and not reported here.
+- 2026-11-15: Stage 2 of 0026 (measurement), on `feat/library-array-switch`. New tools: `array-addressor-probe`
+  (builds a program against a library array supplied as a source file through the role-prelude seam),
+  `tests/perf/benchmark_addressor.py` and the `array_index_*` and `array_drop_*` pairs. Result: the 0025 addressor as
+  merged was not good enough at `-O0` (library over builtin 1.84 [1.78, 1.89]) because it was a call and its address
+  arithmetic was overflow-checked; marking it `alwaysinline` gave 1.47, and a new unchecked layout intrinsic
+  `slot_address` (one opcode, wire version 21) plus one comparison per `if` gave 1.10 [1.05, 1.11] at `-O0` (1.12 with
+  full debug information) and 0.94 at `-O2`. Create-and-drop is 0.95 and 0.88, so the `NoInline` helper is not a
+  measurable cost. 0026 Section 4 records the table and fixes the gate numbers; the decision awaits the user's
+  acceptance. The alias-information mapping and narrowing instance discovery were judged unnecessary for now.
+  Windows x64, idle machine, 25 repetitions.
+- 2026-11-15: Reviews of the measurement change (language designer on 0026, IR/backend and type system on the code,
+  separately). No soundness issue in the code. The 0026 review gave accept with changes and found the previous log
+  entry overclaimed: the drop pair was not like for like (a different allocation path and `deinit`), so "not a
+  measurable cost" did not follow, and the `-O0` gate had been loosened from 1.10 to 1.15 after measuring without saying
+  so. Changes: `slot_address` is a plain GEP (no `inbounds`, so an address never loaded through is not poison); the
+  prototype library array now uses the runtime create function, the real header and 0026's `deinit`; the tests pin the
+  element GEP and per-instance lowering, cover the verifier's malformed forms and the wire round trip, and
+  `tests/c-interop/layout-intrinsics.joyeer` checks the arithmetic; §20.12.5 states the contract. Remeasured (Windows
+  x64, 25 interleaved repetitions, 50 for one rerun): `index` 1.11 [1.09, 1.13] at `-O0` and 0.96 [0.93, 0.99] at
+  `-O2`; `drop` 1.06 to 1.09 at `-O0` and 1.00 at `-O2`. The builtin baseline was re-recorded with 50 repetitions;
+  `array_append_growth` at `-O0` is now tight (437.7 / 450.5 ms) and is gated. 0026 revision 3 proposes an explicit
+  `-O0` amendment of 0025's gate (median at most 1.15, revision 2 had proposed 1.10) with size, compile-time, rerun and
+  missed-gate rules; it needs the user's acceptance.
+- 2026-11-15: The user accepted 0026 revision 3 "for now", including the `-O0` gate amendment (median at most 1.15),
+  and asked to implement first; the decision is revisited if the switch's measurement contradicts it.
 

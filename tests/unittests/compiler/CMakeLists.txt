@@ -182,6 +182,18 @@ joyeer_discover_tests(LLVMBackendTests
         PROPERTIES LABELS llvm-backend
 )
 
+# A measurement tool, not a test (plan 0011 phase 3, decision 0026): builds a program against a library array
+# supplied as a source file. Build it explicitly: cmake --build <dir> --target array-addressor-probe
+add_executable(array-addressor-probe EXCLUDE_FROM_ALL
+        ${JOYEER_TESTS_DIR}/perf/array_addressor_probe.cpp
+)
+target_link_libraries(array-addressor-probe PRIVATE JoyeerCompilerCore)
+target_compile_definitions(array-addressor-probe PRIVATE
+        JOYEER_PROBE_RUNTIME_LIBRARY="$<TARGET_FILE:JoyeerRuntime>"
+        JOYEER_ROLES_SOURCE="${JOYEER_SOURCE_DIR}/lib/Runtime/roles.joyeer"
+)
+add_dependencies(array-addressor-probe JoyeerRuntime)
+
 add_executable(BackendAbiTests
         backend_abi_test.c
 )

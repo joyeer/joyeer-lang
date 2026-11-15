@@ -619,8 +619,10 @@ declaration may accept a linear type argument; no user declaration or `--runtime
 claim this metadata. The body is still checked once. Structures with an implicitly destructible
 field of such a parameter remain subject to the ordinary linear/deinit restrictions.
 
-In the compiler-owned prelude only, size, alignment, stack slots, `move_in`, and `move_out` may
-operate on linear/must-transfer types. `destroy_at` never accepts one. The private affine task-block
+In the compiler-owned prelude only, size, alignment, stack slots, `move_in`, `move_out`, and the collection
+intrinsics below except `clone_at` (`destroy_range`, the two callback queries and `slot_address`) may operate on
+linear/must-transfer types. `destroy_at` and `needs_destroy` never accept one, and `clone_at` needs a copyable
+type. The private affine task-block
 owner traps on abandonment rather than attempting to destroy a raw linear task input or result.
 `@compiler_role(...)` is a closed compatibility role for prelude declarations: it selects the
 existing contextual §21 diagnostics and restrictions, never layout. The `optional` and `result` roles
@@ -650,7 +652,8 @@ from the linear-not-consumed exit check and is destroyed after the body; the met
 returning unless the container is empty (`array not empty`), and `deinit` of a linear container that is not
 empty traps `linear container dropped while not empty`.
 
-Four further layout intrinsics, authorized units only, with explicit type arguments:
+Five further layout intrinsics, authorized units only (the bundled prelude and `--runtime-module` units),
+with explicit type arguments:
 
 | Function | Meaning |
 |---|---|
@@ -658,6 +661,7 @@ Four further layout intrinsics, authorized units only, with explicit type argume
 | `joyeer_intrinsic_destroy_range<T>(address: Int, count: Int)` | Destroys `count` live elements; for a linear `T` it instead traps `linear container dropped while not empty` when `count != 0` |
 | `joyeer_intrinsic_clone_callback<T>(): Int` | The address of the per-type clone helper kept in an array header, or `0` when none applies (always for a noncopyable `T`) |
 | `joyeer_intrinsic_destroy_callback<T>(): Int` | The address of the per-type destroy helper, or `0` when none applies (always for a linear or trivial `T`) |
+| `joyeer_intrinsic_slot_address<T>(base: Int, index: Int): Int` | `base + index * size_of<T>()` with no overflow or bounds check ([0026](../docs/decisions/0026-library-array.md)): the address of element `index` of a run of `T` slots starting at `base`. For a zero-size `T` it is `base`. The result is an ordinary integer, defined for any operands, but it is a valid place only when `base` is the start of a run of at least `n` `T` slots in one live block and `0 <= index < n` (`index == n` is the end address, which must not be accessed). Library code checks the index before it accesses the result, and keeps byte counts for allocation in checked arithmetic |
 
 For an `array_type` value `a`, `a[i]` calls the `array_element` addressor and then accesses the returned
 address as a place of the first type argument. Ordering, exclusivity (§4.4) and the consuming, borrowing,

@@ -15,6 +15,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <regex>
+#include <set>
 #include <string>
 
 namespace {
@@ -417,7 +419,7 @@ TEST_F(CollectionRoleTest, TheRoleStructKeepsTheThreeWordLayoutWithoutALiveFlag)
 }
 
 TEST_F(CollectionRoleTest, TheWireCarriesTheCollectionRolesAndAdvancesItsVersion) {
-    EXPECT_EQ(joyeer::llvmbackend::wire::version, 20u);
+    EXPECT_EQ(joyeer::llvmbackend::wire::version, 21u);
     load("func first(items: Buffer<Int>): Int { return items[0] }\n");
     const auto module = lower();
     ASSERT_NE(module, nullptr);
@@ -460,6 +462,24 @@ joyeer::ir::Function& named(joyeer::ir::Module& module, const std::string& name)
                                     [&](const auto& function) { return function.name == name; });
     EXPECT_NE(found, module.functions.end()) << name;
     return module.functions.at(static_cast<size_t>(std::distance(module.functions.begin(), found)));
+}
+
+// Inserts `added` right after the first integer constant of `function`, in that constant's own block, with
+// `operands` copies of the constant as operands and, when `yieldsInt`, a fresh Int result.
+bool insertAfterIntConstant(joyeer::ir::Function& function, joyeer::ir::Instruction added, unsigned operands,
+                            bool yieldsInt) {
+    for (auto& block : function.blocks) {
+        for (auto it = block.instructions.begin(); it != block.instructions.end(); ++it) {
+            if (it->opcode != joyeer::ir::Opcode::integerConstant || !it->result.has_value()) continue;
+            const auto constant = *it->result;
+            if (added.integerValue == 0) added.integerValue = static_cast<int64_t>(constant.type);
+            for (unsigned index = 0; index < operands; ++index) added.operands.push_back(constant.id);
+            if (yieldsInt) added.result = joyeer::ir::Value { 9000, constant.type, joyeer::ir::ValueCategory::value };
+            block.instructions.insert(it + 1, std::move(added));
+            return true;
+        }
+    }
+    return false;
 }
 
 TEST_F(CollectionRoleTest, TheVerifierAcceptsTheLoweredModuleAndRejectsEachMalformedForm) {
@@ -519,26 +539,17 @@ TEST_F(CollectionRoleTest, TheVerifierAcceptsTheLoweredModuleAndRejectsEachMalfo
     }
     // Each new opcode is runtime-only: a user function that carries one is rejected.
     for (const auto opcode : { Opcode::destroyRange, Opcode::cloneAt, Opcode::linearRangeGuard,
-                               Opcode::cloneCallback, Opcode::destroyCallback }) {
+                               Opcode::cloneCallback, Opcode::destroyCallback, Opcode::slotAddress }) {
         auto copy = std::make_shared<joyeer::ir::Module>(*module);
         auto& function = named(*copy, "first");
-        auto* constant = find(function, Opcode::integerConstant);
-        ASSERT_NE(constant, nullptr);
         joyeer::ir::Instruction added { opcode };
-        added.integerValue = static_cast<int64_t>(constant->result->type);
-        const auto count = opcode == Opcode::destroyRange || opcode == Opcode::cloneAt ? 2u
-                         : opcode == Opcode::linearRangeGuard ? 1u : 0u;
-        for (unsigned index = 0; index < count; ++index) added.operands.push_back(constant->result->id);
-        if (opcode == Opcode::cloneCallback || opcode == Opcode::destroyCallback) {
-            added.result = joyeer::ir::Value { 9000, constant->result->type, joyeer::ir::ValueCategory::value };
-        }
-        auto& instructions = function.blocks.front().instructions;
-        // Place it right after the constant so every operand is defined.
-        const auto at = std::find_if(instructions.begin(), instructions.end(),
-                                     [&](const auto& candidate) { return &candidate == constant; });
-        instructions.insert(at + 1, added);
-        EXPECT_NE(verifierMessages(*copy).find("runtime authorization"), std::string::npos)
-                << static_cast<int>(opcode) << "\n" << verifierMessages(*copy);
+        const auto count = opcode == Opcode::cloneCallback || opcode == Opcode::destroyCallback ? 0u
+                         : opcode == Opcode::linearRangeGuard ? 1u : 2u;
+        const bool yieldsInt = opcode == Opcode::cloneCallback || opcode == Opcode::destroyCallback ||
+                               opcode == Opcode::slotAddress;
+        ASSERT_TRUE(insertAfterIntConstant(function, added, count, yieldsInt));
+        EXPECT_NE(verifierMessages(*copy).find("a collection capability requires runtime authorization"),
+                  std::string::npos) << static_cast<int>(opcode) << "\n" << verifierMessages(*copy);
     }
 }
 
@@ -967,6 +978,164 @@ TEST_F(CollectionRoleTest, CloneAtOfANoncopyableTypeIsRejectedWhereItIsWritten) 
     load("func main() {}\n", library);
     ASSERT_TRUE(resolution.succeeded()) << diagnostics();
     EXPECT_TRUE(hasTypeDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidTypeArgument)) << diagnostics();
+}
+
+// ---- slot_address and the inlined addressor (decision 0026, measurement) ----
+
+TEST_F(CollectionRoleTest, SlotAddressIsAnAuthorizedUncheckedElementAddress) {
+    // Rejected in user code like every layout intrinsic, with and without written type arguments.
+    load("func main() {\n    let address = joyeer_intrinsic_slot_address<Int>(base: 0, index: 1)\n}\n");
+    ASSERT_TRUE(resolution.succeeded()) << diagnostics();
+    EXPECT_TRUE(hasTypeDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::unauthorizedIntrinsic))
+            << diagnostics();
+    load("func main() {\n    print(value: joyeer_intrinsic_slot_address(base: 0, index: 1))\n}\n");
+    ASSERT_TRUE(resolution.succeeded()) << diagnostics();
+    EXPECT_TRUE(hasTypeDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::unauthorizedIntrinsic))
+            << diagnostics();
+    // Used by a library addressor it lowers to one opcode per instance and verifies.
+    const auto library = buffer(bufferHead, R"(
+    @compiler_role(array_element)
+    public borrowing func element(index: Int): Int {
+        return joyeer_intrinsic_slot_address<T>(base: self.address, index: index)
+    }
+)", bufferCopy, bufferEnd, bufferTail);
+    load("func first(items: Buffer<Int>): Int { return items[1] }\n"
+         "func text(items: Buffer<String>): Int { return items[0].count }\n"
+         "func unit(items: Buffer<Void>) { let value = items[2] }\n", library);
+    const auto module = lower();
+    ASSERT_NE(module, nullptr);
+    EXPECT_EQ(verifierMessages(*module).find("ir."), std::string::npos) << verifierMessages(*module);
+    std::set<int64_t> elementTypes;
+    for (const auto& function : module->functions) {
+        for (const auto& block : function.blocks) {
+            for (const auto& instruction : block.instructions) {
+                if (instruction.opcode == joyeer::ir::Opcode::slotAddress) elementTypes.insert(instruction.integerValue);
+            }
+        }
+    }
+    EXPECT_EQ(elementTypes.size(), 3u) << "one slot_address per element type";
+    joyeer::llvmbackend::EmitOptions options;
+    options.optimizationLevel = joyeer::OptimizationLevel::O0;
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(*module, options);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    const auto& text = emitted.text;
+    // The addressor is `alwaysinline`, and the element address is a plain getelementptr over the element type,
+    // with no overflow check (a field access is an `inbounds` getelementptr over the struct type instead).
+    EXPECT_NE(text.find("alwaysinline"), std::string::npos) << text;
+    EXPECT_TRUE(std::regex_search(text, std::regex(R"(= getelementptr i64, ptr %[^,]+, i64 %)"))) << text;
+    EXPECT_TRUE(std::regex_search(text, std::regex(R"(= getelementptr %joyeer\.string, ptr %[^,]+, i64 %)"))) << text;
+    EXPECT_EQ(text.find("smul.with.overflow"), std::string::npos) << text;
+}
+
+TEST_F(CollectionRoleTest, SlotAddressMalformedFormsAreRejectedByTheVerifier) {
+    using joyeer::ir::Opcode;
+    // Each form is placed in the addressor, a runtime function, so only the targeted rule can fire.
+    const auto library = buffer(bufferHead, R"(
+    @compiler_role(array_element)
+    public borrowing func element(index: Int): Int {
+        return joyeer_intrinsic_slot_address<T>(base: self.address + 0, index: index)
+    }
+)", bufferCopy, bufferEnd, bufferTail);
+    load("func first(items: Buffer<Int>): Int { return items[1] }\n", library);
+    const auto module = lower();
+    ASSERT_NE(module, nullptr);
+    ASSERT_EQ(verifierMessages(*module).find("ir."), std::string::npos) << verifierMessages(*module);
+    const auto addressor = [](joyeer::ir::Module& value) -> joyeer::ir::Function& {
+        for (auto& function : value.functions) {
+            if (function.elementAddressor) return function;
+        }
+        ADD_FAILURE() << "no element addressor";
+        return value.functions.front();
+    };
+    const auto typeNamed = [&](const std::string& name) {
+        for (const auto& type : module->types) {
+            if (type.name == name) return static_cast<int64_t>(type.id);
+        }
+        ADD_FAILURE() << name;
+        return int64_t { 0 };
+    };
+    struct Case {
+        const char* what;
+        unsigned operands;
+        bool yieldsInt;
+        int64_t type;
+        const char* expected;
+    };
+    const std::vector<Case> cases {
+        { "one operand", 1, true, typeNamed("Int"), "expects 2 operand(s)" },
+        { "three operands", 3, true, typeNamed("Int"), "expects 2 operand(s)" },
+        { "no result", 2, false, typeNamed("Int"), "slot_address yields an Int" },
+        { "Never element", 2, true, typeNamed("Never"), "needs a concrete type with values" },
+        { "unknown element", 2, true, 999999, "needs a concrete type with values" },
+    };
+    for (const auto& form : cases) {
+        SCOPED_TRACE(form.what);
+        auto copy = std::make_shared<joyeer::ir::Module>(*module);
+        joyeer::ir::Instruction added { Opcode::slotAddress };
+        added.integerValue = form.type;
+        ASSERT_TRUE(insertAfterIntConstant(addressor(*copy), added, form.operands, form.yieldsInt));
+        EXPECT_NE(verifierMessages(*copy).find(form.expected), std::string::npos) << verifierMessages(*copy);
+    }
+    {   // A Bool result and a Bool operand.
+        auto copy = std::make_shared<joyeer::ir::Module>(*module);
+        joyeer::ir::Instruction added { Opcode::slotAddress };
+        added.integerValue = typeNamed("Int");
+        ASSERT_TRUE(insertAfterIntConstant(addressor(*copy), added, 2, true));
+        for (auto& block : addressor(*copy).blocks) {
+            for (auto& instruction : block.instructions) {
+                if (instruction.opcode == Opcode::slotAddress && instruction.result.has_value() &&
+                    instruction.result->id == 9000) {
+                    instruction.result->type = static_cast<joyeer::ir::TypeId>(typeNamed("Bool"));
+                }
+            }
+        }
+        EXPECT_NE(verifierMessages(*copy).find("slot_address yields an Int"), std::string::npos)
+                << verifierMessages(*copy);
+    }
+    {   // A target list.
+        auto copy = std::make_shared<joyeer::ir::Module>(*module);
+        joyeer::ir::Instruction added { Opcode::slotAddress };
+        added.integerValue = typeNamed("Int");
+        added.targets = { 0 };
+        ASSERT_TRUE(insertAfterIntConstant(addressor(*copy), added, 2, true));
+        EXPECT_NE(verifierMessages(*copy).find("0 target(s)"), std::string::npos) << verifierMessages(*copy);
+    }
+}
+
+TEST_F(CollectionRoleTest, TheWireRoundTripKeepsSlotAddressInstructions) {
+    const auto library = buffer(bufferHead, R"(
+    @compiler_role(array_element)
+    public borrowing func element(index: Int): Int {
+        return joyeer_intrinsic_slot_address<T>(base: self.address, index: index)
+    }
+)", bufferCopy, bufferEnd, bufferTail);
+    load("func first(items: Buffer<Int>): Int { return items[1] }\n", library);
+    const auto module = lower();
+    ASSERT_NE(module, nullptr);
+    const auto collect = [](const joyeer::ir::Module& value) {
+        std::vector<std::string> found;
+        for (const auto& function : value.functions) {
+            for (const auto& block : function.blocks) {
+                for (const auto& instruction : block.instructions) {
+                    if (instruction.opcode != joyeer::ir::Opcode::slotAddress) continue;
+                    std::string line = std::to_string(instruction.integerValue);
+                    for (const auto operand : instruction.operands) line += "," + std::to_string(operand);
+                    line += "->" + std::to_string(instruction.result.has_value() ? instruction.result->id : 0);
+                    found.push_back(line);
+                }
+            }
+        }
+        return found;
+    };
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    EXPECT_EQ(collect(decoded), collect(*module));
+    EXPECT_EQ(collect(*module).size(), 1u);
+    EXPECT_EQ(verifierMessages(decoded).find("ir."), std::string::npos) << verifierMessages(decoded);
 }
 
 } // namespace

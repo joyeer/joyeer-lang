@@ -5099,10 +5099,12 @@ private:
         }
         if (expression->arguments.empty()) return error;
         checkAddress(0);
-        if (name == "joyeer_intrinsic_clone_at" || name == "joyeer_intrinsic_destroy_range") {
+        if (name == "joyeer_intrinsic_clone_at" || name == "joyeer_intrinsic_destroy_range" ||
+            name == "joyeer_intrinsic_slot_address") {
             if (expression->arguments.size() != 2) return error;
             checkAddress(1);
-            return model->typeContext.voidType();
+            return name == "joyeer_intrinsic_slot_address" ? model->typeContext.intType()
+                                                           : model->typeContext.voidType();
         }
         if (name == "joyeer_intrinsic_move_in") {
             if (expression->arguments.size() != 2) return error;

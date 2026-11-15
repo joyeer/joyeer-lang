@@ -70,7 +70,7 @@ and `compiler/backend/`:
 | [native_module.h](../../compiler/backend/native_module.h) | Backend-only context/module storage and opaque handle definition |
 | [native_ir.h](../../compiler/backend/native_ir.h) | One lowering session's state, caches, and responsibility declarations |
 | [native_types.cpp](../../compiler/backend/native_types.cpp) | Construction sequence, type/layout mapping, runtime declarations, globals, and stack utilities |
-| [native_ownership.cpp](../../compiler/backend/native_ownership.cpp) | Type-specific clone/destroy helpers and active-payload ownership; a destroy helper calls the struct `deinit` first when the live flag is set. Helper bodies are emitted after every source function is declared |
+| [native_ownership.cpp](../../compiler/backend/native_ownership.cpp) | Type-specific clone/destroy helpers and active-payload ownership; a destroy helper calls the struct `deinit` first when the live flag is set (unconditionally for an inert-zero library array). Helper bodies are emitted after every source function is declared. A helper has no debug scope, so one that calls a `deinit` or a copier is `NoInline`: inlining it would corrupt the callee's inlined debug scopes. Conversely an element addressor of a library array is `alwaysinline`, so `a[i]` is inlined even at -O0 ([0026](../decisions/0026-library-array.md)) |
 | [native_functions.cpp](../../compiler/backend/native_functions.cpp) | Functions, instructions, checked arithmetic, patterns, and runtime entry adapters |
 | [native_collections.cpp](../../compiler/backend/native_collections.cpp) | Arrays, dictionaries, bounds checks, and runtime ownership callbacks |
 | [native_host.cpp](../../compiler/backend/native_host.cpp) | External builtins (`print`, byte conversions), native-binding calls, and the memory intrinsics |
@@ -99,7 +99,7 @@ interfaces change. This is not a backward-compatibility promise between
 development revisions: rebuild and deploy the compiler and backend together
 from the same revision. The interface includes module construction, printing,
 destruction, and the object options' module handle. The private IR wire version
-is version 20. Numeric fields use 64-bit little-endian encoding; strings are
+is version 21. Numeric fields use 64-bit little-endian encoding; strings are
 length-prefixed arbitrary bytes.
 Inputs and callback messages are borrowed only during a call. Callbacks must
 not throw, and clients must never delete or interpret the opaque handle.

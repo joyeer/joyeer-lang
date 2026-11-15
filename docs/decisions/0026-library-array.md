@@ -1,9 +1,11 @@
 # 0026: `Array<T>` as a library struct
 
-- Status: proposed (2026-11-15, revision 2 after a language-designer review)
-- Spec: not yet. On acceptance §2.6 (the `Array` text), §2.6.2 and §2.6.4 (the members), §3.1.1 (constant arrays),
-  §19 (native `[String]` and `[UInt8]`), §20.12.5 (the `array_literal` role and the place-address intrinsic) and
-  §21.2.2 change; §2.6 stops calling `Array` a type the compiler understands directly.
+- Status: accepted (2026-11-15, revision 3, by the user "for now", including the `-O0` gate amendment of Section 4;
+  revisited if the switch's measurement contradicts it)
+- Spec: §20.12.5 lists `joyeer_intrinsic_slot_address` (added by the measurement change). On acceptance §2.6 (the
+  `Array` text), §2.6.2 and §2.6.4 (the members), §3.1.1 (constant arrays), §19 (native `[String]` and `[UInt8]`),
+  §20.12.5 (the `array_literal` role and `place_address`) and §21.2.2 change; §2.6 stops calling `Array` a type the
+  compiler understands directly.
 - Plan: [0011](../plan/0011-library-containers.md), Phase 3. Builds on [0025](0025-library-collection-capabilities.md).
 
 ## Context
@@ -32,8 +34,9 @@ inventory of the code (2026-11-15):
   runtime. The baseline of `tests/perf/array_*.joyeer` is recorded in the plan 0011 log.
 
 Phase 3 must remove the type kind, the opcodes and the array cases of the backend without changing a program that
-compiles today, its traps, its allocation sizes, or its performance outside measured noise. The few diagnostics and
-reports that do change are listed under Consequences.
+compiles today, its traps, or its allocation sizes, with no performance regression outside measured noise at `-O2`
+and a bounded cost at `-O0` (Section 4). The few diagnostics and reports that do change are listed under
+Consequences.
 
 ## What "done" means here
 
@@ -49,7 +52,9 @@ role and never to a spelling:
    the element type;
 4. `String.utf8()` (see Decision 2) and the byte-pointer descriptors, keyed on the role;
 5. the display of the role type as `[T]` and of syntactic `Array<X>` as `[X]` by name (`platform.cpp`), the same
-   display special case 0024 kept for `Optional`.
+   display special case 0024 kept for `Optional`;
+6. the `alwaysinline` attribute of the backend, keyed on the `elementAddressor` mark of the role's addressor, not
+   on arrays.
 
 `docs/impl/` states this set. The plan's wording "implement their existing operations in Joyeer" is reworded
 accordingly when the plan is next edited.
@@ -94,8 +99,9 @@ existing API: `count` (read-only outside), `append(element:)`, `removeLast()`, `
   and, for any other element, destroys the live elements last to first; clearing `count` first stops the runtime from
   destroying them again, so each element is destroyed once, `capacity` is untouched and the release size is right.
   The runtime's destroy of the zero handle returns, so a second destroy is a no-op.
-- `array_element` bounds-checks (`array index out of bounds`, also for `data == 0`) and returns
-  `data + index * size_of<T>()`.
+- `array_element` checks `index < 0` and `index >= count` with one comparison per `if` (`array index out of bounds`)
+  and returns `slot_address<T>(base: data, index: index)`. A live array always has a header, so `data == 0` implies
+  `count == 0` and the second check covers it.
 - `array_copy` calls `joyeer_array_clone_abi`; it exists only for a copyable `T`, so the header's clone callback is
   always valid when it runs.
 - `container_end` (`consumeEmpty`) calls `joyeer_array_consume_empty_abi`, which traps `array not empty` before
@@ -123,7 +129,7 @@ allocation counter, not the policy.
 - **Removal (last step).** `TypeKind::array`, the builtin `Array` registration, the array branches and the opcodes
   `array_append`, `array_remove_last`, `array_consume_empty`, `construct_array` and the array cases of `count`,
   `subscript` and `subscript_address` are removed. Numeric opcode encodings are not renumbered: the slots are held
-  (wire version 20 becomes 21 for the structure change and the removals).
+  (wire version 21 becomes 22 for the structure change and the removals).
 - **IR mark.** `StructureDefinition` replaces `inertZero` with a `role` enum (`none`, `array`), as `EnumerationRole`
   does in 0024, plus the existing `copier`. The element type is the structure's first type argument, not a separate
   field. The verifier checks the arity and the shape per role.
@@ -173,35 +179,88 @@ allocation counter, not the policy.
   concurrency prelude already refers to `Result`; a test pins it with a caller-supplied concurrency prelude.
 - **Packaging.** The embedded source needs `prelude_source.h.in`, `prelude.cpp`, `CMakeLists.txt`, the release
   staging and `docs/building.md`. Compile time is measured before and after.
-- **Linkage.** Prelude instances are internal, so `alwaysinline` copies are discarded after inlining.
+- **Linkage.** Today an instance of a prelude function in a user program has external linkage, so the out-of-line
+  copy of an inlined addressor survives (a size cost, measured above). The infrastructure change gives prelude
+  instances internal linkage, so the copies are discarded after inlining; the size gate checks it.
 
-### 4. Cost mechanism and its preconditions
+### 4. Cost mechanism, measurement and gates
 
-The addressor is emitted `alwaysinline`, and the backend's `-O0` pipeline is LLVM's `buildO0DefaultPipeline`, which
-includes the always-inliner. That is a reading, not a measurement, and 0025's addressor has never been measured. So
-before this record is accepted:
+**Mechanism.** The addressor is emitted `alwaysinline` (the backend sets the attribute on a function marked
+`elementAddressor`), and the backend's `-O0` pipeline is LLVM's `buildO0DefaultPipeline`, which runs the
+always-inliner. Its address is `joyeer_intrinsic_slot_address<T>(base: Int, index: Int): Int` (§20.12.5): `base +
+index * size` with no overflow check, a plain GEP in the backend, because the library checks the index first. The
+addressor is written with one comparison per `if`: a `||` costs a stack slot and two branches at `-O0`. Both the
+attribute and the intrinsic are implemented in the measurement change (wire version 21) and have tests.
 
-1. **Prototype and measure** the 0025 addressor on `tests/perf/array_index` at `-O0` and `-O2`, with line tables and
-   full debug information on. An inlined body at `-O0` keeps its allocas and loads, so "no regression" at `-O0` is
-   not assumed.
-2. **Debug scopes.** The repository already needs `NoInline` on helpers that have no `DISubprogram` and call a
-   function that has one (`native_ownership.cpp`). Today every destroy helper of a struct with a `deinit`, and every
-   clone helper with a copier, is `NoInline`, which would make every array drop non-inlinable even at `-O2`. Give
-   those helpers a `DISubprogram`, or apply `NoInline` only when debug information is on, and measure it.
-   The prototype covers every caller without a `DISubprogram`: ownership helpers, the entry wrapper and constant
-   initializers.
-3. **Alias information.** A role struct is `{i64, i64, i64}`, so element access goes through `inttoptr`. The backend
-   may map the first field to `ptr` while keeping the layout bit-identical; this is measured, not assumed.
-4. **Fallback.** If the prototype fails, the fallback is **not** an array-specific inline check in the backend (that
-   would keep an array special case). It is an IR-level inline-always expansion of any role-marked addressor, a
-   general mechanism.
+**Method.** `tests/perf/benchmark_addressor.py` builds `array_index_flat` and `array_drop_flat` with the compiler
+(the builtin array) and the matching `*_library` programs with `array-addressor-probe` over
+`array_buffer_prelude.joyeer`, a minimal library array that follows Decision 1: storage and header from the
+runtime's create function, the two-check addressor over `slot_address`, and `deinit` destroying the range, clearing
+the count and freeing the block. Two differences remain, both against the library: without `place_address` the create
+function writes into a stack slot that is read back, and `deinit` frees the block itself because the backend's own
+declaration of the runtime destroy function cannot be matched by a Joyeer binding. Both programs of a pair print the
+same checksum, and both use the same trap text. Everything was measured on Windows x64 (an idle machine), with the
+compilers of branch `feat/library-array-switch` on f9252c4 plus the measurement change, LLVM 22.1.8, one Release
+compiler building both profiles, 25 interleaved repetitions per configuration (50 for the rerun and the baseline), and
+the paired median ratio library/builtin with its 95% bootstrap interval.
 
-**Gate numbers** (proposed, confirmed or changed by the prototype, then fixed in this record): per program and
-profile the paired-bootstrap lower bound of the candidate/baseline median ratio is at most 1 (no regression outside
-noise) and the median ratio of `array_index` is at most 1.10 at `-O0` and 1.03 at `-O2`; the `hello` executable does
-not grow at `-O2`; compile time of `hello` grows by at most 15%. The baseline is re-recorded on a quiet machine
-(the `array_append_growth` `-O0` set was too noisy to detect anything), and the `--emit-llvm` comparison after
-type-id normalization is reported as a diagnostic.
+How the addressor got there (`index`, no debug information):
+
+| Addressor | -O0 | -O2 |
+|---|---|---|
+| as merged in 0025: a real call, overflow-checked arithmetic | 1.84 [1.78, 1.89] | 0.94 [0.91, 1.00] |
+| plus `alwaysinline` | 1.47 [1.42, 1.49] | 0.94 [0.81, 1.06] |
+| plus `slot_address` and one comparison per `if` | 1.11 [1.09, 1.13] (50 repetitions) | 0.96 [0.93, 0.99] (50 repetitions) |
+
+The final library array (the like-for-like prelude above) by debug mode:
+
+| Program | Debug | -O0 | -O2 |
+|---|---|---|---|
+| `index` | none (rerun, 50) | 1.11 [1.09, 1.13] | 0.96 [0.93, 0.99] |
+| `index` | line tables | 1.12 [0.99, 1.16] | 0.97 [0.88, 1.05] |
+| `index` | full | 1.11 [1.08, 1.12] | 1.00 [0.93, 1.03] |
+| `drop` | none | 1.06 [1.01, 1.10] | 1.00 [0.96, 1.01] |
+| `drop` | full | 1.09 [1.04, 1.13] | 1.00 [0.98, 1.04] |
+
+The first `index`/none run was disturbed at `-O2` (medians near 900 ms against a 90 ms minimum) and was rerun once at
+double the repetitions, as the rerun rule below allows. Every build with line tables and with full debug information
+passed the LLVM verifier and printed the right checksum. Executables grow by 1 KiB at `-O0` and 1.5 KiB at `-O2` for
+`index` and 1 KiB at both for `drop`.
+
+**Reading.** At `-O2` the library array costs nothing measurable. At `-O0` it costs about 10%: the inlined addressor
+keeps its parameter allocas and loads, and a drop adds the `NoInline` destroy helper and the library `deinit`. The
+`NoInline` stays: it guards inlined debug scopes in helpers that have no `DISubprogram` and is not array-specific;
+giving the helpers a scope is a possible later change if a gate needs it.
+
+**Gates.** Revision 2 of this record proposed, before any measurement, a median ratio of at most 1.10 at `-O0` and
+1.03 at `-O2` for `array_index`, and a lower interval bound of at most 1 for each of the five `array_*` programs; 0025
+asked for no regression outside noise and a bound on per-instance code size. The measurement shows that the `-O0`
+part cannot hold: 1.11 to 1.12 for `index` and 1.06 to 1.09 for `drop`. This record therefore **amends 0025's cost
+gate for `-O0` only**, on the ground of the preamble (§0.1.2: parity with the builtin is a measurement goal, not a
+guarantee) and of `-O0` being the debugging profile, and **asks for acceptance of the amended numbers explicitly**:
+
+- `-O2`, every array program of the baseline and both prototype pairs: no regression outside noise (the lower bound
+  of the 95% interval at most 1), and a median ratio of at most 1.03 for `index` and `drop`.
+- `-O0`, every array program and both pairs, in every debug mode: a median ratio of at most **1.15** (revision 2
+  proposed 1.10; the change is made after measuring and is stated as such).
+- Size: each of the five `array_*` executables grows by at most 4 KiB at `-O0` and 2 KiB at `-O2`; `hello` does not
+  grow at `-O2`. This is also the trigger for narrowing instance discovery to demanded instances.
+- Compile time (predeclared, not yet measured): the front end of `hello` (`--emit-llvm`, which runs everything but
+  the LLVM pipeline and the link) grows by at most 15%.
+- Platforms: the gates apply on Windows x64; Linux x86_64 is measured and reported with the switch, and becomes gated
+  once its noise is known.
+- The `array_append_growth` `-O0` baseline was re-recorded with 50 repetitions (437.7 ms minimum, 450.5 ms median, a
+  tight set), so it is gated like the others. Append changes most in the switch (a library method, a spill and the
+  runtime call, one call level more than today) and has no prototype, because writing it needs `place_address`; it is
+  the first number to read when the switch is measured.
+
+**Rerun rule.** A configuration that fails, or whose interval is plainly disturbed, is rerun once with double the
+repetitions; both runs are reported, and the rerun decides. A gate that still fails blocks the switch: it is not
+renegotiated in the pull request. The change is then optimized, the general fallback below is taken, or this record
+is reopened with the user's explicit approval.
+
+**Fallback.** If a later change loses the inlining, the fallback is an IR-level inline-always expansion of any
+role-marked addressor, a general mechanism. An array-specific inline check in the backend is excluded.
 
 ## Consequences
 
@@ -226,8 +285,8 @@ type-id normalization is reported as a diagnostic.
 - **Runtime.** The `joyeer_array_*_abi` symbols and their C declarations stay: they are the public ABI and the
   library calls them. The runtime functions use no state beyond the allocator, the constant blocks are read-only,
   and a spawned array stays bitwise relocatable, so thread safety is unchanged.
-- **Wire.** Version 21 (the structure role, the removals); malformed-IR tests cover the removed opcodes, the new
-  opcode and the role arity.
+- **Wire.** Version 22 (the structure role, the removals; 21 is taken by the measurement change's `slot_address`);
+  malformed-IR tests cover the removed opcodes, the new opcode and the role arity.
 - **Dictionary.** Unchanged. `Dict` stays builtin until Phase 4; its keys and values may be arrays, which reach the
   copier and the destroy helper through the dictionary's type arguments (a test copies and drops a `[String: [Int]]`
   with no direct array operation, and takes `&d[k].append(element: 1)`).
@@ -263,6 +322,9 @@ so it is not one change. In order, each revertable:
 - **Roles and prelude:** the `array_literal` shape (unique, labels, privacy, result); a duplicate `array_type`; a
   missing role; the seam replacing collections; a caller-supplied concurrency prelude; source-ID density with three
   preludes and the driver's table check.
+- **`slot_address`** (with the measurement change): rejected outside authorized units with and without type
+  arguments; per-instance lowering; a plain GEP with no overflow check; `Void` and zero-size elements; the verifier's
+  malformed forms; the wire round trip; the stage fixture `tests/c-interop/layout-intrinsics.joyeer`.
 - **`place_address`:** the direct-argument form accepted; a stored or returned form, a `let`, a `borrowing`
   parameter, a constant and an rvalue rejected; unauthorized use rejected in a user file and in a runtime module;
   `-O2` ordering of the `count` store against the escaping call.
@@ -275,9 +337,10 @@ so it is not one change. In order, each revertable:
 
 ## Open questions
 
-1. Whether the measurement shows `alwaysinline` at `-O0` with debug information to be sound and cheap (Section 4);
-   the answer fixes the gate numbers and may select the generic fallback.
-2. Whether instance discovery is narrowed to demanded instances (size).
+1. Whether giving the ownership helpers a `DISubprogram` (so `NoInline` can go) is worth doing; only if a `-O0` gate
+   needs it (Section 4).
+2. Whether instance discovery is narrowed to demanded instances, if the size gate of the five `array_*` programs
+   fails.
 3. Whether `array_literal` is an initializer or a consuming method (a compiler detail, not a contract).
 4. Whether a later change reimplements the algorithms generically (Option A2) for inlining at `-O2`; out of scope
    here, and only if the benchmarks justify it.
@@ -289,7 +352,13 @@ exit and its stack block; the `array_literal` role as a method of the struct; a 
 cost mechanism made a precondition, with the debug-scope and `NoInline` hazard, alias information and a generic
 fallback; the third prelude's seam, source IDs and packaging; an honest residual set instead of "no special case";
 the structure `role`; the header claim reworded; the recursive-type, Dict, extension and equality risks; and a staged
-plan of five changes. The review approves a design, not an implementation.
+plan of five changes. Revision 2 with the first measurement was reviewed 2026-11-15: accept with changes, not yet
+accepted (gates loosened after measuring without saying so and contradicting 0025, the excluded `-O0` append result,
+the `slot_address` contract, a drop prototype that was not like for like). Folded into revision 3: a like-for-like
+prototype and a remeasurement, an explicit `-O0` amendment of 0025 that names the number revision 2 proposed, size and
+compile-time gates, a rerun rule and a rule for a missed gate, the re-recorded append baseline, the `slot_address`
+contract in §20.12.5, the residual set's `alwaysinline`, and the wire and linkage corrections. The review approves a
+design, not an implementation.
 
 ## Evidence
 

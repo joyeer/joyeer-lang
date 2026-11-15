@@ -300,10 +300,15 @@ llvm::Function* Builder::declareFunction(const ir::Function& function) {
     for (const auto& parameter : function.parameters) {
         parameters.emplace_back(parameter.value.type, parameter.value.category);
     }
-    return llvm::Function::Create(signatureType(parameters, function.resultType),
+    auto* declared = llvm::Function::Create(signatureType(parameters, function.resultType),
             source.isRuntimeObject || function.nativeBinding.has_value()
                     ? llvm::GlobalValue::InternalLinkage : llvm::GlobalValue::ExternalLinkage,
             "joyeer_fn_" + std::to_string(function.id), module());
+    // A library array's element addressor is a bounds check and an address computation; every `a[i]`
+    // calls it, so it is inlined even at -O0, where LLVM's default pipeline runs only this inliner
+    // (decision 0026).
+    if (function.elementAddressor) declared->addFnAttr(llvm::Attribute::AlwaysInline);
+    return declared;
 }
 
 llvm::GlobalVariable* Builder::declareDataSymbol(const std::string& symbol) {

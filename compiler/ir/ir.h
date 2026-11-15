@@ -126,6 +126,10 @@ enum class Opcode {
     cloneCallback,
     destroyCallback,
     linearRangeGuard,
+    // The address of element `index` of a run of slots of the type `integerValue` names, starting at `base`
+    // (operands: base, index; an `Int` result): `base + index * size`, with no overflow or bounds check. Library
+    // code checks the bounds first and keeps size computations for allocation checked (decision 0026).
+    slotAddress,
 };
 
 enum class PatternKind {

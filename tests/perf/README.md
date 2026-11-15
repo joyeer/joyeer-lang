@@ -20,6 +20,15 @@ be compared against a baseline on the same machine and configuration.
   `measure` commands, same interleaved paired comparison and bootstrap) with its own workloads. Each program
   prints one checksum, computed independently in Python, and a run with another output is rejected.
 
+- `array_index_flat`/`array_index_library` and `array_drop_flat`/`array_drop_library` with
+  `benchmark_addressor.py` (decision 0026): the builtin array against a minimal library array
+  (`array_buffer_prelude.joyeer`), built by the `array-addressor-probe` tool
+  (`cmake --build <dir> --target array-addressor-probe`, defined when `JOYEER_BUILD_UNITTESTS` is on), which supplies
+  the library through the test seam because no
+  bundled library array exists yet. `--workload index|drop`, `--debug none|lines|full`. The report treats the builtin
+  array as the baseline, so a ratio above 1 is a cost of the library array. The results and the gate numbers are in
+  decision 0026, Section 4.
+
 Record the numbers in the decision or the pull request that changes the runtime, with the machine,
 the operating system and the build configuration.
 

@@ -176,7 +176,7 @@ The current instruction set covers:
   result's type. `move_in`, `move_out` and `destroy_at` lower to `store`, `take` and `destroy` on that address. The
   runtime-only stack slots use `stack_allocate` and `pointer_to_integer`; specialized callback
   addresses use `function_address` and `pointer_to_integer`. The destruction query folds through
-  the existing IR destruction analysis. The wire format version is 20;
+  the existing IR destruction analysis. The wire format version is 21;
 - collection capabilities ([decision 0025](../decisions/0025-library-collection-capabilities.md)), runtime-only:
   `destroy_range` (address, count) destroys live elements of the type in `integerValue`, `clone_at` copies one
   value into an uninitialized slot, `clone_callback` and `destroy_callback` yield the type's helper address as an
@@ -184,8 +184,12 @@ The current instruction set covers:
   (lowering uses it instead of `destroy_range` for a linear type, and an integer constant `0` instead of a
   callback that does not apply). A function marked `elementAddressor` is the `array_element` method of a library
   array instance; `a[i]` on such an array lowers to a call of it followed by `integer_address`, the one place
-  user code may form an integer address. The verifier requires that element address to be used only to load,
-  store, take, destroy, project or pass as an argument, and only where its definition dominates;
+  user code may form an integer address. The verifier requires the `integer_address` of such an element to be used only to load,
+  store, take, destroy, project or pass as an argument, and only where its definition dominates. The backend emits
+  an element addressor with `alwaysinline` ([0026](../decisions/0026-library-array.md));
+- `slot_address` (operands base and index, the element type in `integerValue`, an `Int` result): `base + index *
+  size` with no overflow or bounds check, a plain (not `inbounds`) GEP in the backend, `base` for a zero-size type;
+  runtime-only. A library addressor uses it after its own bounds check;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
 - enum construction, payload extraction (`extract_payload`), and payload addresses
