@@ -362,4 +362,9 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   every concrete copyable instance (cost, Phase 3); the layout-intrinsic name list is copied in three places; more
   coverage from the decision's list (recursive owns, `Buffer<Void>`, forgery, nested holders) is probe-verified
   but not yet pinned. Windows x64 Debug `ctest` 1751 of 1751.
+- 2026-11-15: `scripts/validate.py` on commit f0ea4f9 passes. Windows x64: Debug and Release build, `ctest` 1751 of
+  1751 and `fern test` 7 of 7 (`Fern.Workspace` in Debug and `Fern.Manifest` and `Fern.Workspace` in Release passed only
+  on the validator's rerun, the known parallel-load timeout pattern). Linux x86_64 (WSL Ubuntu, a fresh Git clone):
+  Debug and Release build, `ctest` 1727 of 1727 and `fern test` 7 of 7, no reruns. macOS is run by the user and not
+  reported here. The Phase 2 review item stays open only for that and for the open items listed above.
 
