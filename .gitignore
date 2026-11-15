@@ -16,3 +16,10 @@ cmake-build-debug
 
 /target
 /example/*/target/
+
+# Claude Code: share agents/skills/commands/settings.json, ignore local scratch
+/.claude/*
+!/.claude/agents/
+!/.claude/skills/
+!/.claude/commands/
+!/.claude/settings.json
