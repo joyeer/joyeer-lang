@@ -232,7 +232,7 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
             result = builder.CreateIntToPtr(argument(0), pointer());
             break;
         case Opcode::destroyRange: {
-            // Destroys `count` live elements of the type, in index order (decision 0025). A type that
+            // Destroys `count` live elements of the type, last to first (decision 0025). A type that
             // needs no destruction has nothing to do.
             const auto id = static_cast<ir::TypeId>(instruction.integerValue);
             if (unit(id) || !destruction->requiresDestruction(id)) break;

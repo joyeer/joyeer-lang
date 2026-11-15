@@ -73,6 +73,11 @@ void Builder::emitOwnership() {
 // helper calls the `deinit` of a struct that declares one.
 void Builder::emitOwnershipBodies() {
     for (const auto& [id, function] : clones) {
+        // Like a destroy helper that calls a `deinit`: this helper has no debug scope, and the copier has one.
+        if (const auto found = structures.find(id);
+            found != structures.end() && found->second->copier.has_value()) {
+            function->addFnAttr(llvm::Attribute::NoInline);
+        }
         activeFunction = function;
         prologue = llvm::BasicBlock::Create(context(), "entry", function);
         builder.SetInsertPoint(prologue);

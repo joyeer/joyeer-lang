@@ -5074,6 +5074,12 @@ private:
                        "'" + name + "' cannot take " + (type == model->typeContext.neverType() ? "'Never'" :
                                "the linear type '" + model->typeContext.displayName(type) + "'"),
                        "a layout intrinsic needs a type with a representation that is not linear (spec 20.12.5)");
+            } else if (name == "joyeer_intrinsic_clone_at" && !model->typeContext.mentionsTypeParameter(type) &&
+                       !model->isCopyable(type)) {
+                report(TypeCheckingDiagnosticId::invalidTypeArgument, expression->typeArguments[0]->span,
+                       "'" + name + "' needs a copyable type, but '" + model->typeContext.displayName(type) +
+                               "' is not",
+                       "copy only what an implicit copy of the type could produce");
             } else {
                 model->layoutIntrinsicTypes[*model->semanticModelValue->nodeId(expression)] = type;
             }
@@ -5600,7 +5606,14 @@ private:
         bool writable = true;
         bool requiresMarker = false;
         std::string immutableName;
+        // The place is the `count` of a library array, read-only outside the array's own file.
+        bool libraryReadOnly = false;
     };
+
+    static std::optional<std::string> readOnlyHelp(const StorageAccess& storage) {
+        if (!storage.libraryReadOnly) return std::nullopt;
+        return "an array's 'count' changes only through the array's own methods, such as append or removeLast";
+    }
 
     StorageAccess analyzeStorage(const syntax::ExprPtr& expression) const {
         if (expression == nullptr) return StorageAccess { false, false, "<invalid>" };
@@ -5632,6 +5645,7 @@ private:
                     // `count` of a library array is read-only outside its declaration (decision 0025).
                     result.writable = false;
                     result.immutableName = symbol->name;
+                    result.libraryReadOnly = true;
                 }
                 return result;
             }
@@ -5699,7 +5713,8 @@ private:
                     TypeCheckingDiagnosticId::assignmentToImmutable,
                     target == nullptr ? SourceSpan {} : target->span,
                     "cannot assign through immutable binding or field '" +
-                            storage.immutableName + "'");
+                            storage.immutableName + "'",
+                    readOnlyHelp(storage));
             return;
         }
         if (hasMarker != storage.requiresMarker) {
@@ -5762,7 +5777,8 @@ private:
             report(
                     TypeCheckingDiagnosticId::invalidInoutArgument,
                     argument.value->span,
-                    "inout argument must refer to mutable storage");
+                    "inout argument must refer to mutable storage",
+                    readOnlyHelp(analyzeStorage(argument.value)));
         }
         if (required == syntax::AccessEffect::initializing &&
             !isInitializable(argument.value)) {

@@ -351,3 +351,15 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   prevented that), `-O0` calls the addressor (no `alwaysinline` yet), and the addressor and copier instances are
   produced for every concrete instance. Not done: Release, Linux, macOS, `scripts/validate.py`, executed tests,
   the cost gate (Phase 3). Nothing here is pushed.
+- 2026-11-15: Re-review of the fixes (type-system and IR/backend, separate agents): no soundness issue remains in
+  either half; the type-system reviewer ran about 150 probe programs. Changes from it: the copier clone helper is
+  `NoInline` (same debug-scope reasoning as a destroy helper that calls a `deinit`; not yet reproduced with `-g`),
+  the verifier requires the addressor's receiver to have one type argument and a plain borrowed index, writing
+  `count` outside the library now says why, the `consume a[i]` help mentions `joyeer_intrinsic_move_out`, and
+  `clone_at` of a concrete noncopyable type is rejected where it is written. Two tests that passed vacuously were
+  fixed. Open, none a soundness defect: a library `deinit` that assigns to the whole `self` recurses (consider
+  rejecting it for `array_type` bodies); no test executes a library array; addressor and copy instances exist for
+  every concrete copyable instance (cost, Phase 3); the layout-intrinsic name list is copied in three places; more
+  coverage from the decision's list (recursive owns, `Buffer<Void>`, forgery, nested holders) is probe-verified
+  but not yet pinned. Windows x64 Debug `ctest` 1751 of 1751.
+

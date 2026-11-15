@@ -731,6 +731,8 @@ VerificationResult Verifier::verify(const Module& module) const {
                 function.parameters[0].value.category == ValueCategory::value && !function.parameters[0].isConsuming &&
                 types.contains(function.parameters[0].value.type) &&
                 types.at(function.parameters[0].value.type)->kind == typing::TypeKind::structure &&
+                types.at(function.parameters[0].value.type)->arguments.size() == 1 &&
+                function.parameters[1].value.category == ValueCategory::value && !function.parameters[1].isConsuming &&
                 types.contains(function.parameters[1].value.type) &&
                 types.at(function.parameters[1].value.type)->kind == typing::TypeKind::integer &&
                 [&] {

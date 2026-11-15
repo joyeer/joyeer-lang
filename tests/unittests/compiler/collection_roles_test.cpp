@@ -388,11 +388,9 @@ TEST_F(CollectionRoleTest, ConsumingALinearElementIsRejectedAtTheConsumeSite) {
     EXPECT_NE(analyze().find("consume-of-linear-element"), std::string::npos);
     // Consuming a copyable or merely noncopyable element is unchanged.
     load("struct Resource { var value: Int\n deinit() {} }\n"
-         "func ok(items: consuming Buffer<Resource>) {\n"
-         "    let first = consume items[0]\n"
-         "    consume items.finish()\n"
-         "}\n");
-    EXPECT_EQ(analyze().find("consume-of-linear-element"), std::string::npos);
+         "func use(value: consuming Resource): Int { return value.value }\n"
+         "func ok(items: consuming Buffer<Resource>): Int { return use(value: consume items[0]) }\n");
+    EXPECT_EQ(analyze(), "") << "a noncopyable element may be consumed";
 }
 
 // ---- IR: layout, roles and the wire ----
@@ -927,7 +925,13 @@ TEST_F(CollectionRoleTest, TheArrayRoleRequiresADeinitAndEveryMethodRole) {
 TEST_F(CollectionRoleTest, CountCannotBeConsumedOrMutatedThroughAnyPath) {
     load("func bad(items: consuming Buffer<Int>) { let taken = consume items.count }\n");
     const auto reported = checks() ? analyze() : diagnostics();
-    EXPECT_FALSE(reported.empty()) << "consuming count would zero-fill it";
+    EXPECT_NE(reported.find("partial-consume-of-deinit-type"), std::string::npos)
+            << "consuming count would zero-fill it: " << reported;
+    // Writing it says why and what to use instead.
+    load("func bad(items: inout Buffer<Int>) { &items.count = 3 }\n");
+    ASSERT_FALSE(checking.diagnostics.empty());
+    ASSERT_TRUE(checking.diagnostics.front().help.has_value());
+    EXPECT_NE(checking.diagnostics.front().help->find("count"), std::string::npos);
     EXPECT_TRUE(rejectedMentioning(
             "struct Holder { var items: Buffer<Int> }\n"
             "func bad(holder: inout Holder) { &holder.items.count = 1 }\n", "count")) << diagnostics();
@@ -947,6 +951,22 @@ TEST_F(CollectionRoleTest, ARoleAttributeInUserCodeIsNotAccepted) {
     lexer.parse(source);
     ASSERT_TRUE(lexerDiagnostics.errors.empty());
     EXPECT_FALSE(joyeer::parser::Parser(source->tokens, true).parse().succeeded());
+}
+
+TEST_F(CollectionRoleTest, CloneAtOfANoncopyableTypeIsRejectedWhereItIsWritten) {
+    const auto library = buffer(bufferHead, bufferElement, bufferCopy, bufferEnd, R"(
+    deinit() {
+        joyeer_intrinsic_destroy_range<T>(address: self.address, count: self.count)
+    }
+    public borrowing func bad(): Int {
+        joyeer_intrinsic_clone_at<JoinHandle<Int>>(destination: 0, source: 0)
+        return 0
+    }
+}
+)");
+    load("func main() {}\n", library);
+    ASSERT_TRUE(resolution.succeeded()) << diagnostics();
+    EXPECT_TRUE(hasTypeDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidTypeArgument)) << diagnostics();
 }
 
 } // namespace

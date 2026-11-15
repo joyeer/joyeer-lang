@@ -1020,7 +1020,8 @@ private:
             inner->span,
             "cannot consume an element of linear type '" + model->types().displayName(*type) +
                     "' from a collection: the emptied slot could never be ended",
-            "drain the collection with removeLast instead",
+            "drain the collection with removeLast instead; inside the library that owns the elements, move one out "
+            "with joyeer_intrinsic_move_out",
         });
     }
 
