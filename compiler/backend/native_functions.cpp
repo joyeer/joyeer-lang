@@ -662,7 +662,7 @@ void Builder::emitEntry() {
         const auto& parameterType = type(parameter.value.type);
         arguments = parameter.label == "args" && !parameter.isMutable && !parameter.isConsuming &&
                 parameter.value.category == ir::ValueCategory::value &&
-                parameterType.kind == typing::TypeKind::array && parameterType.arguments.size() == 1 &&
+                isArrayRole(parameter.value.type) && parameterType.arguments.size() == 1 &&
                 type(parameterType.arguments[0]).kind == typing::TypeKind::string;
     }
     if (!legacy && !arguments) {

@@ -214,16 +214,17 @@ enum Result<T, E> {
 
 ### 2.6 Generics
 
-The generic types are the built-in types `Array<T>` / `[T]`, `Dict<K, V>` /
+The generic containers are `Array<T>` / `[T]`, `Dict<K, V>` /
 `[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>` (and the concurrency types
-below). `Array` and `Dict` have angle brackets that are **type arguments understood directly by the
-compiler**; `Optional` and `Result` are prelude enums bound by roles (§2.4, §2.5). User code may *use* these containers and may declare **generic
+below). `Array` is a source-library struct in `lib/Runtime/collections.joyeer`, bound by
+`array_type` (§20.12.5); `Optional` and `Result` are prelude enums bound by roles (§2.4, §2.5).
+Only `Dict` remains a compiler-defined generic container. User code may *use* these containers and may declare **generic
 top-level functions** and **generic `struct`s and `enum`s** bounded by protocols
 (§20, §20.12, [decision 0022](../docs/decisions/0022-generic-types-and-layout-intrinsics.md)),
 but may not declare generic methods or conditional conformances (§20.10).
 
 ```joyeer
-let xs: [Int] = [1, 2, 3]               // built-in Array<Int>
+let xs: [Int] = [1, 2, 3]               // library Array<Int>
 let m: [String: Int] = [:]             // built-in Dict<String, Int>
 let r: Result<Int, ParseError> = .Ok(1)
 ```
@@ -231,8 +232,17 @@ let r: Result<Int, ParseError> = .Ok(1)
 Generic functions use `<T: P & Q>` and are instantiated by monomorphization
 (§20.4, §20.6). A type parameter may be a container's element, payload or
 error type (`[T]`, `T?`, `Result<T, E>`, `[String: T]`), but not a `Dict` key
-type (§20.5). Generic user types and associated types remain deferred
-(§20.10).
+type (§20.5). Associated types remain deferred (§20.10).
+
+`[T]` and array literals always bind to the declaration carrying `array_type`, regardless of
+names in scope. `Array<T>` is its ordinary nominal spelling; a user type named `Array` shadows
+that spelling but not `[T]`, and diagnostics qualify the user type to avoid ambiguity. Role-array
+types display as `[T]`. The library exposes read-only `count`, mutating `append(element:)` and
+`removeLast()`, and consuming `consumeEmpty()`. `append` stores an owned element: an unmarked
+place is independently copied when copyable, an owned temporary transfers, and `consume` explicitly
+moves an owning place (§4.3). The address and capacity fields and compiler-called helper methods are private.
+All literal elements are evaluated left to right as owned temporaries before storage is filled;
+an early exit in a later element destroys earlier affine temporaries in reverse order (§4.7).
 
 #### 2.6.1 Safe dictionary lookup
 
@@ -265,7 +275,7 @@ allocation. The receiver dictionary itself is not copied by `get`.
 
 #### 2.6.2 Removing the last array element
 
-The builtin `Array<T>.removeLast()` is a mutating method with no arguments. It
+The library `Array<T>.removeLast()` is a mutating method with no arguments. It
 needs a mutable receiver and the `&` marker (§4.3), and returns `Optional<T>`:
 `.Some` holding the last element, which is removed from the array, or `.None`
 when the array is empty.
@@ -283,11 +293,10 @@ temporary, and a `match` that moves the payload (§7.1.2) can take the element o
 of it. **Implementation status:** implemented; the runtime
 removes the element in constant time and does not shrink the array's capacity.
 
-**Planned library `Array` ([decision 0025](../docs/decisions/0025-library-collection-capabilities.md)).**
-The compiler capabilities that let `Array<T>` be an ordinary prelude struct bound by the role
-`array_type` (§20.12.5) are specified, but `Array<T>` and `[T]` are still builtin until Phase 3 of
-[plan 0011](../docs/plan/0011-library-containers.md). The public behavior of this section, the `[JoyeerArray]`
-layout and the trap texts do not change.
+The source implementation calls the existing runtime array ABI
+([decision 0026](../docs/decisions/0026-library-array.md)); the three-word `JoyeerArray` layout,
+ownership behavior and trap texts are unchanged. Capacity, geometric growth and header size are
+runtime implementation details, not language guarantees.
 
 #### 2.6.3 Concurrency library types
 
@@ -325,7 +334,9 @@ traps with `array not empty` before any element is touched. It is the only way t
 returns `Void`. In this version the receiver must be a variable, a parameter or a field, not a
 temporary.
 
-**Implementation status:** implemented (stage 0 of P5a, [decision 0018](../docs/decisions/0018-tasks.md)): a consuming builtin member, the `array_consume_empty` IR instruction (wire version 13) and `joyeer_array_consume_empty_abi` in the runtime.
+**Implementation status:** implemented as the library method bound to `container_end`, calling
+`joyeer_array_consume_empty_abi`. Its consumed receiver is destroyed after the method returns;
+the runtime has already zeroed the empty handle, so that destruction is inert.
 
 ### 2.8 Type inference
 

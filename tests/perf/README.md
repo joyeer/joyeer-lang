@@ -24,8 +24,9 @@ be compared against a baseline on the same machine and configuration.
   `benchmark_addressor.py` (decision 0026): the builtin array against a minimal library array
   (`array_buffer_prelude.joyeer`), built by the `array-addressor-probe` tool
   (`cmake --build <dir> --target array-addressor-probe`, defined when `JOYEER_BUILD_UNITTESTS` is on), which supplies
-  the library through the test seam because no
-  bundled library array exists yet. `--workload index|drop`, `--debug none|lines|full`. The report treats the builtin
+  the library through the collections-prelude test seam. To compare the actual product switch instead,
+  pass `--compiler <builtin-joyeer> --candidate-compiler <library-joyeer>` instead of `--probe`.
+  The same flat program is then compiled by each compiler. `--workload index|drop`, `--debug none|lines|full`. The report treats the builtin
   array as the baseline, so a ratio above 1 is a cost of the library array. The results and the gate numbers are in
   decision 0026, Section 4.
 

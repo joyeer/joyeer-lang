@@ -475,9 +475,11 @@ TEST_F(LLVMBackendTest, PassesBorrowedStringArgumentsAndReturnsFullStatus) {
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     EXPECT_TRUE(result.hasEntryPoint);
     EXPECT_NE(result.text.find("  ret i32 1\n"), std::string::npos);
-    EXPECT_NE(result.text.find("  %arguments = load %joyeer.array, ptr %args"), std::string::npos);
+    EXPECT_TRUE(std::regex_search(result.text,
+            std::regex(R"(%arguments = load %joyeer\.struct\.[0-9]+, ptr %args)")));
     EXPECT_NE(result.text.find("  %status = call i64 @joyeer_fn_"), std::string::npos);
-    EXPECT_NE(result.text.find("(%joyeer.array %arguments)\n"), std::string::npos);
+    EXPECT_TRUE(std::regex_search(result.text,
+            std::regex(R"(\(%joyeer\.struct\.[0-9]+ %arguments\)\n)")));
     EXPECT_NE(result.text.find("  ret i64 %status\n"), std::string::npos);
 
     emit("func main(args: borrowing [String]): Int { return args.count }\n");
@@ -609,10 +611,10 @@ print(value: text)
             });
 
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
-    EXPECT_NE(result.text.find("define void @joyeer_destroy_type_"), std::string::npos);
+    EXPECT_NE(result.text.find("define internal void @joyeer_destroy_type_"), std::string::npos);
     EXPECT_NE(result.text.find("define i64 @joyeer_main(ptr %args) {"), std::string::npos);
     EXPECT_EQ(result.text.find("define i64 @joyeer_main(ptr %args) !dbg"), std::string::npos);
-    const auto helper = result.text.find("define void @joyeer_destroy_type_");
+    const auto helper = result.text.find("define internal void @joyeer_destroy_type_");
     const auto helperHeaderEnd = result.text.find('\n', helper);
     ASSERT_NE(helperHeaderEnd, std::string::npos);
     EXPECT_EQ(
@@ -666,7 +668,7 @@ return [1, 2]
             });
 
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
-    const auto functionStart = result.text.find("define %joyeer.array @joyeer_fn_");
+    const auto functionStart = result.text.find("define %joyeer.struct.");
     ASSERT_NE(functionStart, std::string::npos);
     const auto functionEnd = result.text.find("\n}\n", functionStart);
     ASSERT_NE(functionEnd, std::string::npos);
@@ -1011,8 +1013,8 @@ return values[index] + 1
                 EXPECT_NE(line.find(", !dbg !"), std::string::npos) << line;
             }
         }
-        EXPECT_EQ(labels, 4u);
-        EXPECT_EQ(checkedInstructions, 8u);
+        EXPECT_EQ(labels, 2u);
+        EXPECT_EQ(checkedInstructions, 11u);
     }
 }
 
@@ -1089,8 +1091,8 @@ return values[0] + lookup["answer"]
 )JOYEER");
 
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
-    EXPECT_NE(result.text.find("%joyeer.array = type { ptr, i64, i64 }"),
-              std::string::npos);
+    EXPECT_TRUE(std::regex_search(result.text,
+            std::regex(R"(%joyeer\.struct\.[0-9]+ = type \{ i64, i64, i64 \})")));
     EXPECT_NE(result.text.find("%joyeer.dictionary = type { ptr, i64, i64 }"),
               std::string::npos);
     EXPECT_NE(result.text.find("@joyeer_array_create"), std::string::npos);
@@ -1099,7 +1101,7 @@ return values[0] + lookup["answer"]
     EXPECT_NE(result.text.find("getelementptr i64, ptr"), std::string::npos);
     EXPECT_NE(result.text.find("array index out of bounds\\00"), std::string::npos);
     EXPECT_NE(result.text.find("@joyeer_dictionary_at"), std::string::npos);
-    EXPECT_NE(result.text.find("extractvalue %joyeer.array"), std::string::npos);
+    EXPECT_NE(result.text.find("getelementptr inbounds %joyeer.struct."), std::string::npos);
 }
 
 TEST_F(LLVMBackendTest, EmitsTypedArrayAddressesForPrimitiveAndAggregateElements) {
@@ -1122,13 +1124,12 @@ func access(ints: inout [Int], bytes: inout [UInt8], flags: inout [Bool],
 )JOYEER"));
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     EXPECT_EQ(result.text.find("@joyeer_array_at"), std::string::npos);
-    for (const auto* elementType : { "i64", "i8", "i1", "%joyeer.string", "%joyeer.array" }) {
+    for (const auto* elementType : { "i64", "i8", "i1", "%joyeer.string" }) {
         EXPECT_NE(result.text.find("getelementptr " + std::string(elementType) + ", ptr"),
                   std::string::npos);
     }
     EXPECT_NE(result.text.find("getelementptr %joyeer.struct."), std::string::npos);
     EXPECT_NE(result.text.find("getelementptr %joyeer.enum."), std::string::npos);
-    EXPECT_NE(result.text.find("icmp eq ptr"), std::string::npos);
     EXPECT_NE(result.text.find("icmp slt i64"), std::string::npos);
     EXPECT_NE(result.text.find("icmp sge i64"), std::string::npos);
     EXPECT_NE(result.text.find("call void @joyeer_destroy_type_"), std::string::npos);
@@ -1143,11 +1144,11 @@ return text.utf8()
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     EXPECT_NE(
             result.text.find(
-                    "declare void @joyeer_array_create_owned_abi(ptr, ptr, i64, i64, ptr, ptr)"),
+                    "declare void @joyeer_array_create_owned_abi(i64, i64, i64, i64, i64, i64)"),
             std::string::npos);
     EXPECT_NE(result.text.find("extractvalue %joyeer.string"), std::string::npos);
     EXPECT_NE(
-            result.text.find("i64 1, ptr null, ptr null)"),
+            result.text.find("i64 1, i64 0, i64 0)"),
             std::string::npos);
 }
 
@@ -1163,10 +1164,10 @@ return values
 
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     EXPECT_NE(
-            result.text.find("declare void @joyeer_array_append_owned_abi(ptr, ptr)"),
+            result.text.find("declare void @joyeer_array_append_owned_abi(i64, i64)"),
             std::string::npos);
     EXPECT_NE(
-            result.text.find("call void @joyeer_array_append_owned_abi(ptr"),
+            result.text.find("call void @joyeer_array_append_owned_abi(i64"),
             std::string::npos);
     EXPECT_NE(result.text.find("call void @joyeer_clone_type_"), std::string::npos);
 }
@@ -1244,7 +1245,7 @@ TEST_F(LLVMBackendTest, DictionaryGetClonesOnlyTheFoundOwnedPayloadExactlyOnce) 
     };
     for (const auto& testCase : {
                  Case { "", "String", "call void @joyeer_string_clone_abi" },
-                 Case { "", "[String]", "call void @joyeer_array_clone_abi" },
+                 Case { "", "[String]", "call %joyeer.struct." },
                  Case { "", "[String: String]", "call void @joyeer_dictionary_clone_abi" },
                  Case { "struct Box { var text: String }\n", "Box",
                         "getelementptr inbounds %joyeer.struct." },
@@ -1285,7 +1286,7 @@ TEST_F(LLVMBackendTest, DictionaryGetClonesOnlyTheFoundOwnedPayloadExactlyOnce) 
             EXPECT_TRUE(line.ends_with(", ptr " + storedValueAddress + ")")) << line;
             const auto helperStart = line.find('@', call);
             const auto helper = line.substr(helperStart, line.find('(', helperStart) - helperStart);
-            const auto definitionStart = result.text.find("define void " + helper + "(");
+            const auto definitionStart = result.text.find("define internal void " + helper + "(");
             ASSERT_NE(definitionStart, std::string::npos);
             const auto definition = result.text.substr(
                     definitionStart, result.text.find("\n}", definitionStart) - definitionStart);
@@ -1677,8 +1678,8 @@ TEST(LLVMOwnershipBackendTest, EmitsRecursiveOwnershipHelpersAndOperations) {
 
     const auto result = joyeer::llvmbackend::Emitter().emit(module);
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
-    EXPECT_NE(result.text.find("define void @joyeer_clone_type_1"), std::string::npos);
-    EXPECT_NE(result.text.find("define void @joyeer_destroy_type_1"), std::string::npos);
+    EXPECT_NE(result.text.find("define internal void @joyeer_clone_type_1"), std::string::npos);
+    EXPECT_NE(result.text.find("define internal void @joyeer_destroy_type_1"), std::string::npos);
     EXPECT_NE(result.text.find("call void @joyeer_clone_type_1"), std::string::npos);
     EXPECT_NE(result.text.find("call void @joyeer_destroy_type_1"), std::string::npos);
     EXPECT_NE(result.text.find("store %joyeer.string zeroinitializer"), std::string::npos);

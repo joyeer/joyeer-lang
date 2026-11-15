@@ -314,7 +314,7 @@ TEST_F(NameResolutionTest, RejectsDictionaryGetArgumentLabelsAndArity) {
     }
 }
 
-        TEST_F(NameResolutionTest, ResolvesArrayAppendFromTheBuiltinMemberScope) {
+        TEST_F(NameResolutionTest, ResolvesArrayAppendFromTheRoleDeclarationsMemberScope) {
             resolve(R"JOYEER(func add(values: inout [Int]) {
         &values.append(element: 42)
         }
@@ -330,7 +330,7 @@ TEST_F(NameResolutionTest, RejectsDictionaryGetArgumentLabelsAndArity) {
             const auto member = std::static_pointer_cast<joyeer::syntax::MemberExprSyntax>(
                     call->callee);
 
-            EXPECT_EQ(referenced(member).kind, SymbolKind::builtinMember);
+            EXPECT_EQ(referenced(member).kind, SymbolKind::method);
             EXPECT_EQ(referenced(member).name, "append");
             const auto target = resolution.model->callTarget(call);
             ASSERT_TRUE(target.has_value());

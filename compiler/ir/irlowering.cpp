@@ -620,9 +620,10 @@ private:
         }
         // The library array role has no live flag: its zero value is destroyable (decision 0025).
         const auto* structureSymbol = semanticModel.symbol(*symbol);
-        structure.inertZero = structureSymbol != nullptr &&
-                structureSymbol->libraryRole == semantic::LibraryRole::arrayType;
-        if (declaration->deinitializer != nullptr && !structure.inertZero) {
+        structure.role = structureSymbol != nullptr &&
+                structureSymbol->libraryRole == semantic::LibraryRole::arrayType
+                ? ir::StructureRole::array : ir::StructureRole::none;
+        if (declaration->deinitializer != nullptr && structure.role == ir::StructureRole::none) {
             // See ir::StructureDefinition::deinitializer: the live flag is always last.
             structure.fields.push_back(ir::FieldDefinition {
                 semantic::invalidSymbolId,
@@ -817,7 +818,7 @@ private:
                         continue;
                     }
                     instance.deinitializer = instanceFunctions[*index];
-                    if (instance.inertZero) {
+                    if (instance.role == ir::StructureRole::array) {
                         const auto element = model->arrayRoleMethod(instance.type, semantic::LibraryRole::arrayElement);
                         const auto elementIndex = element.has_value()
                                 ? model->instanceIndex(*element, record->arguments) : std::nullopt;
@@ -826,7 +827,7 @@ private:
                             module->functions[instanceFunctions[*elementIndex]].elementAddressor = true;
                         }
                     }
-                    if (!instance.inertZero || !model->isCopyable(instance.type)) continue;
+                    if (instance.role != ir::StructureRole::array || !model->isCopyable(instance.type)) continue;
                     // A copyable library array is copied by its `array_copy` method.
                     const auto copySymbol = model->arrayRoleMethod(instance.type, semantic::LibraryRole::arrayCopy);
                     const auto copyIndex = copySymbol.has_value()
@@ -894,7 +895,7 @@ private:
     bool isConstantType(typing::TypeId id) const {
         const auto* type = model->types().type(id);
         if (type == nullptr) return false;
-        if (type->kind == typing::TypeKind::array) {
+        if (model->isArrayRoleType(id)) {
             return type->arguments.size() == 1 && isConstantType(type->arguments.front());
         }
         return typing::isNativeScalar(type->kind) || type->kind == typing::TypeKind::string;
@@ -943,7 +944,7 @@ private:
             const auto type = typeOf(symbol);
             // Encoding enforces the size limit, so an oversized table fails here once.
             if (!value.has_value() ||
-                (model->types().type(*type)->kind == typing::TypeKind::array &&
+                (model->isArrayRoleType(*type) &&
                  !constantEvaluator->encode(*value, *type, declaration->span).has_value())) {
                 failedConstants.insert(symbol);
             }
@@ -963,7 +964,7 @@ private:
         const auto kind = model->types().type(*type)->kind;
         ir::Opcode opcode = ir::Opcode::integerConstant;
         auto instruction = makeInstruction(opcode, span);
-        if (kind == typing::TypeKind::array) {
+        if (model->isArrayRoleType(*type)) {
             auto found = constantIds.find(symbol);
             if (found == constantIds.end()) {
                 const auto encoded = constantEvaluator->encode(*value, *type, span);
@@ -1007,7 +1008,7 @@ private:
         const auto result = *instruction.result;
         emit(std::move(instruction));
         // Constants are never owned: every use borrows, and an owned use copies.
-        recordValue(result, kind == typing::TypeKind::array || kind == typing::TypeKind::string
+        recordValue(result, model->isArrayRoleType(*type) || kind == typing::TypeKind::string
                 ? ValueOwnership::borrowed : ValueOwnership::trivial);
         return result;
     }
@@ -1115,6 +1116,10 @@ private:
             };
         }
         function.resultType = substituted(signature->result);
+        function.arrayLiteral = semanticModel.symbol(*symbol)->libraryRole == semantic::LibraryRole::arrayLiteral;
+        for (size_t parameter = 0; parameter < signature->parameters.size(); ++parameter) {
+            function.alwaysInline |= model->isOwnedArgumentContext(*symbol, parameter);
+        }
         function.returnsValue = function.resultType != model->types().voidType() &&
                 function.resultType != model->types().neverType();
         function.entry = function.isExternal ? ir::invalidBlockId : 0;
@@ -2186,6 +2191,10 @@ private:
         const auto address = *call.result;
         emit(std::move(call));
         recordValue(address, ValueOwnership::trivial);
+        if (elementType == model->types().neverType()) {
+            emit(makeInstruction(ir::Opcode::unreachable, span));
+            return std::nullopt;
+        }
         return emitValue(ir::Opcode::integerAddress, elementType, ir::ValueCategory::address, { address.id }, span);
     }
 
@@ -2228,21 +2237,77 @@ private:
         const auto type = typeOf(expression);
         if (!type.has_value()) return std::nullopt;
         const auto* arrayType = model->types().type(*type);
-        if (arrayType == nullptr || arrayType->kind != typing::TypeKind::array ||
+        if (arrayType == nullptr || !model->isArrayRoleType(*type) ||
             arrayType->arguments.size() != 1) {
             report(DiagnosticId::missingType, expression->span, "array literal has no array type");
             return std::nullopt;
         }
 
-        auto instruction = makeInstruction(ir::Opcode::constructArray, expression->span);
-        instruction.result = makeValue(*type, ir::ValueCategory::value);
+        const auto elementType = arrayType->arguments[0];
+        const auto arguments = arrayType->arguments;
+        const auto literal = model->arrayRoleMethod(*type, semantic::LibraryRole::arrayLiteral);
+        const auto instance = literal.has_value() ? model->instanceIndex(*literal, arguments) : std::nullopt;
+        if (!instance.has_value() || *instance >= instanceFunctions.size() ||
+            instanceFunctions[*instance] == ir::invalidFunctionId) {
+            report(DiagnosticId::missingSymbol, expression->span, "the array literal method has no lowered instance");
+            return std::nullopt;
+        }
         std::vector<ir::Value> elements;
         for (const auto& element : expression->elements) {
-            const auto value = prepareOperand(element, arrayType->arguments[0]);
+            const auto value = prepareOperand(element, elementType);
             if (!value.has_value()) return std::nullopt;
             elements.push_back(*value);
         }
-        if (!transferOperands(instruction, elements, expression->span)) return std::nullopt;
+        if (currentBlockTerminated()) return std::nullopt;
+        const auto integer = [&](int64_t number, SourceSpan span) {
+            auto constant = makeInstruction(ir::Opcode::integerConstant, span);
+            constant.integerValue = number;
+            constant.result = makeValue(model->types().intType(), ir::ValueCategory::value);
+            const auto value = *constant.result;
+            emit(std::move(constant));
+            recordValue(value, ValueOwnership::trivial);
+            return value;
+        };
+        const auto count = integer(static_cast<int64_t>(elements.size()), expression->span);
+        const auto receiverStorage = emitValue(ir::Opcode::stackAllocate, *type, ir::ValueCategory::address,
+                                              {}, expression->span);
+        auto zero = makeInstruction(ir::Opcode::zeroInitialize, expression->span);
+        zero.operands = { receiverStorage.id };
+        emit(std::move(zero));
+        const auto receiver = emitValue(ir::Opcode::load, *type, ir::ValueCategory::value,
+                                       { receiverStorage.id }, expression->span);
+        recordValue(receiver, ValueOwnership::owned);
+        const auto ownedReceiver = acquireOwned(receiver, expression->span);
+        if (!ownedReceiver.has_value()) return std::nullopt;
+
+        auto storage = makeInstruction(ir::Opcode::stackBlock, expression->span);
+        storage.integerValue = static_cast<int64_t>(elementType);
+        storage.operands = { count.id };
+        storage.result = makeValue(model->types().intType(), ir::ValueCategory::value);
+        const auto block = *storage.result;
+        emit(std::move(storage));
+        recordValue(block, ValueOwnership::trivial);
+        // No element can fail after ownership starts moving into the untracked stack block.
+        for (size_t index = 0; index < elements.size(); ++index) {
+            const auto value = acquireOwned(elements[index], expression->elements[index]->span);
+            if (!value.has_value()) return std::nullopt;
+            if (elementType == model->types().voidType()) continue;
+            const auto offset = integer(static_cast<int64_t>(index), expression->elements[index]->span);
+            auto slot = makeInstruction(ir::Opcode::slotAddress, expression->elements[index]->span);
+            slot.integerValue = static_cast<int64_t>(elementType);
+            slot.operands = { block.id, offset.id };
+            slot.result = makeValue(model->types().intType(), ir::ValueCategory::value);
+            const auto address = *slot.result;
+            emit(std::move(slot));
+            recordValue(address, ValueOwnership::trivial);
+            const auto place = emitValue(ir::Opcode::integerAddress, elementType, ir::ValueCategory::address,
+                                         { address.id }, expression->elements[index]->span);
+            emitRawStore(*value, place, expression->elements[index]->span);
+        }
+        auto instruction = makeInstruction(ir::Opcode::call, expression->span);
+        instruction.callee = instanceFunctions[*instance];
+        instruction.operands = { ownedReceiver->id, block.id, count.id };
+        instruction.result = makeValue(*type, ir::ValueCategory::value);
         const auto result = *instruction.result;
         emit(std::move(instruction));
         recordValue(result, ValueOwnership::owned);
@@ -3155,6 +3220,7 @@ private:
         std::vector<ir::ValueId> arguments;
         std::vector<ir::Value> consumedArguments;
         const auto& callee = module->functions[*calleeId];
+        const size_t receivers = targetSymbol != nullptr && targetSymbol->kind == semantic::SymbolKind::method ? 1 : 0;
         for (size_t index = 0; index < operands.size(); ++index) {
             const auto& operand = operands[index];
             const auto* parameter = index < callee.parameters.size() ? &callee.parameters[index] : nullptr;
@@ -3166,7 +3232,9 @@ private:
                     parameter != nullptr && !parameter->acceptsAnyType
                             ? std::optional<typing::TypeId>(parameter->value.type)
                             : std::nullopt,
-                    consumedArguments);
+                    consumedArguments,
+                    index < receivers || !model->isOwnedArgumentContext(*target, index - receivers) ||
+                            movesArgument(*expression->arguments[index - receivers]));
             if (!value.has_value()) return std::nullopt;
             arguments.push_back(value->id);
         }
@@ -3228,11 +3296,12 @@ private:
             bool expectsAddress,
             bool consumesValue,
             std::optional<typing::TypeId> parameterType,
-            std::vector<ir::Value>& consumedArguments) {
+            std::vector<ir::Value>& consumedArguments,
+            bool movesSource = true) {
         std::optional<ir::Value> value;
         if (expectsAddress) {
             value = lowerAddress(operand);
-        } else if (consumesValue && isAddressable(operand)) {
+        } else if (consumesValue && movesSource && isAddressable(operand)) {
             const auto address = lowerAddress(operand);
             if (address.has_value()) {
                 value = emitValue(
@@ -3309,7 +3378,7 @@ private:
         const auto result = instruction.result;
         emit(std::move(instruction));
         if (type == model->types().neverType()) {
-            emit(makeInstruction(ir::Opcode::unreachable, expression->span, true));
+            emit(makeInstruction(ir::Opcode::unreachable, expression->span));
             return std::nullopt;
         }
         if (result.has_value()) {
@@ -3385,7 +3454,13 @@ private:
             report(DiagnosticId::unsupportedSyntax, expression->span, "'" + name + "' needs one type argument");
             return std::nullopt;
         }
-        const auto type = substituted(*written);
+        const auto concrete = substituted(*written);
+        // An uninhabited element has no slots. Generic code can describe its empty storage, but cannot load a value.
+        if (concrete == model->types().neverType() && name == "joyeer_intrinsic_move_out") {
+            emit(makeInstruction(ir::Opcode::unreachable, expression->span));
+            return std::nullopt;
+        }
+        const auto type = concrete == model->types().neverType() ? model->types().voidType() : concrete;
         if (name == "joyeer_intrinsic_stack_slot") {
             if (type == model->types().voidType()) {
                 return emitValue(ir::Opcode::integerConstant, model->types().intType(),

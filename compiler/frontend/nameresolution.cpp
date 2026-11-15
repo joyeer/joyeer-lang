@@ -251,6 +251,11 @@ public:
                 model->runtimeSources_[file->span.sourceId] = modules[index].runtimeContext;
                 model->coreSources_[file->span.sourceId] = modules[index].coreContext;
                 model->preludeSources_[file->span.sourceId] = modules[index].preludeContext;
+                if (modules[index].preludeContext &&
+                    (modules[index].replaces == ReplacedPrelude::collections ||
+                     modules[index].name == "$collections-prelude")) {
+                    collectionsPreludeSpan = file->span;
+                }
                 model->fileScope_ = createScope(
                         ScopeKind::file, moduleScopes[index], nodeId(file));
                 model->introducedScopes_[nodeId(file)] = model->fileScope_;
@@ -334,9 +339,9 @@ private:
 
     SemanticModel::Ptr model;
     std::vector<NameResolutionDiagnostic> diagnostics;
-    // The builtin Array and Dict, whose `removeLast` and `get` return the `optional` role enum.
-    SymbolId arraySymbol = invalidSymbolId;
+    // The builtin Dict's `get` returns the optional role enum.
     SymbolId dictionarySymbol = invalidSymbolId;
+    SourceSpan collectionsPreludeSpan {};
     uint32_t activeModule = 0;
     // The type `Self` denotes while resolving the signature or body of a member.
     std::optional<SymbolId> selfType;
@@ -758,11 +763,16 @@ private:
     // declaration is a corrupt compiler bundle and is reported once.
     void bindRolePreludeDeclarations() {
         for (const auto& candidate : model->symbols_) {
-            if (candidate.kind != SymbolKind::enumeration || candidate.isInvalid) continue;
-            if (candidate.libraryRole == LibraryRole::optional && !model->optionalSymbol_.has_value()) {
+            if (candidate.isInvalid) continue;
+            if (candidate.kind == SymbolKind::enumeration &&
+                candidate.libraryRole == LibraryRole::optional && !model->optionalSymbol_.has_value()) {
                 model->optionalSymbol_ = candidate.id;
-            } else if (candidate.libraryRole == LibraryRole::result && !model->resultSymbol_.has_value()) {
+            } else if (candidate.kind == SymbolKind::enumeration &&
+                       candidate.libraryRole == LibraryRole::result && !model->resultSymbol_.has_value()) {
                 model->resultSymbol_ = candidate.id;
+            } else if (candidate.kind == SymbolKind::structure &&
+                       candidate.libraryRole == LibraryRole::arrayType && !model->arraySymbol_.has_value()) {
+                model->arraySymbol_ = candidate.id;
             }
         }
         if (!model->optionalSymbol_.has_value() || !model->resultSymbol_.has_value()) {
@@ -775,6 +785,11 @@ private:
             report(NameResolutionDiagnosticId::invalidPrelude, where,
                    "the compiler-bundled role prelude does not declare the 'optional' and 'result' enums");
             if (!model->optionalSymbol_.has_value()) return;
+        }
+        if (!model->arraySymbol_.has_value()) {
+            report(NameResolutionDiagnosticId::invalidPrelude, collectionsPreludeSpan,
+                   "the compiler-bundled collections prelude does not declare an 'array_type' struct");
+            return;
         }
         const auto optionalType = *model->optionalSymbol_;
         declareBuiltinMember(
@@ -793,15 +808,9 @@ private:
                         std::nullopt,
                     } },
                 });
-        // `removeLast()` gives back the last element as `Optional<T>`, or `.None` when empty; the
-        // element type comes from the receiver, as for `Dict.get`.
-        const auto removeLast = declareBuiltinMember(
-                arraySymbol,
-                SymbolKind::builtinMember,
-                "removeLast",
-                optionalType,
-                CallableSignature { CallableKind::function, true, {} });
-        symbol(removeLast).isMutable = true;
+        const auto stringType = scope(model->preludeScope_).types.at("String");
+        declareBuiltinMember(stringType, SymbolKind::builtinMember, "utf8", *model->arraySymbol_,
+                             CallableSignature { CallableKind::function, true, {} });
     }
 
     void buildPrelude() {
@@ -819,54 +828,12 @@ private:
         const auto stringType = declareBuiltinType("String");
         const auto byteType = declareBuiltinType("UInt8");
         declareBuiltinType("Any");
-        const auto arrayType = declareBuiltinType("Array");
         const auto dictionaryType = declareBuiltinType("Dict");
-        arraySymbol = arrayType;
         dictionarySymbol = dictionaryType;
         const auto ioErrorType = declareBuiltinType("IOError");
 
         declareBuiltinMember(stringType, SymbolKind::builtinMember, "count", intType);
-        declareBuiltinMember(arrayType, SymbolKind::builtinMember, "count", intType);
         declareBuiltinMember(dictionaryType, SymbolKind::builtinMember, "count", intType);
-        CallableSignature utf8Signature { CallableKind::function, true, {} };
-        declareBuiltinMember(
-            stringType,
-            SymbolKind::builtinMember,
-            "utf8",
-            arrayType,
-            std::move(utf8Signature));
-        CallableSignature appendSignature {
-            CallableKind::function,
-            true,
-            { CallableParameter {
-                std::string("element"),
-                true,
-                std::nullopt,
-                std::nullopt,
-                std::nullopt,
-            } },
-        };
-        const auto append = declareBuiltinMember(
-                arrayType,
-                SymbolKind::builtinMember,
-                "append",
-                voidType,
-                std::move(appendSignature));
-        symbol(append).isMutable = true;
-
-        // `consume a.consumeEmpty()` ends an empty array (spec 2.6.4). The receiver is consumed, so it
-        // is spelled in the signature the way a user method's `consuming` receiver is.
-        declareBuiltinMember(
-                arrayType,
-                SymbolKind::builtinMember,
-                "consumeEmpty",
-                voidType,
-                CallableSignature {
-                    CallableKind::function,
-                    true,
-                    {},
-                    CallableReceiver { std::nullopt, syntax::AccessEffect::consuming, std::nullopt },
-                });
 
         CallableSignature noPayload { CallableKind::enumCase, false, {} };
 
@@ -1880,7 +1847,10 @@ private:
             case syntax::Kind::arrayType: {
                 const auto array = std::static_pointer_cast<syntax::ArrayTypeSyntax>(type);
                 resolveType(array->element, currentScope);
-                return bindBuiltinType(type, currentScope, "Array");
+                const auto role = model->roleSymbol(LibraryRole::arrayType);
+                if (!role.has_value()) return std::nullopt;
+                model->referenceSymbols_[nodeId(type)] = *role;
+                return role;
             }
             case syntax::Kind::dictionaryType: {
                 const auto dictionary = std::static_pointer_cast<syntax::DictionaryTypeSyntax>(type);
@@ -2196,6 +2166,11 @@ private:
 
         auto target = *referenced;
         const auto& callee = symbol(target);
+        if (callee.kind == SymbolKind::structureField && callee.readableOutsideDeclaration) {
+            report(NameResolutionDiagnosticId::notCallable, expression->callee->span,
+                   "'" + callee.name + "' is not callable");
+            return;
+        }
         if (callee.kind == SymbolKind::structure) {
             if (!callee.synthesizedInitializer.has_value()) {
                 report(

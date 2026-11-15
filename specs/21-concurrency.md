@@ -75,8 +75,8 @@ uninitialized afterwards (§4.2.3). A heap value (a `String`, an array, a `Dict`
 aggregate's own bytes are copied into the task's storage and the heap parts they reference move with
 it. Passing `consume pair.first` follows the ordinary partial-move rules (a type with `deinit` cannot be
 partially moved). A top-level constant array (§3.1.1) passed as the input, or returned as the result, is
-**cloned**, never freed by the task or the joiner. A `JoinHandle` may itself be an input or a result. An array, whether builtin or a library struct bound
-by the role `array_type` (§20.12.5), is a valid input exactly when its element type is; it is bitwise
+**cloned**, never freed by the task or the joiner. A `JoinHandle` may itself be an input or a result. A library array bound
+by the role `array_type` (§20.12.5) is a valid input exactly when its element type is; it is bitwise
 relocatable, and an array of `JoinHandle` may be passed with `consume` and ended in the task.
 
 ### 21.3 Joining

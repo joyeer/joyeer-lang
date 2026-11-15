@@ -2,10 +2,10 @@
 
 - Status: accepted (2026-11-15, revision 3, by the user "for now", including the `-O0` gate amendment of Section 4;
   revisited if the switch's measurement contradicts it)
-- Spec: §20.12.5 lists `joyeer_intrinsic_slot_address` (added by the measurement change). On acceptance §2.6 (the
-  `Array` text), §2.6.2 and §2.6.4 (the members), §3.1.1 (constant arrays), §19 (native `[String]` and `[UInt8]`),
-  §20.12.5 (the `array_literal` role and `place_address`) and §21.2.2 change; §2.6 stops calling `Array` a type the
-  compiler understands directly.
+- Spec: [§2.6](../../specs/02-types.md#26-generics), §2.6.2 and §2.6.4 (the members),
+  [§3.1.1](../../specs/03-declarations.md#311-top-level-constants), [§4.3](../../specs/04-memory.md),
+  [§19](../../specs/19-c-interop.md), [§20.12.5](../../specs/20-protocols.md) and
+  [§21.2.2](../../specs/21-concurrency.md).
 - Plan: [0011](../plan/0011-library-containers.md), Phase 3. Builds on [0025](0025-library-collection-capabilities.md).
 
 ## Context
@@ -84,7 +84,7 @@ accordingly when the plan is next edited.
 1. **Keep `construct_array`.** An array-specific opcode the plan wants removed.
 2. **Lower a literal to ordinary operations** and a call of a method of the `array_literal` role.
 
-## Decision (proposed)
+## Decision
 
 Option A3, B3 and C2. Nothing below adds source syntax.
 
@@ -163,6 +163,18 @@ allocation counter, not the policy.
 - **Instances.** 0025 discovery requires the element addressor and the copy method for every concrete `Array<X>`;
   this record adds the literal method. Whether discovery is narrowed to demanded instances is decided by the
   measurement below, before acceptance.
+- **Owned element arguments (implementation clarification).** A consuming parameter declared with exactly the
+  role's owned type parameter is an owned argument context, classified before substitution. It accepts an owned
+  temporary or an unmarked independent copy of a copyable place; explicit `consume` moves it. Other parameters
+  and receivers retain their ordinary markers. Checking, semantic analysis and lowering share the classification,
+  so `append` preserves its existing API without dispatch on its name. A language-designer review approved this
+  clarification before implementation.
+- **Literal authorization (implementation clarification).** A validated factory is marked `arrayLiteral` in IR.
+  The verifier permits the compiler's user-function packing sequence only as a closed graph: an inert-zero receiver,
+  matching element type/count, one initialization of each bounded slot, and one matching factory call after packing.
+  Raw addresses may not escape and the packing region contains no fallible operation. This is not authorization
+  to write layout intrinsics in user source. Empty `Array<Never>` keeps its zero-size representation; generic
+  representation queries use empty storage and a load of a `Never` value is unreachable.
 
 ### 3. The collections prelude
 
@@ -181,7 +193,9 @@ allocation counter, not the policy.
   staging and `docs/building.md`. Compile time is measured before and after.
 - **Linkage.** An element addressor has internal linkage (stage 3), so the out-of-line copy of every inlined instance
   is discarded; before this an instance of a prelude function had external linkage and the copy survived (a size
-  cost, measured above). The size gate checks the effect.
+  cost, measured above). The switch also internalizes authorized runtime wrappers and generated ownership helpers:
+  calls across object boundaries use explicit C exports or callback addresses, never their private numeric names.
+  The size gate checks the effect.
 
 ### 4. Cost mechanism, measurement and gates
 
@@ -191,6 +205,10 @@ always-inliner. Its address is `joyeer_intrinsic_slot_address<T>(base: Int, inde
 index * size` with no overflow check, a plain GEP in the backend, because the library checks the index first. The
 addressor is written with one comparison per `if`: a `||` costs a stack slot and two branches at `-O0`. Both the
 attribute and the intrinsic are implemented in the measurement change (wire version 21) and have tests.
+The switch also marks closed owned-element argument wrappers `alwaysInline` in verified IR, independent of method
+names. This removes the additional `append` wrapper frame even at O0. Helpers keep `NoInline` when debug information
+is present, but not at `-g0`, where there are no debug scopes to corrupt. These changes optimize the existing
+mechanism; they do not amend any gate.
 
 **Method.** `tests/perf/benchmark_addressor.py` builds `array_index_flat` and `array_drop_flat` with the compiler
 (the builtin array) and the matching `*_library` programs with `array-addressor-probe` over
@@ -229,8 +247,8 @@ passed the LLVM verifier and printed the right checksum. Executables grow by 1 K
 
 **Reading.** At `-O2` the library array costs nothing measurable. At `-O0` it costs about 10%: the inlined addressor
 keeps its parameter allocas and loads, and a drop adds the `NoInline` destroy helper and the library `deinit`. The
-`NoInline` stays: it guards inlined debug scopes in helpers that have no `DISubprogram` and is not array-specific;
-giving the helpers a scope is a possible later change if a gate needs it.
+`NoInline` guards inlined debug scopes in helpers that have no `DISubprogram` and is not array-specific;
+the switch restricts it to builds with debug information. Giving the helpers a scope remains a possible later change.
 
 **Gates.** Revision 2 of this record proposed, before any measurement, a median ratio of at most 1.10 at `-O0` and
 1.03 at `-O2` for `array_index`, and a lower interval bound of at most 1 for each of the five `array_*` programs; 0025
@@ -312,7 +330,7 @@ so it is not one change. In order, each revertable:
 3. **Infrastructure PR:** the third prelude loader, source IDs, the seam, packaging, `place_address`, `stack_block`
    and the `array_literal` role, tested with a `Buffer<T>` declaration in a replaced collections prelude. `Array` is
    not touched.
-4. **Switch PR:** bind `[T]`, bundle the real `Array`, constants, native marshalling, wire 21; the executed
+4. **Switch PR:** bind `[T]`, bundle the real `Array`, constants, native marshalling, wire 23; the executed
    fixtures of Phase 2 (a library array through every operation at `-O0` and `-O2` compared exactly, an array of
    `JoinHandle` through a task) close here, since they can only run once the real `Array` exists.
 5. **Cleanup PR:** delete the dead opcodes and `TypeKind::array`.

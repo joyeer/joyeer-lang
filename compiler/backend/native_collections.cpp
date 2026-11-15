@@ -65,7 +65,7 @@ llvm::Constant* Builder::decodeConstant(ir::TypeId id, const std::string& data, 
         offset += length;
         return llvm::cast<llvm::Constant>(stringLiteral(text));
     }
-    if (kind != typing::TypeKind::array) throw std::runtime_error("unsupported constant type");
+    if (!isArrayRole(id)) throw std::runtime_error("unsupported constant type");
 
     const auto elementId = type(id).arguments.at(0);
     const auto count = read(8);
@@ -89,7 +89,7 @@ llvm::Constant* Builder::decodeConstant(ir::TypeId id, const std::string& data, 
             llvm::ArrayRef<llvm::Constant*> {integer(0, 32), integer(1, 32), integer(0, 32)},
             llvm::GEPNoWrapFlags::inBounds());
     return llvm::ConstantStruct::get(llvm::cast<llvm::StructType>(llvmType(id)),
-            {first, integer(count), integer(count)});
+            {llvm::ConstantExpr::getPtrToInt(first, builder.getInt64Ty()), integer(count), integer(count)});
 }
 
 llvm::Constant* Builder::constantArray(const ir::Constant& constant) {
@@ -137,8 +137,9 @@ bool Builder::emitCollection(const ir::Instruction& instruction, llvm::Value*& r
             auto* string = argument(0);
             auto* address = stack(resultType());
             call("joyeer_array_create_owned_abi", builder.getVoidTy(),
-                    {address, builder.CreateExtractValue(string, 0, temporary()),
-                     builder.CreateExtractValue(string, 1, temporary()), integer(1), nullPointer(), nullPointer()});
+                    {builder.CreatePtrToInt(address, builder.getInt64Ty()),
+                     builder.CreatePtrToInt(builder.CreateExtractValue(string, 0, temporary()), builder.getInt64Ty()),
+                     builder.CreateExtractValue(string, 1, temporary()), integer(1), integer(0), integer(0)});
             result = builder.CreateLoad(resultType(), address);
             return true;
         }

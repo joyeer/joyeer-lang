@@ -62,7 +62,7 @@ using typing::TypeKind;
 
 inline constexpr std::array<Descriptor, 25> table {{
     { "joyeer_intrinsic_address_of", Operation::addressOf, TypeKind::integer,
-      { TypeKind::array, TypeKind::error }, 1, true },
+      { TypeKind::structure, TypeKind::error }, 1, true },
     { "joyeer_intrinsic_load_u8", Operation::load8, TypeKind::uint8,
       { TypeKind::integer, TypeKind::error }, 1, false },
     { "joyeer_intrinsic_load_u16", Operation::load16, TypeKind::uint16,

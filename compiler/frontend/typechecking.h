@@ -125,19 +125,19 @@ enum class NativeBufferKind {
 
 // Both frontend and verified IR use this boundary; nested native storage is
 // limited to borrowed lists of strings or byte arrays, never arbitrary values.
-template<class Lookup>
-[[nodiscard]] NativeBufferKind nativeBufferKind(TypeId id, const Lookup& lookup) {
+template<class Lookup, class IsArray>
+[[nodiscard]] NativeBufferKind nativeBufferKind(TypeId id, const Lookup& lookup, const IsArray& isArray) {
     const auto* value = lookup(id);
     if (value == nullptr) return NativeBufferKind::none;
     if (value->kind == TypeKind::string) return NativeBufferKind::string;
-    if (value->kind != TypeKind::array || value->arguments.size() != 1) {
+    if (!isArray(id) || value->arguments.size() != 1) {
         return NativeBufferKind::none;
     }
     const auto* element = lookup(value->arguments[0]);
     if (element == nullptr) return NativeBufferKind::none;
     if (element->kind == TypeKind::uint8) return NativeBufferKind::bytes;
     if (element->kind == TypeKind::string) return NativeBufferKind::strings;
-    if (element->kind == TypeKind::array && element->arguments.size() == 1) {
+    if (isArray(element->id) && element->arguments.size() == 1) {
         const auto* byte = lookup(element->arguments[0]);
         if (byte != nullptr && byte->kind == TypeKind::uint8) return NativeBufferKind::byteArrays;
     }
@@ -164,6 +164,8 @@ public:
     [[nodiscard]] TypeId dictionaryType(TypeId key, TypeId value);
     [[nodiscard]] TypeId optionalType(TypeId wrapped);
     [[nodiscard]] TypeId resultType(TypeId success, TypeId failure);
+    [[nodiscard]] bool isArray(const TypeRecord* record) const;
+    [[nodiscard]] bool isArray(TypeId id) const { return isArray(type(id)); }
     // Whether `record` is an instance of the enum bound to the `optional` or `result` role (decision
     // 0024): the language binds `T?`, `nil` and postfix `?` to the role, never to a name.
     [[nodiscard]] bool isOptional(const TypeRecord* record) const;
@@ -422,6 +424,8 @@ public:
     [[nodiscard]] bool isArrayRoleType(TypeId type) const;
     // The method of the `array_type` struct of `type` that has `role`, or empty (decision 0025).
     [[nodiscard]] std::optional<semantic::SymbolId> arrayRoleMethod(TypeId type, semantic::LibraryRole role) const;
+    // Consuming parameters declared with exactly the role's owned type parameter accept owned arguments.
+    [[nodiscard]] bool isOwnedArgumentContext(semantic::SymbolId function, size_t parameter) const;
     [[nodiscard]] std::optional<std::string> linearEndingMethod(TypeId type) const;
     // Generic functions (spec 20, decision 0021).
     // The type parameters of a generic function in declaration order; null for any other function.

@@ -207,6 +207,9 @@ an arbitrary integer truth convention.
 and `[[UInt8]]`, and initializing `String`, `[UInt8]`, and `[String]`.
 These are explicit adapter conventions, not general C aggregate or pointer
 types. Results and `@c_export` signatures remain scalar/`Void` only.
+The array forms refer to the `array_type` role and its element type, never to the spelling
+`Array` or to an arbitrary three-word struct. The same identity governs native entry arguments
+`main(args: [String]): Int`, `String.utf8()` and the byte-pointer intrinsic below.
 
 A borrowed buffer crosses as a read-only data pointer and signed 64-bit
 count. Strings and byte arrays count bytes; lists count elements and expose

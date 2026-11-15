@@ -1,6 +1,6 @@
 # 0011: Library enums and collections
 
-- Status: in progress (updated 2026-11-14)
+- Status: in progress (updated 2026-11-16)
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0023](../decisions/0023-library-concurrency.md) (completed concurrency-library migration),
@@ -34,11 +34,12 @@ intrinsics. Its concurrency migration is implemented and validated on Windows x6
 x86_64; 0023 supplies a bundled source prelude, typed stack slots, specialized callback addresses,
 and closed task transfer parameters. Native macOS/AArch64 acceptance remains unrun.
 
-`Optional`, `Result`, `Array`, and `Dict` still have compiler type kinds and lowering rules.
-Array/dictionary algorithms already live in `lib/Runtime/core/`; the compiler still supplies
-layouts, ownership callbacks, construction, and element access. There is no borrowed raw-slot
-operation. General user generics still reject linear type arguments, and a raw-address owner
-cannot express element-dependent copyability, linearity, and destruction through its fields alone.
+`Optional` and `Result` are library enums; the stage 4 candidate also binds `Array` to the source
+declaration in `lib/Runtime/collections.joyeer`. `Dict` is still compiler-defined.
+Array/dictionary algorithms live in `lib/Runtime/core/`. The closed collection roles provide borrowed
+element places, element-dependent ownership and three-word inert-zero storage; general user generics
+still reject linear type arguments. Array cleanup, required reviews and final cross-platform/cost acceptance
+remain separate gates.
 
 ## Todo
 
@@ -91,14 +92,15 @@ cannot express element-dependent copyability, linearity, and destruction through
   silently dropped. The closed task-transfer exception in 0023 is not a general solution.
   Evidence: 0025 section 5 (the `container_end` method role, must-transfer bodies of the `array_type`
   declaration, `destroy_range` trapping for a linear type, `consume-of-linear-element`).
-- [ ] Add failing ownership tests for mutation during a borrow, escaped borrows, partial moves,
+- [x] Add failing ownership tests for mutation during a borrow, escaped borrows, partial moves,
   linear elements, early exits, and expanding generic recursion. Written and observed failing first
   (`tests/unittests/compiler/collection_roles_test.cpp`, target `CompilerCollectionRoleTests`, 17 tests,
   see the log); later additions (malformed IR, escape rule, backend emission, reviewer findings) were
-  written with their fixes. Still missing, so the item stays open: a test that executes a library array
-  (inert-zero destruction, moved-out slots, drain, an array of `JoinHandle` in a task; needs the bundled
-  `Array` of Phase 3), the C ABI size/offset test, evaluation-order and trap-order fixtures, expanding
-  recursion for the role struct, `Buffer<Never>`/`Buffer<Void>`, and the destroy-order fixture.
+  written with their fixes. Completed by the stage 4 candidate: the unchanged characterization fixtures
+  execute the real library array (zero states, moved-out slots, drain, evaluation/trap/destruction order);
+  `array_task_transfer` covers handle arrays through tasks, `array_library_edges` and the role tests cover
+  `Never`/`Void` and expanding recursion, and runtime/C interop tests pin C size/offsets and Joyeer layout.
+  Evidence: macOS Release unfiltered CTest 1809/1809, including 59 collection-role tests.
 - [x] Implement the minimum runtime-only capability and verification needed by safe library
   collection wrappers; reject unauthorized and malformed uses. Evidence: the log entry of 2026-11-15
   (implementation); `CompilerCollectionRoleTests` 33 of 33; Windows x64 Debug `ctest` passes.
@@ -124,6 +126,7 @@ cannot express element-dependent copyability, linearity, and destruction through
 - [ ] 0026 stage 4, the switch: the existing array API in Joyeer (constant-array clone boundaries, exact
   allocation/free sizes, `consumeEmpty` and its trap) as the bundled `Array`, with subscript, storage-path and
   exclusivity behavior, diagnostics and the characterization fixtures preserved; the cost gate of 0026 Section 4.
+  Implementation is green on macOS Release (1809/1809); the item stays open for the final cost/platform gates.
 - [ ] 0026 stage 5, cleanup: remove array-specific opcodes, the type kind, and backend layout/ownership cases.
 - [ ] Benchmark again in both profiles, complete adversarial/role reviews, and run full
   platform validation.
@@ -485,3 +488,33 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   `JoyeerCInterop.StaticSlots{Debug,Optimized}` / `SharedStaticSlots{Debug,Optimized}` execution tests pass.
   The unchanged array characterization (11 tests) and collection-role baseline (47 tests) also pass. This is not
   full macOS acceptance or evidence that the library-array switch is implemented.
+- 2026-11-16: Stage 4 implementation checkpoint, macOS/AArch64. `[T]`, literals, native byte/string-array
+  marshalling, `String.utf8()` and constants bind to the array role; nominal `Array` stays shadowable.
+  The real library implements append, removal, ending, copying, bounds checks and destruction over the
+  unchanged runtime ABI. All owned literal elements are evaluated before one verified packing/transfer
+  sequence. `StructureRole::array`, literal-factory and wrapper-inlining metadata use wire 23.
+  Tests were observed failing before the switch for role identity, literals, missing roles, private fields,
+  shadowing, owned-argument compatibility and wire version. Additional coverage includes malformed literal
+  address graphs, a 1000-element literal, `Void`/`Never`, expanding role recursion, C size/offsets and Joyeer
+  size/alignment, and `array_task_transfer` (linear handle arrays as task input and result).
+  The unchanged eight characterization fixtures pass at O0-O3; only the two designated diagnostic assertions
+  changed. Ordinary compiler-stage assertions now describe library calls and role structs.
+  A language-designer review approved the owned-element argument compatibility clarification and required the
+  closed literal initialization protocol, which is implemented. No new public syntax was added.
+- 2026-11-16: Stage 4 platform follow-through. The full macOS Release build and unfiltered CTest pass 1809/1809,
+  including the final wrapper-inlining adjustment. Two initially failing native callback probes exposed a second
+  macOS prerequisite: `-force_load` pulled every runtime archive member, conflicting with their test channel
+  exports. Normal lazy archive loading fixes both and preserves optional thread/channel objects.
+  The C ABI test now requests wire 23. Whole-self assignment in a `deinit` was already rejected by the existing
+  checker; a durable library-role regression now pins that rule. The parser reuses the layout-intrinsic name helper.
+- 2026-11-16: Initial switch measurements on an idle macOS/AArch64 host, LLVM 22.1.8, 25 interleaved pairs
+  per program/profile, retained outside the repository. The immutable builtin baseline includes only the
+  Mach-O COMDAT prerequisite. Initial append O0 was 1.161 [1.155, 1.164]; marking role-owned element wrappers
+  always-inline reduced it to 1.000 [0.997, 1.003]. Internal runtime/helper linkage removes unused code;
+  `NoInline` is now needed only with debug information. The latest candidate's O0 paired ratios are append
+  1.000, index 1.071, removal 1.064, nested destruction 1.102, linear drain 0.995; O2 ratios are 1.000, 0.848,
+  0.966, 1.022, 1.004. Nested destruction remains outside sampled O2 noise [1.008, 1.028] and grows 16432
+  executable bytes because its extra text/unwind data crosses a 16 KiB Mach-O segment boundary. Other O2
+  executables change by 0 to -288 bytes. These are preliminary macOS results, not a passed acceptance gate:
+  0026 gates Windows x64, which is unavailable in this session, and requests Linux reporting. Final measurements,
+  the one allowed doubled rerun of failing configurations, reviewers, cleanup and Debug/Release validation remain open.

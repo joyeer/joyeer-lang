@@ -1,5 +1,5 @@
 // Builds an executable from a Joyeer program whose array library is supplied as a source file, through the
-// test seam of decision 0024/0025 (a replaced role prelude that is also a runtime unit). It exists so the cost
+// collections-prelude test seam of decision 0026. It exists so the cost
 // of a library array (decision 0026) can be measured before the library array exists in the product. Not a
 // test and not part of the product; see tests/perf/README.md.
 //
@@ -69,17 +69,15 @@ int main(int argc, char** argv) {
         const auto programParse = joyeer::parser::Parser(program->tokens).parse();
         if (!programParse.succeeded()) throw std::runtime_error(joyeer::parser::dump(programParse.diagnostics));
 
-        // The replacement role prelude: the bundled roles followed by the library under test.
-        const auto roles = readFile(std::filesystem::path(JOYEER_ROLES_SOURCE));
-        const auto library = std::make_shared<SourceFile>(roles + "\n" + readFile(libraryPath));
+        const auto library = std::make_shared<SourceFile>(readFile(libraryPath));
         lexer.parse(library);
         for (auto& token : library->tokens) token->span.sourceId = 1;
         const auto libraryParse = joyeer::parser::Parser(library->tokens, true, true).parse();
         if (!libraryParse.succeeded()) throw std::runtime_error(joyeer::parser::dump(libraryParse.diagnostics));
         if (!lexerDiagnostics.errors.empty()) throw std::runtime_error(lexerDiagnostics.errors.front().message);
 
-        joyeer::semantic::ModuleInput libraryModule { "$role-prelude", { libraryParse.root }, true, false, true,
-                                                      joyeer::semantic::ReplacedPrelude::roles };
+        joyeer::semantic::ModuleInput libraryModule { "$collections-prelude", { libraryParse.root }, true, false, true,
+                                                      joyeer::semantic::ReplacedPrelude::collections };
         const auto resolution = joyeer::semantic::NameResolver().resolve({
                 { "app", { programParse.root } }, libraryModule });
         if (!resolution.succeeded()) throw std::runtime_error(joyeer::semantic::dump(resolution.diagnostics));

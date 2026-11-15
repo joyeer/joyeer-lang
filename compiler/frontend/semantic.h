@@ -223,6 +223,7 @@ private:
     ScopeId preludeScope_ = invalidScopeId;
     std::optional<SymbolId> optionalSymbol_;
     std::optional<SymbolId> resultSymbol_;
+    std::optional<SymbolId> arraySymbol_;
     ScopeId fileScope_ = invalidScopeId;
 
     std::vector<syntax::NodePtr> nodes_;

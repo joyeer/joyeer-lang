@@ -61,7 +61,6 @@ TypeContext::TypeContext(const semantic::SemanticModel& model): model(model) {
                 std::string(descriptor.name), TypeKind::enumeration, registeredType);
     }
 
-    registerGenericBuiltin("Array", TypeKind::array, 1);
     registerGenericBuiltin("Dict", TypeKind::dictionary, 2);
     for (const auto& [name, kind] : {
             std::pair {"Int8", TypeKind::int8}, {"Int16", TypeKind::int16},
@@ -116,9 +115,15 @@ TypeId TypeContext::ioErrorType() const {
 }
 
 TypeId TypeContext::arrayType(TypeId element) {
-    const auto symbol = builtinSymbol("Array");
-    assert(symbol.has_value());
+    const auto symbol = model.roleSymbol(semantic::LibraryRole::arrayType);
+    if (!symbol.has_value()) return errorTypeId;
     return typeForSymbol(*symbol, { element }).value_or(errorTypeId);
+}
+
+bool TypeContext::isArray(const TypeRecord* record) const {
+    return record != nullptr && record->kind == TypeKind::structure &&
+            record->symbol == model.roleSymbol(semantic::LibraryRole::arrayType) &&
+            record->arguments.size() == 1;
 }
 
 TypeId TypeContext::dictionaryType(TypeId key, TypeId value) {
@@ -312,6 +317,9 @@ std::string TypeContext::displayName(TypeId id, bool disambiguateNominals) const
         return "Result<" + displayName(value->arguments[0], disambiguateNominals) + ", " +
                 displayName(value->arguments[1], disambiguateNominals) + ">";
     }
+    if (isArray(value)) {
+        return "[" + displayName(value->arguments[0], disambiguateNominals) + "]";
+    }
 
     switch (value->kind) {
         case TypeKind::error:
@@ -355,7 +363,8 @@ std::string TypeContext::displayName(TypeId id, bool disambiguateNominals) const
                 // every diagnostic (decision 0024): `Result<A, B>` of the prelude is not the user's.
                 if (declaration->libraryRole == semantic::LibraryRole::none &&
                     (value->kind == TypeKind::structure || value->kind == TypeKind::enumeration)) {
-                    for (const auto role : {semantic::LibraryRole::optional, semantic::LibraryRole::result}) {
+                    for (const auto role : {semantic::LibraryRole::optional, semantic::LibraryRole::result,
+                                           semantic::LibraryRole::arrayType}) {
                         const auto roleSymbol = model.roleSymbol(role);
                         const auto* roleDeclaration = roleSymbol.has_value() ? model.symbol(*roleSymbol) : nullptr;
                         if (roleDeclaration == nullptr || roleDeclaration->name != name) continue;
@@ -498,10 +507,25 @@ syntax::FunctionDeclSyntax::Ptr TypeCheckedModel::deinitializerOf(TypeId type) c
 }
 
 bool TypeCheckedModel::isArrayRoleType(TypeId type) const {
-    const auto* record = typeContext.type(type);
-    if (record == nullptr || record->kind != TypeKind::structure || record->arguments.size() != 1) return false;
-    const auto* symbol = semanticModelValue->symbol(record->symbol);
-    return symbol != nullptr && symbol->libraryRole == semantic::LibraryRole::arrayType;
+    return typeContext.isArray(type);
+}
+
+bool TypeCheckedModel::isOwnedArgumentContext(semantic::SymbolId function, size_t parameter) const {
+    const auto* method = semanticModelValue->symbol(function);
+    const auto* owner = method != nullptr && method->containingSymbol.has_value()
+            ? semanticModelValue->symbol(*method->containingSymbol) : nullptr;
+    const auto* signature = callable(function);
+    if (method == nullptr || method->kind != semantic::SymbolKind::method ||
+        owner == nullptr || owner->libraryRole != semantic::LibraryRole::arrayType ||
+        !arrayRoleMethods.contains(owner->id) || owner->typeParameters.size() != 1 ||
+        !method->callable.has_value() || parameter >= method->callable->parameters.size() ||
+        method->callable->parameters[parameter].access != syntax::AccessEffect::consuming ||
+        signature == nullptr || parameter >= signature->parameters.size()) {
+        return false;
+    }
+    const auto* declared = typeContext.type(signature->parameters[parameter]);
+    return declared != nullptr && declared->kind == TypeKind::typeParameter &&
+            declared->symbol == owner->typeParameters[0];
 }
 
 std::optional<semantic::SymbolId> TypeCheckedModel::arrayRoleMethod(
@@ -1295,7 +1319,8 @@ private:
                                 "the declaring type";
                     } else if (symbol.libraryRole == semantic::LibraryRole::arrayLiteral) {
                         // `consuming func name(address: Int, count: Int): Self`, called on an inert zero value.
-                        matches = receiver == syntax::AccessEffect::consuming && written.size() == 2 &&
+                        matches = symbol.visibility == syntax::Visibility::private_ &&
+                                receiver == syntax::AccessEffect::consuming && written.size() == 2 &&
                                 written[0].label == std::optional<std::string>("address") &&
                                 written[1].label == std::optional<std::string>("count") &&
                                 written[0].access == syntax::AccessEffect::borrowing &&
@@ -1307,7 +1332,7 @@ private:
                                 ownerParameters->size() == 1 &&
                                 result->arguments == std::vector<TypeId> {
                                         model->typeContext.typeParameterType(ownerParameters->front()) };
-                        if (!matches) roleFailure = "the array_literal role requires 'consuming func name(address: Int, "
+                        if (!matches) roleFailure = "the array_literal role requires 'private consuming func name(address: Int, "
                                 "count: Int): Self' returning the declaring type";
                     } else {
                         matches = receiver == syntax::AccessEffect::consuming && written.empty() &&
@@ -1523,14 +1548,12 @@ private:
                 continue;
             }
             if (symbol.name == "utf8" && symbol.callable.has_value()) {
-                const auto result = model->typeContext.arrayType(
-                        model->typeContext.uint8Type());
-                model->symbolTypes[symbol.id] = result;
+                model->symbolTypes[symbol.id] = model->typeContext.anyType();
                 model->callables[symbol.id] = TypedCallableSignature {
                     semantic::CallableKind::function,
                     true,
                     {},
-                    result,
+                    model->typeContext.anyType(),
                 };
                 continue;
             }
@@ -2456,7 +2479,9 @@ private:
                        "'consume handle.join()' (or another value that can be destroyed) instead of the handle");
                 continue;
             }
-            if (argument == model->typeContext.neverType()) {
+            if (argument == model->typeContext.neverType() &&
+                role != semantic::LibraryRole::arrayType &&
+                !(owner != nullptr && owner->libraryRole == semantic::LibraryRole::arrayType)) {
                 report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
                        "type parameter '" + parameter + "' of '" + targetSymbol.name + "' cannot be 'Never'",
                        "'Never' has no values, so a generic function cannot take or hold one (spec 2.9)");
@@ -2758,6 +2783,7 @@ private:
                 if (deinitializer == nullptr) continue;
                 const auto deinit = model->semanticModelValue->declaredSymbol(deinitializer);
                 if (!deinit.has_value() || model->genericParameters(*deinit) == nullptr) continue;
+                const auto arguments = record->arguments;
                 // The role-lowered uses of a library array reach its element addressor and, when copyable,
                 // its copy method with no source call (decision 0025).
                 std::vector<semantic::SymbolId> required { *deinit };
@@ -2770,14 +2796,17 @@ private:
                         copy.has_value() && model->isCopyable(id)) {
                         required.push_back(*copy);
                     }
+                    if (const auto literal = model->arrayRoleMethod(id, semantic::LibraryRole::arrayLiteral)) {
+                        required.push_back(*literal);
+                    }
                 }
                 for (const auto method : required) {
                     if (model->genericParameters(method) == nullptr ||
-                        model->instanceIndex(method, record->arguments).has_value()) {
+                        model->instanceIndex(method, arguments).has_value()) {
                         continue;
                     }
-                    const GenericCall call { method, record->arguments, std::nullopt, deinitializer->span };
-                    if (!require(call, record->arguments, std::nullopt)) return std::nullopt;
+                    const GenericCall call { method, arguments, std::nullopt, deinitializer->span };
+                    if (!require(call, arguments, std::nullopt)) return std::nullopt;
                     added = true;
                 }
             }
@@ -3092,7 +3121,8 @@ private:
             const auto& parameter = declaration->parameters[index];
             const auto effect = parameter->accessEffect();
             const auto buffer = nativeBufferKind(signature.parameters[index],
-                    [&](TypeId id) { return model->typeContext.type(id); });
+                    [&](TypeId id) { return model->typeContext.type(id); },
+                    [&](TypeId id) { return model->isArrayRoleType(id); });
             if (binding->passesPointer(static_cast<uint32_t>(index))) {
                 if (!importing || buffer != NativeBufferKind::bytes ||
                     (effect != syntax::AccessEffect::borrowing && effect != syntax::AccessEffect::inout)) {
@@ -3149,20 +3179,24 @@ private:
     void validateNativeSymbols() {
         std::unordered_map<std::string, semantic::SymbolId> declarations;
         std::unordered_set<std::string> exports;
+        std::unordered_set<std::string> conflicting;
         for (const auto& symbol : model->semanticModelValue->symbols()) {
             const auto* binding = model->nativeBinding(symbol.id);
             if (binding == nullptr) continue;
             const auto [previous, inserted] = declarations.emplace(binding->symbol, symbol.id);
             if (!inserted && model->nativeBinding(previous->second)->dataSymbol != binding->dataSymbol) {
-                report(TypeCheckingDiagnosticId::conflictingNativeSymbol, binding->span,
-                       "native symbol '" + binding->symbol + "' is declared as both a function and a data symbol");
+                if (conflicting.insert(binding->symbol).second) {
+                    report(TypeCheckingDiagnosticId::conflictingNativeSymbol, binding->span,
+                           "native symbol '" + binding->symbol + "' is declared as both a function and a data symbol");
+                }
             } else if (!inserted) {
                 const auto& left = model->callables.at(previous->second);
                 const auto& right = model->callables.at(symbol.id);
                 const auto compatible = [&](TypeId a, TypeId b) {
                     const auto lookup = [&](TypeId id) { return model->typeContext.type(id); };
-                    const auto leftBuffer = nativeBufferKind(a, lookup);
-                    const auto rightBuffer = nativeBufferKind(b, lookup);
+                    const auto isArray = [&](TypeId id) { return model->isArrayRoleType(id); };
+                    const auto leftBuffer = nativeBufferKind(a, lookup, isArray);
+                    const auto rightBuffer = nativeBufferKind(b, lookup, isArray);
                     if (leftBuffer != NativeBufferKind::none || rightBuffer != NativeBufferKind::none) {
                         return leftBuffer == rightBuffer;
                     }
@@ -3185,8 +3219,10 @@ private:
                         !std::equal(left.parameters.begin(), left.parameters.end(),
                                 right.parameters.begin(), right.parameters.end(), compatible) ||
                         !compatible(left.result, right.result) || !sameEffects) {
-                    report(TypeCheckingDiagnosticId::conflictingNativeSymbol, binding->span,
-                           "incompatible C signatures for native symbol '" + binding->symbol + "'");
+                    if (conflicting.insert(binding->symbol).second) {
+                        report(TypeCheckingDiagnosticId::conflictingNativeSymbol, binding->span,
+                               "incompatible C signatures for native symbol '" + binding->symbol + "'");
+                    }
                 }
             }
             if (binding->kind == NativeBindingKind::cExport &&
@@ -3429,7 +3465,7 @@ private:
         if (isForInSourceBinding(declaration) && initializer.has_value() &&
             *initializer != model->typeContext.errorType()) {
             const auto* sourceType = model->typeContext.type(*initializer);
-            if (sourceType == nullptr || (sourceType->kind != TypeKind::array &&
+            if (sourceType == nullptr || (!model->isArrayRoleType(*initializer) &&
                                           sourceType->kind != TypeKind::string)) {
                 report(
                         TypeCheckingDiagnosticId::notIterable,
@@ -3445,7 +3481,7 @@ private:
         // Iterating an array of linear elements would drop them; there is no consuming iteration.
         if (isForInSourceBinding(declaration) && bindingType != model->typeContext.errorType()) {
             const auto* sourceType = model->typeContext.type(bindingType);
-            if (sourceType != nullptr && sourceType->kind == TypeKind::array &&
+            if (sourceType != nullptr && model->isArrayRoleType(bindingType) &&
                 sourceType->arguments.size() == 1 && model->isLinear(sourceType->arguments[0])) {
                 report(TypeCheckingDiagnosticId::linearCollectionElement,
                        declaration->initializer == nullptr ? declaration->span
@@ -4385,6 +4421,7 @@ private:
     bool containsFunctionType(TypeId type) const {
         const auto* record = model->typeContext.type(type);
         if (record == nullptr) return false;
+        if (model->isArrayRoleType(type)) return containsFunctionType(record->arguments[0]);
         switch (record->kind) {
             case TypeKind::function: return true;
             case TypeKind::array:
@@ -4872,7 +4909,8 @@ private:
             } else if (requiredReceiver == syntax::AccessEffect::consuming &&
                        semanticTarget != nullptr &&
                        (semanticTarget->kind == semantic::SymbolKind::builtinMember ||
-                        semanticTarget->libraryRole == semantic::LibraryRole::storedConsumer)) {
+                        semanticTarget->libraryRole == semantic::LibraryRole::storedConsumer ||
+                        semanticTarget->libraryRole == semantic::LibraryRole::containerEnd)) {
                 // A builtin consuming member works on the receiver's storage in place, so it needs a
                 // named place: not a temporary, an array element or a file-scope constant.
                 const auto path = storagePath(member->base);
@@ -4922,6 +4960,11 @@ private:
                        baseType->arguments.size() == 1) {
                 const auto elementType = baseType->arguments[0];
                 receiverResultType = model->typeContext.optionalType(elementType);
+            } else if (semanticTarget->name == "utf8" &&
+                       baseType != nullptr && baseType->kind == TypeKind::string) {
+                receiverResultType = model->typeContext.arrayType(model->typeContext.uint8Type());
+                model->symbolTypes[semanticTarget->id] = *receiverResultType;
+                model->callables.at(semanticTarget->id).result = *receiverResultType;
             } else if (semanticTarget->name == "get" &&
                        baseType != nullptr && baseType->kind == TypeKind::dictionary &&
                        baseType->arguments.size() == 2) {
@@ -4977,9 +5020,17 @@ private:
                     : checkExpression(argument->value, expected);
             // A memberwise initializer, an enum case and `append` store their argument, so it
             // is an owned context; every other parameter borrows or is marked `consume`.
-            const auto storesArgument = semanticTarget != nullptr && storesItsArguments(*semanticTarget);
+            const auto roleOwnedArgument = semanticTarget != nullptr && parameterIndex.has_value() &&
+                    model->isOwnedArgumentContext(semanticTarget->id, *parameterIndex);
+            const auto storesArgument = semanticTarget != nullptr &&
+                    (storesItsArguments(*semanticTarget) || roleOwnedArgument);
             if (storesArgument) requireStoredArgument(*argument, actual);
-            if (semanticTarget != nullptr && parameterIndex.has_value() &&
+            if (roleOwnedArgument &&
+                (argument->accessMarker == nullptr || consumesArgument(*argument))) {
+                collectCallArgumentAccess(*argument,
+                        consumesArgument(*argument) ? syntax::AccessEffect::consuming
+                                                    : syntax::AccessEffect::borrowing, accesses);
+            } else if (semanticTarget != nullptr && parameterIndex.has_value() &&
                 !(storesArgument && consumesArgument(*argument))) {
                 checkCallArgumentAccess(*semanticTarget, *parameterIndex, *argument);
                 const auto effect = semanticTarget->callable->parameters[*parameterIndex].access;
@@ -5565,12 +5616,16 @@ private:
                     const auto parameterIndex = symbol == nullptr
                             ? std::optional<size_t>()
                             : parameterIndexForArgument(*symbol, *argument, index);
-                    const auto effect = symbol != nullptr &&
+                    auto effect = symbol != nullptr &&
                                         symbol->callable.has_value() &&
                                         parameterIndex.has_value()
                             ? symbol->callable->parameters[*parameterIndex].access
                             : index < valueEffects.size() ? valueEffects[index]
                                                           : syntax::AccessEffect::borrowing;
+                    if (symbol != nullptr && parameterIndex.has_value() && argument->accessMarker == nullptr &&
+                        model->isOwnedArgumentContext(symbol->id, *parameterIndex)) {
+                        effect = syntax::AccessEffect::borrowing;
+                    }
                     collectCallArgumentAccess(*argument, effect, accesses, false);
                 }
                 break;
@@ -6731,7 +6786,7 @@ private:
         std::optional<TypeId> elementType;
         if (expected.has_value()) {
             const auto* expectedType = model->typeContext.type(*expected);
-            if (expectedType != nullptr && expectedType->kind == TypeKind::array) {
+            if (model->typeContext.isArray(expectedType)) {
                 elementType = expectedType->arguments[0];
             }
         }

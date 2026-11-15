@@ -39,7 +39,8 @@ The module owns:
 - a deterministic snapshot of canonical compile-time `TypeId` names;
 - concrete user `struct` field definitions, and for a struct that declares `deinit` the
   function that runs it plus a hidden trailing `$live` Bool field (below), except a struct bound to the library
-  array role ([0025](../decisions/0025-library-collection-capabilities.md)), which is marked `inert_zero`, has no
+  array role ([0025](../decisions/0025-library-collection-capabilities.md)), which carries `StructureRole::array`
+  (dumped as `role=array`), has no
   live flag, and records its `copier` function when the instance is copyable;
 - user enum and instantiated generic enum case definitions, including the `Optional<T>` / `Result<T,E>`
   instances, whose `EnumerationDefinition` carries the role (`optional` or `result`) and the indices of
@@ -176,7 +177,7 @@ The current instruction set covers:
   result's type. `move_in`, `move_out` and `destroy_at` lower to `store`, `take` and `destroy` on that address. The
   runtime-only stack slots use `stack_allocate` and `pointer_to_integer`; specialized callback
   addresses use `function_address` and `pointer_to_integer`. The destruction query folds through
-  the existing IR destruction analysis. The wire format version is 22;
+  the existing IR destruction analysis. The wire format version is 23;
 - collection capabilities ([decision 0025](../decisions/0025-library-collection-capabilities.md)), runtime-only:
   `destroy_range` (address, count) destroys live elements of the type in `integerValue`, `clone_at` copies one
   value into an uninitialized slot, `clone_callback` and `destroy_callback` yield the type's helper address as an
@@ -192,7 +193,8 @@ The current instruction set covers:
   runtime-only. A library addressor uses it after its own bounds check;
 - `stack_block` (operand: a constant count, the element type in `integerValue`, an `Int` address result): contiguous stack
   storage for that many slots, allocated in the prologue (once per invocation) and never destroyed; 0 for a zero count or
-  a unit type. The verifier requires the operand to be an `integer` constant; runtime-only;
+  a unit type. The verifier requires the operand to be an `integer` constant. Source intrinsics are runtime-only;
+  compiler-generated literal storage in user functions follows the closed protocol below;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
 - enum construction, payload extraction (`extract_payload`), and payload addresses
@@ -211,6 +213,15 @@ The current instruction set covers:
 - `String`/collection count and value/address subscript operations, plus owned
   `String.utf8()` byte-array extraction;
 - high-level recursive pattern switching.
+
+An array literal prepares all owned elements first, then moves them into one `stack_block` and calls the
+private role method marked `arrayLiteral` on a zero receiver. No element operation can fail during packing.
+The verifier admits user-function `stack_block` / `slot_address` / `integer_address` only for this closed graph:
+one matching factory call, equal element type and constant count, an inert-zero receiver, every bounded slot
+stored exactly once before transfer, and no other uses or intervening calls. A factory call without verified
+storage is rejected. This does not grant source-level runtime authorization.
+The wire also preserves the generic `alwaysInline` policy on closed owned-element wrappers; only
+authorized functions with bodies may carry it.
 
 The `unit` instruction produces a value of the builtin `Void` type with no
 operands or resource ownership. Unit patterns lower to typed wildcard

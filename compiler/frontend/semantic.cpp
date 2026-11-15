@@ -32,6 +32,7 @@ std::optional<SymbolId> SemanticModel::roleSymbol(LibraryRole role) const {
     switch (role) {
         case LibraryRole::optional: return optionalSymbol_;
         case LibraryRole::result: return resultSymbol_;
+        case LibraryRole::arrayType: return arraySymbol_;
         default: return std::nullopt;
     }
 }

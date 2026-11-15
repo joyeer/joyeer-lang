@@ -647,13 +647,28 @@ role that selects layout-relevant behavior, through a fixed table:
 Four method roles, shape-checked and unique per declaration (`invalid-prelude` otherwise): `array_element`
 (`borrowing func ...(index: Int): Int`, the element address, trapping with `array index out of bounds`),
 `array_copy` (`borrowing func ...(): Self`), `container_end` (`consuming func ...()` returning `Void`) and
-`array_literal` (`consuming func ...(address: Int, count: Int): Self`, called on an inert zero value by an array
+`array_literal` (`private consuming func ...(address: Int, count: Int): Self`, called on an inert zero value by an array
 literal with `count` elements moved to `address`, [0026](../docs/decisions/0026-library-array.md)). `self` of an
 `array_literal` method is exempt from the linear-not-consumed check, like that of `container_end`.
 An `extension` of an `array_type` struct is `invalid-prelude`. `self` of a `container_end` method is exempt
 from the linear-not-consumed exit check and is destroyed after the body; the method must trap before
 returning unless the container is empty (`array not empty`), and `deinit` of a linear container that is not
 empty traps `linear container dropped while not empty`.
+
+A consuming parameter of a method of this role, declared with exactly its owned type parameter,
+is an owned argument context (§4.3), determined before substitution. It may receive an owned
+temporary, an unmarked copyable place, or an explicitly consumed owning place; every other
+consuming parameter and every consuming receiver still requires its marker.
+The library body's must-transfer rules remain unchanged.
+
+Literal lowering first evaluates every owned element left to right, then initializes one contiguous
+stack block and transfers it to the private literal method on an inert-zero receiver. The compiler-generated
+sequence may occur in ordinary functions only when its complete raw-address use graph is verified:
+matching element type and constant count, one in-range initialization per non-unit slot, no fallible
+operation while packing, and one matching literal call. No address escapes this sequence.
+Empty and `Void` literals use no element storage. `Array<Never>` may only be empty: generic representation
+queries use empty storage, and obtaining a `Never` value is unreachable; this does not authorize an explicit
+source layout intrinsic with `Never`.
 
 Seven further layout intrinsics, authorized units only (the bundled prelude and `--runtime-module` units),
 with explicit type arguments:

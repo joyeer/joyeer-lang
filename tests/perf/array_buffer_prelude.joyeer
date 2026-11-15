@@ -52,7 +52,7 @@ public struct Buffer<T> {
     public consuming func finish() {}
 
     @compiler_role(array_literal)
-    public consuming func literal(address: Int, count: Int): Buffer<T> {
+    private consuming func literal(address: Int, count: Int): Buffer<T> {
         return Buffer(address: address, count: count, capacity: count)
     }
 

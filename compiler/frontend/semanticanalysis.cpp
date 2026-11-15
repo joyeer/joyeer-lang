@@ -449,6 +449,17 @@ private:
         if (!live) return;
         const auto* declaration = model->semanticModel()->symbol(symbol);
         const auto ending = model->linearEndingMethod(*type);
+        auto help = ending.has_value()
+                ? "end each handle with its consuming '" + *ending +
+                          "' method (or return it) on every path before this point"
+                : "consume it (or return it) on every path before this point; a function that only needs to use it can take it 'inout'";
+        if (model->isArrayRoleType(*type) && ending.has_value()) {
+            const auto element = model->types().type(*type)->arguments[0];
+            if (const auto elementEnding = model->linearEndingMethod(element)) {
+                help = "end each handle with its consuming '" + *elementEnding +
+                        "' method after removing it, then end the empty container with '" + *ending + "'";
+            }
+        }
         diagnostics.push_back(Diagnostic {
             DiagnosticId::linearNotConsumed,
             Severity::error,
@@ -456,10 +467,7 @@ private:
             "'" + (declaration == nullptr ? std::string() : declaration->name) +
                     "' holds a linear value of type '" + model->types().displayName(*type) +
                     "' that is not consumed before " + where,
-            ending.has_value()
-                    ? "end each handle with its consuming '" + *ending +
-                              "' method (or return it) on every path before this point"
-                    : "consume it (or return it) on every path before this point; a function that only needs to use it can take it 'inout'",
+            std::move(help),
         });
     }
 
@@ -832,6 +840,9 @@ private:
                             ? callableSymbol->callable->parameters[index].access
                             : index < valueEffects.size() ? valueEffects[index]
                                                           : syntax::AccessEffect::borrowing;
+                    const bool ownedArgument = target.has_value() &&
+                            model->isOwnedArgumentContext(*target, index);
+                    if (ownedArgument && !marked) effect = syntax::AccessEffect::borrowing;
                     if (marked && effect == syntax::AccessEffect::borrowing) {
                         effect = syntax::AccessEffect::consuming;
                     }
@@ -846,7 +857,8 @@ private:
                             const auto path = storagePath(argument->value);
                             if (path.has_value()) mutatedArguments.push_back(path->root);
                         } else if (effect == syntax::AccessEffect::borrowing &&
-                                   ((callableSymbol != nullptr && !storesItsArguments(*callableSymbol)) ||
+                                   ((callableSymbol != nullptr && !storesItsArguments(*callableSymbol) &&
+                                     !ownedArgument) ||
                                     // A function value never stores its arguments.
                                     (!target.has_value() && !valueEffects.empty()))) {
                             // A borrowed argument that is an owned linear temporary is dropped

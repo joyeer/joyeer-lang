@@ -79,6 +79,11 @@ private:
     llvm::Value* operand(ir::ValueId id) { return operands.at(id); }
     const ir::TypeName& type(ir::TypeId id) { return *types.at(id); }
     bool unit(ir::TypeId id) { return type(id).kind == typing::TypeKind::voidType; }
+    bool isArrayRole(ir::TypeId id) const {
+        const auto found = structures.find(id);
+        return found != structures.end() && found->second->role == ir::StructureRole::array;
+    }
+    llvm::Value* bufferData(ir::TypeId id, llvm::Value* value);
     void report(DiagnosticId id, SourceSpan span, std::string message);
 
     // Types/layout and ownership use Joyeer's portable 64-bit runtime ABI.

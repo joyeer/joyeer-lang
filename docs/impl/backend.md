@@ -99,7 +99,7 @@ interfaces change. This is not a backward-compatibility promise between
 development revisions: rebuild and deploy the compiler and backend together
 from the same revision. The interface includes module construction, printing,
 destruction, and the object options' module handle. The private IR wire version
-is version 22. Numeric fields use 64-bit little-endian encoding; strings are
+is version 23. Numeric fields use 64-bit little-endian encoding; strings are
 length-prefixed arbitrary bytes.
 Inputs and callback messages are borrowed only during a call. Callbacks must
 not throw, and clients must never delete or interpret the opaque handle.
@@ -194,6 +194,15 @@ Driver library discovers the host ABI inputs and returns an ELF linker command
 that embedded LLD executes without spawning a process. Supported build SDK
 versions and platform prerequisites are documented in
 [Building Joyeer](../building.md).
+
+The runtime archive is loaded lazily on macOS, as on the other platforms: forcing every member into the
+link would override the intended separation of leaf runtime objects and conflict with native ABI probes
+that provide their own channel entries. Shared static slots use a coalesced `linkonce_odr` symbol; only
+ELF/COFF attach COMDAT metadata because Mach-O does not support COMDAT.
+
+Generated ownership helpers and authorized runtime wrappers have internal linkage. Owned-element wrappers
+carry the verified `alwaysInline` policy, so the extra library call frame disappears at O0 as well as O2.
+Ownership helpers require `NoInline` for debug-scope correctness only when debug information is enabled.
 
 Homebrew macOS links LLD and some support libraries dynamically. Their C++
 types remain private to the backend, but in-process linking does not make
@@ -388,9 +397,10 @@ remainder, so neither can evaluate undefined arithmetic or produce LLVM
 poison on these inputs. The panic messages match the checked C runtime
 entry points.
 
-Array reads and mutable projections lower to null/negative/
-upper-bound checks followed by a typed `getelementptr`, rather than a
-per-access runtime call. The IR verifier checks the array element/result type;
+Array reads and mutable projections call the source library's two-check addressor, emitted
+`alwaysinline` even at O0, followed by a typed `getelementptr`. Every live array has a header,
+so a zero data address implies a zero count and the upper-bound check rejects access.
+The IR verifier checks the role identity and array element/result type;
 construction and growth validate the allocation size using that same element
 layout. An in-range access therefore needs neither a header stride lookup nor
 a repeated offset-overflow check. This also handles byte, Boolean, padded
@@ -464,7 +474,7 @@ gaps below mean it is not yet a complete recovery boundary.
 | `Bool` | `i1` |
 | `UInt8` | `i8` |
 | `String` | `{ ptr, i64 }` |
-| `Array<T>` | `{ ptr, i64, i64 }` |
+| role-bound library `Array<T>` | named `{ i64, i64, i64 }`; bit-identical to the C `JoyeerArray` on supported 64-bit targets |
 | `Dict<K,V>` | `{ ptr, i64, i64 }` |
 | user `struct` | named LLVM struct with declaration-order fields |
 | enum / `Optional` / `Result` | named `{ i32 tag, [N x i64] payload }` |

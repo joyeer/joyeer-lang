@@ -301,15 +301,14 @@ llvm::Function* Builder::declareFunction(const ir::Function& function) {
         parameters.emplace_back(parameter.value.type, parameter.value.category);
     }
     auto* declared = llvm::Function::Create(signatureType(parameters, function.resultType),
-            // An element addressor is only ever called from this program, so its out-of-line copy is discarded
-            // once every call is inlined (decision 0026).
-            source.isRuntimeObject || function.nativeBinding.has_value() || function.elementAddressor
+            // Authorized runtime helpers cross native boundaries only through explicit C exports or callbacks.
+            source.isRuntimeObject || function.runtimeContext || function.nativeBinding.has_value()
                     ? llvm::GlobalValue::InternalLinkage : llvm::GlobalValue::ExternalLinkage,
             "joyeer_fn_" + std::to_string(function.id), module());
     // A library array's element addressor is a bounds check and an address computation; every `a[i]`
     // calls it, so it is inlined even at -O0, where LLVM's default pipeline runs only this inliner
     // (decision 0026).
-    if (function.elementAddressor) declared->addFnAttr(llvm::Attribute::AlwaysInline);
+    if (function.elementAddressor || function.alwaysInline) declared->addFnAttr(llvm::Attribute::AlwaysInline);
     return declared;
 }
 
@@ -338,7 +337,7 @@ llvm::Function* Builder::declareNativeFunction(const ir::Function& function) {
         } else if (parameter.isInitializing) {
             parameters.push_back(pointer());
             kinds.push_back(typing::TypeKind::voidType);
-        } else if (kind == typing::TypeKind::string || kind == typing::TypeKind::array) {
+        } else if (kind == typing::TypeKind::string || isArrayRole(parameter.value.type)) {
             parameters.push_back(pointer());
             parameters.push_back(builder.getInt64Ty());
             kinds.push_back(typing::TypeKind::voidType);

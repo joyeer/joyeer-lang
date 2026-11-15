@@ -1,7 +1,86 @@
-// The compiler-bundled collections prelude: the library collections that language syntax binds to by closed
-// `@compiler_role` roles (decision 0026). It is always loaded, separately from the concurrency and role preludes,
-// so a caller-supplied concurrency prelude never removes it, and it is a runtime unit (it may declare C bindings
-// to the runtime's collection functions).
-//
-// It is empty until the library `Array<T>` replaces the builtin array: this file only reserves the third prelude,
-// its source identity and its packaging.
+@c_extern(symbol: "joyeer_panic")
+private func panic(message: Int): Never
+
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+private func literalAddress(text: String): Int
+
+@c_extern(symbol: "joyeer_array_create_owned_abi")
+private func createOwned(output: Int, values: Int, count: Int, elementSize: Int,
+        cloneElement: Int, destroyElement: Int): Void
+
+@c_extern(symbol: "joyeer_array_clone_abi")
+private func cloneArray(output: Int, data: Int, count: Int): Void
+
+@c_extern(symbol: "joyeer_array_append_owned_abi")
+private func appendOwned(array: Int, element: Int): Void
+
+@c_extern(symbol: "joyeer_array_remove_last_abi")
+private func removeLastOwned(array: Int, element: Int): Int
+
+@c_extern(symbol: "joyeer_array_consume_empty_abi")
+private func consumeEmptyArray(array: Int): Void
+
+@c_extern(symbol: "joyeer_array_destroy_abi")
+private func destroyArray(array: Int): Void
+
+@compiler_role(array_type)
+public struct Array<T> {
+    private var address: Int
+    private var count: Int
+    private var capacity: Int
+
+    @compiler_role(array_element)
+    private borrowing func element(index: Int): Int {
+        if index < 0 {
+            panic(message: literalAddress(text: "array index out of bounds"))
+        }
+        // Every live array has a header, so address == 0 implies count == 0.
+        if index >= self.count {
+            panic(message: literalAddress(text: "array index out of bounds"))
+        }
+        return joyeer_intrinsic_slot_address<T>(base: self.address, index: index)
+    }
+
+    @compiler_role(array_copy)
+    private borrowing func duplicate(): Array<T> {
+        var copy: Array<T> = Array(address: 0, count: 0, capacity: 0)
+        cloneArray(output: joyeer_intrinsic_place_address<Array<T>>(value: &copy),
+                data: self.address, count: self.count)
+        return copy
+    }
+
+    public mutating func append(element: consuming T): Void {
+        let slot = joyeer_intrinsic_stack_slot<T>()
+        joyeer_intrinsic_move_in<T>(address: slot, value: consume element)
+        appendOwned(array: joyeer_intrinsic_place_address<Array<T>>(value: &self), element: slot)
+    }
+
+    public mutating func removeLast(): Optional<T> {
+        let slot = joyeer_intrinsic_stack_slot<T>()
+        if removeLastOwned(array: joyeer_intrinsic_place_address<Array<T>>(value: &self), element: slot) == 0 {
+            return .None
+        }
+        return .Some(joyeer_intrinsic_move_out<T>(address: slot))
+    }
+
+    @compiler_role(container_end)
+    public consuming func consumeEmpty(): Void {
+        consumeEmptyArray(array: joyeer_intrinsic_place_address<Array<T>>(value: &self))
+    }
+
+    @compiler_role(array_literal)
+    private consuming func literal(address: Int, count: Int): Array<T> {
+        var array: Array<T> = Array(address: 0, count: 0, capacity: 0)
+        createOwned(output: joyeer_intrinsic_place_address<Array<T>>(value: &array),
+                values: address, count: count, elementSize: joyeer_intrinsic_size_of<T>(),
+                cloneElement: joyeer_intrinsic_clone_callback<T>(),
+                destroyElement: joyeer_intrinsic_destroy_callback<T>())
+        return array
+    }
+
+    deinit() {
+        joyeer_intrinsic_destroy_range<T>(address: self.address, count: self.count)
+        &self.count = 0
+        destroyArray(array: joyeer_intrinsic_place_address<Array<T>>(value: &self))
+    }
+}

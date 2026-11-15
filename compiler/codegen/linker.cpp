@@ -694,7 +694,6 @@ LinkResult Linker::link(
         "-o",
         outputPath,
         objectPath,
-        "-force_load",
         runtimePath,
         "-lSystem",
     };

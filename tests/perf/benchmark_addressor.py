@@ -42,11 +42,17 @@ def build(args):
              str(HERE / (flat_name + ".joyeer"))]
         )
         library = shared.executable(candidate, flat_name, profile)
-        shared.run_checked(
-            [str(args.probe), str(HERE / (library_name + ".joyeer")),
-             str(HERE / "array_buffer_prelude.joyeer"), str(library), "--" + profile,
-             *PROBE_FLAGS[args.debug]]
-        )
+        if args.candidate_compiler is not None:
+            shared.run_checked(
+                [str(args.candidate_compiler), "-" + profile, *DEBUG_FLAGS[args.debug], "-o", str(library),
+                 str(HERE / (flat_name + ".joyeer"))]
+            )
+        else:
+            shared.run_checked(
+                [str(args.probe), str(HERE / (library_name + ".joyeer")),
+                 str(HERE / "array_buffer_prelude.joyeer"), str(library), "--" + profile,
+                 *PROBE_FLAGS[args.debug]]
+            )
         for path in (flat, library):
             shared.sample(path, expected)
     return baseline, candidate
@@ -55,7 +61,9 @@ def build(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--compiler", type=Path, required=True)
-    parser.add_argument("--probe", type=Path, required=True)
+    candidate = parser.add_mutually_exclusive_group(required=True)
+    candidate.add_argument("--probe", type=Path)
+    candidate.add_argument("--candidate-compiler", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--workload", choices=sorted(PAIRS), default="index")

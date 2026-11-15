@@ -1070,6 +1070,14 @@ if(JOYEER_CLANG_EXECUTABLE)
             "0\n40\n2\n42\n4\n4\n2\n5\n8\n1\n0\n30\n30\n"
             0 1 2 3)
     add_joyeer_native_regression(
+            E2EArrayTaskTransfer array_task_transfer
+            "25\n25\n0\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EArrayLibraryEdges array_library_edges
+            "0\n0\n0\n4\n1\n3\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
             E2ETaskBasic task_basic
             "99\n49\nhi!\njob\n4\n5\n8\n8\n10\n"
             0 1 2 3)

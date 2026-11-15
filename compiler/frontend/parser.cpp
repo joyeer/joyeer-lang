@@ -1,4 +1,5 @@
 #include "parser.h"
+#include "intrinsics.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -1631,14 +1632,7 @@ syntax::ExprPtr Parser::parsePostfixExpr() {
 bool Parser::atIntrinsicTypeArguments(const syntax::ExprPtr& callee) const {
     if (!intrinsicTypeArguments || !cursor.at(less) || callee->kind != syntax::Kind::nameExpr) return false;
     const auto& name = std::static_pointer_cast<syntax::NameExprSyntax>(callee)->name->rawValue;
-    return name == "joyeer_intrinsic_size_of" || name == "joyeer_intrinsic_align_of" ||
-           name == "joyeer_intrinsic_move_in" || name == "joyeer_intrinsic_move_out" ||
-           name == "joyeer_intrinsic_destroy_at" || name == "joyeer_intrinsic_stack_slot" ||
-           name == "joyeer_intrinsic_needs_destroy" || name == "joyeer_intrinsic_callback_address" ||
-           name == "joyeer_intrinsic_clone_at" || name == "joyeer_intrinsic_destroy_range" ||
-           name == "joyeer_intrinsic_clone_callback" || name == "joyeer_intrinsic_destroy_callback" ||
-           name == "joyeer_intrinsic_slot_address" || name == "joyeer_intrinsic_stack_block" ||
-           name == "joyeer_intrinsic_place_address";
+    return intrinsic::isLayoutIntrinsic(name);
 }
 
 std::vector<syntax::TypePtr> Parser::parseIntrinsicTypeArguments() {

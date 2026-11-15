@@ -74,7 +74,8 @@ TEST_F(TypeContextTest, InternsConcreteBuiltinGenericApplications) {
 
     EXPECT_EQ(types->arrayType(types->intType()), array);
     EXPECT_EQ(types->optionalType(types->stringType()), optional);
-    EXPECT_EQ(type(array).kind, TypeKind::array);
+    EXPECT_EQ(type(array).kind, TypeKind::structure);
+    EXPECT_TRUE(types->isArray(array));
     EXPECT_EQ(type(array).arguments, std::vector { types->intType() });
     EXPECT_EQ(type(dictionary).kind, TypeKind::dictionary);
     EXPECT_TRUE(types->isResult(&type(result)));
@@ -84,7 +85,7 @@ TEST_F(TypeContextTest, InternsConcreteBuiltinGenericApplications) {
 }
 
 TEST_F(TypeContextTest, RejectsInvalidTypeConstructorArityAndSymbols) {
-    const auto arraySymbol = types->builtinSymbol("Array");
+    const auto arraySymbol = resolution.model->roleSymbol(joyeer::semantic::LibraryRole::arrayType);
     const auto intSymbol = types->builtinSymbol("Int");
     ASSERT_TRUE(arraySymbol.has_value());
     ASSERT_TRUE(intSymbol.has_value());

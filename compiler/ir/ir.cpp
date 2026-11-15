@@ -200,7 +200,8 @@ DestructionAnalysis::DestructionAnalysis(const Module& module) {
             case typing::TypeKind::structure: {
                 const auto structure = structures.find(id);
                 if (structure != structures.end()) {
-                    result = structure->second->deinitializer.has_value() ||
+                    result = structure->second->role == StructureRole::array ||
+                            structure->second->deinitializer.has_value() ||
                             std::any_of(
                             structure->second->fields.begin(),
                             structure->second->fields.end(),
@@ -444,11 +445,17 @@ VerificationResult Verifier::verify(const Module& module) const {
         }
     }
     for (const auto& structure : module.structures) {
-        if (structure.deinitializer.has_value() && !(structure.inertZero && structure.copier.has_value()) &&
+        if (structure.deinitializer.has_value() &&
+            !(structure.role == StructureRole::array && structure.copier.has_value()) &&
             noncopyableTypes.insert(structure.type).second) {
             pendingNoncopyable.push_back(structure.type);
         }
         for (const auto& field : structure.fields) copyDependents[field.type].push_back(structure.type);
+        const auto type = types.find(structure.type);
+        if (structure.role == StructureRole::array && type != types.end() &&
+            type->second->arguments.size() == 1) {
+            copyDependents[type->second->arguments[0]].push_back(structure.type);
+        }
     }
     for (const auto& enumeration : module.enumerations) {
         for (const auto& element : enumeration.cases) {
@@ -491,6 +498,7 @@ VerificationResult Verifier::verify(const Module& module) const {
     }
 
     std::unordered_map<TypeId, const StructureDefinition*> structures;
+    std::optional<semantic::SymbolId> arrayRoleSymbol;
     // A field symbol repeats across the instances of a generic type (spec 20.12), so it is unique per structure.
     std::map<std::pair<TypeId, semantic::SymbolId>, const FieldDefinition*> fields;
     for (const auto& structure : module.structures) {
@@ -512,6 +520,32 @@ VerificationResult Verifier::verify(const Module& module) const {
                     "duplicate structure definition for type " +
                             std::to_string(structure.type));
         }
+        if (structure.role != StructureRole::none && structure.role != StructureRole::array) {
+            report(VerificationErrorId::invalidReference, std::nullopt, std::nullopt, std::nullopt,
+                   "structure '" + structure.name + "' has an unknown structure role");
+        }
+        if (structure.role == StructureRole::array) {
+            const auto found = types.find(structure.type);
+            bool shaped = found != types.end() && found->second->kind == typing::TypeKind::structure &&
+                    found->second->symbol == structure.symbol && found->second->arguments.size() == 1 &&
+                    structure.fields.size() == 3;
+            static constexpr const char* names[] = { "address", "count", "capacity" };
+            for (size_t index = 0; shaped && index < 3; ++index) {
+                const auto field = types.find(structure.fields[index].type);
+                shaped = structure.fields[index].name == names[index] && field != types.end() &&
+                        field->second->kind == typing::TypeKind::integer;
+            }
+            if (!shaped) {
+                report(VerificationErrorId::typeMismatch, std::nullopt, std::nullopt, std::nullopt,
+                       "array role structure '" + structure.name +
+                               "' needs one type argument and the Int fields address, count, capacity");
+            }
+            if (arrayRoleSymbol.has_value() && *arrayRoleSymbol != structure.symbol) {
+                report(VerificationErrorId::invalidReference, std::nullopt, std::nullopt, std::nullopt,
+                       "different declarations cannot carry the array structure role");
+            }
+            arrayRoleSymbol = structure.symbol;
+        }
         for (const auto& field : structure.fields) {
             verifyConcreteType(field.type, std::nullopt, std::nullopt, std::nullopt,
                                "field '" + field.name + "'");
@@ -527,7 +561,7 @@ VerificationResult Verifier::verify(const Module& module) const {
             // symbol; it is not a lookup target.
             if (field.symbol == semantic::invalidSymbolId) {
                 const auto isLiveFlag = field.name == liveFieldName &&
-                        structure.deinitializer.has_value() && !structure.inertZero &&
+                        structure.deinitializer.has_value() && structure.role == StructureRole::none &&
                         &field == &structure.fields.back();
                 if (!isLiveFlag) {
                     report(
@@ -708,7 +742,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                 structure.fields.back().symbol == semantic::invalidSymbolId &&
                 types.contains(structure.fields.back().type) &&
                 types.at(structure.fields.back().type)->kind == typing::TypeKind::boolean;
-        if (structure.inertZero) {
+        if (structure.role == StructureRole::array) {
             // No live flag: the zero value must itself be destroyable (decision 0025).
             if (liveFlagIsLast) {
                 report(VerificationErrorId::invalidReference, std::nullopt, std::nullopt, std::nullopt,
@@ -739,7 +773,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                 types.at(function.parameters[1].value.type)->kind == typing::TypeKind::integer &&
                 [&] {
                     const auto structure = structures.find(function.parameters[0].value.type);
-                    return structure != structures.end() && structure->second->inertZero;
+                    return structure != structures.end() && structure->second->role == StructureRole::array;
                 }();
         if (!shaped) {
             report(VerificationErrorId::invalidInstruction, function.id, std::nullopt, std::nullopt,
@@ -749,25 +783,57 @@ VerificationResult Verifier::verify(const Module& module) const {
     }
 
     for (const auto& structure : module.structures) {
-        if (structure.inertZero && !structure.deinitializer.has_value()) {
+        if (structure.role == StructureRole::array && !structure.deinitializer.has_value()) {
             report(VerificationErrorId::invalidReference, std::nullopt, std::nullopt, std::nullopt,
                    "inert-zero structure '" + structure.name + "' needs a deinit");
         }
         if (!structure.copier.has_value()) continue;
         const auto copier = functions.find(*structure.copier);
-        const bool matches = structure.inertZero && copier != functions.end() &&
+        const bool matches = structure.role == StructureRole::array && copier != functions.end() &&
                 copier->second->parameters.size() == 1 &&
                 copier->second->parameters[0].value.type == structure.type &&
                 copier->second->parameters[0].value.category == ValueCategory::value &&
                 !copier->second->parameters[0].isConsuming &&
                 copier->second->returnsValue && copier->second->resultType == structure.type &&
-                !copier->second->isExternal;
+                !copier->second->isExternal && !noncopyableTypes.contains(structure.type);
         if (!matches) {
             report(copier == functions.end() ? VerificationErrorId::invalidReference
                                              : VerificationErrorId::invalidInstruction,
                    std::nullopt, std::nullopt, std::nullopt,
                    "copier of structure '" + structure.name +
                            "' must be a function borrowing only the structure and returning the structure");
+        }
+    }
+
+    std::unordered_set<FunctionId> literalFactories;
+    std::unordered_set<TypeId> literalFactoryTypes;
+    for (const auto& function : module.functions) {
+        if (!function.arrayLiteral) continue;
+        const auto receiver = function.parameters.empty() ? structures.end()
+                : structures.find(function.parameters[0].value.type);
+        const bool shaped = function.runtimeContext && !function.isExternal && function.returnsValue &&
+                function.parameters.size() == 3 && receiver != structures.end() &&
+                receiver->second->role == StructureRole::array &&
+                function.parameters[0].value.category == ValueCategory::value &&
+                function.parameters[0].isConsuming &&
+                function.resultType == function.parameters[0].value.type &&
+                types.contains(function.resultType) && types.at(function.resultType)->arguments.size() == 1 &&
+                [&] {
+                    for (size_t index = 1; index < 3; ++index) {
+                        const auto& parameter = function.parameters[index];
+                        const auto type = types.find(parameter.value.type);
+                        if (parameter.value.category != ValueCategory::value || parameter.isConsuming ||
+                            parameter.isInitializing || type == types.end() ||
+                            type->second->kind != typing::TypeKind::integer) return false;
+                    }
+                    return true;
+                }();
+        if (!shaped || !literalFactoryTypes.insert(function.resultType).second) {
+            report(VerificationErrorId::invalidInstruction, function.id, std::nullopt, std::nullopt,
+                   "array literal factory '" + function.name +
+                           "' must uniquely consume an array role struct, borrow two Ints, and return that struct");
+        } else {
+            literalFactories.insert(function.id);
         }
     }
 
@@ -919,6 +985,10 @@ VerificationResult Verifier::verify(const Module& module) const {
     std::unordered_set<std::string> nativeExports;
     for (const auto& function : module.functions) {
         const auto functionId = std::optional<FunctionId>(function.id);
+        if (function.alwaysInline && (!function.runtimeContext || function.isExternal)) {
+            report(VerificationErrorId::invalidInstruction, functionId, {}, {},
+                   "an always-inline runtime wrapper must be an authorized function with a body");
+        }
         if (module.isRuntimeObject && function.isRootModule &&
             !function.isExternal && !function.runtimeContext) {
             report(VerificationErrorId::invalidInstruction, functionId, {}, {},
@@ -954,6 +1024,9 @@ VerificationResult Verifier::verify(const Module& module) const {
                 return typing::nativeBufferKind(id, [&](TypeId value) {
                     const auto found = types.find(value);
                     return found == types.end() ? nullptr : found->second;
+                }, [&](TypeId value) {
+                    const auto found = structures.find(value);
+                    return found != structures.end() && found->second->role == StructureRole::array;
                 });
             };
             for (const auto pointer : binding.pointerParameters) {
@@ -1372,6 +1445,155 @@ VerificationResult Verifier::verify(const Module& module) const {
                     dominators[blockId] = std::move(next);
                     changed = true;
                 }
+            }
+        }
+        struct LiteralUse {
+            const Instruction* instruction;
+            BlockId block;
+            size_t index;
+            size_t operand;
+        };
+        std::unordered_map<ValueId, std::vector<LiteralUse>> literalUses;
+        for (const auto& block : function.blocks) {
+            for (size_t index = 0; index < block.instructions.size(); ++index) {
+                const auto& instruction = block.instructions[index];
+                for (size_t operand = 0; operand < instruction.operands.size(); ++operand) {
+                    literalUses[instruction.operands[operand]].push_back({ &instruction, block.id, index, operand });
+                }
+            }
+        }
+        const auto definingInstruction = [&](ValueId value) -> const Instruction* {
+            const auto found = valueDefinitions.find(value);
+            if (found == valueDefinitions.end()) return nullptr;
+            const auto block = blocks.find(found->second.first);
+            if (block == blocks.end() || found->second.second >= block->second->instructions.size()) return nullptr;
+            return &block->second->instructions[found->second.second];
+        };
+        std::unordered_map<ValueId, TypeId> literalBlocks;
+        std::unordered_map<ValueId, TypeId> literalSlots;
+        std::unordered_map<ValueId, TypeId> literalPlaces;
+        // User functions may only form raw slots through this closed, straight-line initialize-and-transfer
+        // protocol. Ordinary source uses of the layout intrinsics still need runtime authorization.
+        if (!function.runtimeContext) for (const auto& block : function.blocks) {
+            for (size_t index = 0; index < block.instructions.size(); ++index) {
+                const auto& storage = block.instructions[index];
+                if (storage.opcode != Opcode::stackBlock || !storage.result.has_value() ||
+                    storage.operands.size() != 1) continue;
+                const auto* count = definingInstruction(storage.operands[0]);
+                const auto element = static_cast<TypeId>(storage.integerValue);
+                bool valid = count != nullptr && count->opcode == Opcode::integerConstant &&
+                        count->integerValue >= 0 && types.contains(element);
+                const LiteralUse* transfer = nullptr;
+                std::vector<LiteralUse> slots;
+                for (const auto& use : literalUses[storage.result->id]) {
+                    if (use.instruction->opcode == Opcode::call && use.operand == 1 &&
+                        use.instruction->callee.has_value() && literalFactories.contains(*use.instruction->callee)) {
+                        if (transfer != nullptr) valid = false;
+                        transfer = &use;
+                    } else if (use.instruction->opcode == Opcode::slotAddress && use.operand == 0) {
+                        slots.push_back(use);
+                    } else {
+                        valid = false;
+                    }
+                }
+                valid = valid && transfer != nullptr;
+                if (transfer != nullptr) {
+                    const auto& call = *transfer->instruction;
+                    const auto* factory = functions.at(*call.callee);
+                    const auto result = types.find(factory->resultType);
+                    valid = valid && transfer->block == block.id && transfer->index > index &&
+                            call.operands.size() == 3 && call.operands[2] == storage.operands[0] &&
+                            result != types.end() && result->second->arguments.size() == 1 &&
+                            result->second->arguments[0] == element;
+                    const auto* receiver = call.operands.empty() ? nullptr : definingInstruction(call.operands[0]);
+                    const auto* place = receiver != nullptr && receiver->opcode == Opcode::load &&
+                            receiver->operands.size() == 1 ? definingInstruction(receiver->operands[0]) : nullptr;
+                    valid = valid && place != nullptr && place->opcode == Opcode::stackAllocate &&
+                            place->result.has_value() && place->result->type == factory->resultType;
+                    bool zeroed = false;
+                    if (place != nullptr && place->result.has_value()) {
+                        for (const auto& use : literalUses[place->result->id]) {
+                            if (use.instruction->opcode == Opcode::zeroInitialize && use.operand == 0 &&
+                                use.block == block.id && use.index < index) {
+                                if (zeroed) valid = false;
+                                zeroed = true;
+                            } else if (use.instruction != receiver || use.operand != 0 ||
+                                       use.block != block.id || use.index >= index || !zeroed) {
+                                valid = false;
+                            }
+                        }
+                    }
+                    valid = valid && zeroed;
+                    for (size_t packed = index + 1; packed < transfer->index; ++packed) {
+                        switch (block.instructions[packed].opcode) {
+                            case Opcode::integerConstant:
+                            case Opcode::slotAddress:
+                            case Opcode::integerAddress:
+                            case Opcode::store:
+                                break;
+                            default:
+                                valid = false;
+                                break;
+                        }
+                    }
+                }
+                std::unordered_set<int64_t> initialized;
+                std::vector<ValueId> admittedSlots;
+                std::vector<ValueId> admittedPlaces;
+                for (const auto& use : slots) {
+                    const auto& slot = *use.instruction;
+                    const auto* offset = slot.operands.size() == 2 ? definingInstruction(slot.operands[1]) : nullptr;
+                    const bool inRange = offset != nullptr && offset->opcode == Opcode::integerConstant &&
+                            count != nullptr && offset->integerValue >= 0 && offset->integerValue < count->integerValue;
+                    valid = valid && slot.result.has_value() && slot.integerValue == storage.integerValue &&
+                            use.block == block.id && use.index > index && inRange;
+                    if (!slot.result.has_value()) continue;
+                    const auto& addresses = literalUses[slot.result->id];
+                    valid = valid && addresses.size() == 1;
+                    for (const auto& address : addresses) {
+                        const auto& place = *address.instruction;
+                        valid = valid && address.operand == 0 && place.opcode == Opcode::integerAddress &&
+                                place.operands.size() == 1 && place.result.has_value() &&
+                                place.result->type == element && place.result->category == ValueCategory::address &&
+                                address.block == block.id && address.index > use.index;
+                        if (!place.result.has_value()) continue;
+                        const auto& stores = literalUses[place.result->id];
+                        valid = valid && stores.size() == 1;
+                        for (const auto& store : stores) {
+                            const auto& instruction = *store.instruction;
+                            const auto value = instruction.operands.size() == 2
+                                    ? values.find(instruction.operands[0]) : values.end();
+                            const auto definition = value == values.end() ? valueDefinitions.end()
+                                    : valueDefinitions.find(value->first);
+                            const bool evaluatedFirst = value != values.end() &&
+                                    (definition == valueDefinitions.end() ||
+                                     (definition->second.first == block.id && definition->second.second < index) ||
+                                     (definition->second.first != block.id &&
+                                      dominators[block.id].contains(definition->second.first)));
+                            valid = valid && store.operand == 1 && instruction.opcode == Opcode::store &&
+                                    value != values.end() && value->second.type == element &&
+                                    value->second.category == ValueCategory::value &&
+                                    store.block == block.id && store.index > address.index &&
+                                    transfer != nullptr && store.index < transfer->index && evaluatedFirst &&
+                                    inRange && initialized.insert(offset->integerValue).second;
+                        }
+                        admittedPlaces.push_back(place.result->id);
+                    }
+                    admittedSlots.push_back(slot.result->id);
+                }
+                valid = valid && count != nullptr && types.contains(element) &&
+                        (types.at(element)->kind == typing::TypeKind::voidType
+                                ? slots.empty()
+                                : initialized.size() == static_cast<uint64_t>(count->integerValue));
+                if (!valid) {
+                    report(VerificationErrorId::invalidInstruction, functionId, block.id, index,
+                           "array literal storage must initialize each bounded slot exactly once, then transfer "
+                           "only to its matching literal factory with an inert-zero receiver");
+                    continue;
+                }
+                literalBlocks.emplace(storage.result->id, element);
+                for (const auto slot : admittedSlots) literalSlots.emplace(slot, element);
+                for (const auto place : admittedPlaces) literalPlaces.emplace(place, element);
             }
         }
         // The escape rule of a library array's element place (decision 0025): an element address is
@@ -1836,8 +2058,14 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         if (!guard) {
                             const auto queried = static_cast<TypeId>(instruction.integerValue);
+                            const auto* count = stackBlockOp && instruction.operands.size() == 1
+                                    ? definingInstruction(instruction.operands[0]) : nullptr;
+                            const bool emptyNeverLiteral = count != nullptr &&
+                                    count->opcode == Opcode::integerConstant && count->integerValue == 0 &&
+                                    instruction.result.has_value() &&
+                                    literalBlocks.contains(instruction.result->id);
                             if (!types.contains(queried) || nonConcreteTypes.contains(queried) ||
-                                types.at(queried)->kind == typing::TypeKind::never) {
+                                (types.at(queried)->kind == typing::TypeKind::never && !emptyNeverLiteral)) {
                                 report(VerificationErrorId::typeMismatch, functionId, block.id, location,
                                        std::string(opcodeName(instruction.opcode)) +
                                                " needs a concrete type with values");
@@ -1850,7 +2078,12 @@ VerificationResult Verifier::verify(const Module& module) const {
                                                "' is noncopyable");
                             }
                         }
-                        if (!function.runtimeContext) {
+                        const bool literalStorage = instruction.result.has_value() &&
+                                ((instruction.opcode == Opcode::stackBlock &&
+                                  literalBlocks.contains(instruction.result->id)) ||
+                                 (instruction.opcode == Opcode::slotAddress &&
+                                  literalSlots.contains(instruction.result->id)));
+                        if (!function.runtimeContext && !literalStorage) {
                             report(VerificationErrorId::callMismatch, functionId, block.id, location,
                                    "a collection capability requires runtime authorization");
                         }
@@ -1899,7 +2132,9 @@ VerificationResult Verifier::verify(const Module& module) const {
                             report(VerificationErrorId::typeMismatch, functionId, block.id, location,
                                    "an element address must have the element type of the array it indexes");
                         }
-                        if (!function.runtimeContext && !fromAddressor) {
+                        const bool fromLiteral = instruction.result.has_value() &&
+                                literalPlaces.contains(instruction.result->id);
+                        if (!function.runtimeContext && !fromAddressor && !fromLiteral) {
                             report(
                                     VerificationErrorId::callMismatch,
                                     functionId, block.id, location,
@@ -2248,6 +2483,12 @@ VerificationResult Verifier::verify(const Module& module) const {
                             break;
                         }
                         const auto& callee = *functions.at(*instruction.callee);
+                        if (!function.runtimeContext && callee.arrayLiteral &&
+                            (instruction.operands.size() != 3 ||
+                             !literalBlocks.contains(instruction.operands[1]))) {
+                            report(VerificationErrorId::callMismatch, functionId, block.id, location,
+                                   "an array literal factory requires verified literal storage");
+                        }
                         if (callee.nativeBinding.has_value() && !function.runtimeContext) {
                             report(VerificationErrorId::callMismatch, functionId, block.id, location,
                                    "direct call to a C binding requires runtime authorization");
@@ -2702,7 +2943,8 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 ? types.at(instruction.result->type)
                                 : nullptr;
                             const auto* elementType = resultType != nullptr &&
-                                resultType->kind == typing::TypeKind::array &&
+                                structures.contains(resultType->id) &&
+                                structures.at(resultType->id)->role == StructureRole::array &&
                                 resultType->arguments.size() == 1 &&
                                 types.contains(resultType->arguments[0])
                                 ? types.at(resultType->arguments[0])
@@ -3100,7 +3342,7 @@ std::string dump(const Module& module) {
         }
         out << (structure->fields.empty() ? "}" : " }");
         if (structure->deinitializer.has_value()) out << " deinit=@" << *structure->deinitializer;
-        if (structure->inertZero) out << " inert_zero";
+        if (structure->role == StructureRole::array) out << " role=array";
         if (structure->copier.has_value()) out << " copier=@" << *structure->copier;
         out << '\n';
     }
@@ -3197,6 +3439,8 @@ std::string dump(const Module& module) {
         if (function.debugScope.has_value()) out << " debug_scope#" << *function.debugScope;
         if (!function.isRootModule) out << " dependency";
         if (function.elementAddressor) out << " element_addressor";
+        if (function.arrayLiteral) out << " array_literal";
+        if (function.alwaysInline) out << " always_inline";
         out << " {\n";
         for (const auto& binding : function.entryDebugVariableBindings) {
             out << "    debug_bind #" << binding.variable << " -> "

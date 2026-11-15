@@ -254,6 +254,9 @@ struct Function {
     // The `array_element` addressor of a library array instance (decision 0025): the one kind of
     // function whose result a non-runtime function may turn into an element address.
     bool elementAddressor = false;
+    bool arrayLiteral = false;
+    // Closed runtime wrappers whose extra call frame is not part of the unoptimized library cost.
+    bool alwaysInline = false;
     bool isExternal = false;
     BlockId entry = invalidBlockId;
     std::vector<BasicBlock> blocks;
@@ -287,6 +290,11 @@ struct FieldDefinition {
     bool isMutable = false;
 };
 
+enum class StructureRole : uint8_t {
+    none,
+    array,
+};
+
 struct StructureDefinition {
     semantic::SymbolId symbol = semantic::invalidSymbolId;
     TypeId type = typing::invalidTypeId;
@@ -300,8 +308,8 @@ struct StructureDefinition {
     std::optional<FunctionId> deinitializer;
     // A struct bound to the library array role (decision 0025): destruction runs `deinitializer` with
     // no hidden live flag, because the all-zero value is destroyable and the destroy helper zero-fills.
-    bool inertZero = false;
-    // The method that copies such a struct (a function taking its address and returning the struct).
+    StructureRole role = StructureRole::none;
+    // The method that copies such a struct (a function borrowing its value and returning the struct).
     // Present exactly when the instance is copyable; without it the struct is noncopyable.
     std::optional<FunctionId> copier;
 };

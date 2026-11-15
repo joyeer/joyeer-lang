@@ -53,12 +53,14 @@ TEST(ArrayCharacterization, TypesPrintInSquareBrackets) {
     EXPECT_TRUE(contains(literal, "cannot use value of type 'String' where 'Int' is required")) << literal;
 }
 
-// CHANGES WITH 0026: today the member error names the builtin type by its bare name `Array`; the library
-// struct is an ordinary type with private fields, so `address` and `capacity` become inaccessible instead.
+// CHANGES WITH 0026: the library's stored fields are inaccessible, not unknown members.
 TEST(ArrayCharacterization, UnknownMembersAndMisuseOfCount) {
     const auto text = diagnose("func main() { let a: [Int] = [1]\n print(value: a.address) }\n");
-    EXPECT_TRUE(contains(text, "name-resolution.unknown-member")) << text;
-    EXPECT_TRUE(contains(text, "type 'Array' has no member named 'address'")) << text;
+    EXPECT_TRUE(contains(text, "inaccessible-declaration")) << text;
+    EXPECT_TRUE(contains(text, "declaration 'address' is not accessible from this file")) << text;
+    const auto capacity = diagnose("func main() { let a: [Int] = [1]\n print(value: a.capacity) }\n");
+    EXPECT_TRUE(contains(capacity, "inaccessible-declaration")) << capacity;
+    EXPECT_TRUE(contains(capacity, "declaration 'capacity' is not accessible from this file")) << capacity;
     const auto call = diagnose("func main() { let a: [Int] = [1]\n print(value: a.count()) }\n");
     EXPECT_TRUE(contains(call, "name-resolution.not-callable")) << call;
     EXPECT_TRUE(contains(call, "'count' is not callable")) << call;
@@ -86,7 +88,7 @@ TEST(ArrayCharacterization, ForInNeedsAnIterable) {
 TEST(ArrayCharacterization, AUserTypeNamedArrayShadowsTheBuiltin) {
     const auto text = diagnose("struct Array { var x: Int }\n"
                                "func main() { let a = Array(x: 1)\n let b: Int = a }\n");
-    EXPECT_TRUE(contains(text, "cannot use value of type 'Array' where 'Int' is required")) << text;
+    EXPECT_TRUE(contains(text, "cannot use value of type '<main>.Array' where 'Int' is required")) << text;
 }
 
 TEST(ArrayCharacterization, OwnershipReasonsNameTheElement) {

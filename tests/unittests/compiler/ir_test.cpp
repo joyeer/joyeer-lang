@@ -879,11 +879,21 @@ TEST(IRModelTest, VerifiesStringUtf8ProducesAByteArray) {
         TypeName {
             3,
             "[UInt8]",
-            joyeer::typing::TypeKind::array,
-            joyeer::semantic::invalidSymbolId,
+            joyeer::typing::TypeKind::structure,
+            50,
             { 2 },
         },
+        TypeName { 4, "Int", joyeer::typing::TypeKind::integer },
     };
+    StructureDefinition array;
+    array.symbol = 50;
+    array.type = 3;
+    array.name = "[UInt8]";
+    array.role = joyeer::ir::StructureRole::array;
+    array.fields = { { 51, "address", 4, true }, { 52, "count", 4, true }, { 53, "capacity", 4, true } };
+    array.deinitializer = 1;
+    array.copier = 2;
+    module.structures.push_back(array);
     Function function;
     function.id = 0;
     function.name = "bytes";
@@ -908,6 +918,23 @@ TEST(IRModelTest, VerifiesStringUtf8ProducesAByteArray) {
         },
     };
     module.functions.push_back(std::move(function));
+    Function destroy;
+    destroy.id = 1;
+    destroy.name = "destroy";
+    destroy.parameters = { Parameter { Value { 0, 3, ValueCategory::address }, std::nullopt, "self", true } };
+    destroy.resultType = 0;
+    destroy.entry = 0;
+    destroy.blocks = { BasicBlock { 0, "entry", { Instruction { Opcode::returnVoid } } } };
+    module.functions.push_back(destroy);
+    Function clone;
+    clone.id = 2;
+    clone.name = "clone";
+    clone.parameters = { Parameter { Value { 0, 3, ValueCategory::value }, std::nullopt, "self" } };
+    clone.resultType = 3;
+    clone.returnsValue = true;
+    clone.entry = 0;
+    clone.blocks = { BasicBlock { 0, "entry", { Instruction { Opcode::returnValue, std::nullopt, { 0 } } } } };
+    module.functions.push_back(clone);
 
     const auto valid = Verifier().verify(module);
     ASSERT_TRUE(valid.succeeded()) << dump(valid);

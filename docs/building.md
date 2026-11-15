@@ -153,6 +153,8 @@ Keep LLVM SDKs and test tools out of product packages.
   explicitly.
 
 Keep the compiler, backend, and runtime together, with matching architectures.
+The concurrency, enum-role and collections preludes (`lib/Runtime/{concurrency,roles,collections}.joyeer`)
+are embedded in that compiler. No separate source-prelude installation or runtime file lookup is required.
 Before redistribution, assemble applicable LLVM/LLD, support-library,
 Windows LibXml2, Linux Clang, and other dependency notices.
 

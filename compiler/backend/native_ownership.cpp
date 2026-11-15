@@ -60,8 +60,7 @@ void Builder::emitOwnership() {
         if (!destruction->requiresDestruction(type.id)) continue;
         auto* cloneType = llvm::FunctionType::get(builder.getVoidTy(), {pointer(), pointer()}, false);
         auto* destroyType = llvm::FunctionType::get(builder.getVoidTy(), {pointer()}, false);
-        const auto linkage = source.isRuntimeObject
-                ? llvm::GlobalValue::InternalLinkage : llvm::GlobalValue::ExternalLinkage;
+        const auto linkage = llvm::GlobalValue::InternalLinkage;
         clones.emplace(type.id, llvm::Function::Create(cloneType,
                 linkage, "joyeer_clone_type_" + std::to_string(type.id), module()));
         destroys.emplace(type.id, llvm::Function::Create(destroyType,
@@ -75,7 +74,7 @@ void Builder::emitOwnershipBodies() {
     for (const auto& [id, function] : clones) {
         // Like a destroy helper that calls a `deinit`: this helper has no debug scope, and the copier has one.
         if (const auto found = structures.find(id);
-            found != structures.end() && found->second->copier.has_value()) {
+            options.emitLineTables && found != structures.end() && found->second->copier.has_value()) {
             function->addFnAttr(llvm::Attribute::NoInline);
         }
         activeFunction = function;
@@ -88,7 +87,7 @@ void Builder::emitOwnershipBodies() {
         // A helper that calls a `deinit` carries no debug scope of its own, so inlining the
         // `deinit` into it (and it into a caller) corrupts the inlined debug scopes.
         if (const auto found = structures.find(id);
-            found != structures.end() && found->second->deinitializer.has_value()) {
+            options.emitLineTables && found != structures.end() && found->second->deinitializer.has_value()) {
             function->addFnAttr(llvm::Attribute::NoInline);
         }
         activeFunction = function;
@@ -172,7 +171,7 @@ void Builder::emitDestroy(ir::TypeId id) {
     if (kind == typing::TypeKind::structure) {
         const auto& definition = *structures.at(id);
         const auto& fields = definition.fields;
-        if (definition.deinitializer.has_value() && definition.inertZero) {
+        if (definition.deinitializer.has_value() && definition.role == ir::StructureRole::array) {
             // No live flag: the `deinit` runs on the zero value too and does nothing there, and the
             // zero-fill at the end of this helper makes a second destroy harmless (decision 0025).
             builder.CreateCall(functions.at(*definition.deinitializer), {address});

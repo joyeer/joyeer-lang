@@ -246,7 +246,7 @@ destruct-then-construct round-trip for large objects.
 ### 4.3 Call-site markers `&` and `consume`
 
 The call-site marker for `inout` / `initializing` is `&x`;
-for `consuming` it is `consume x`.
+for `consuming` it is `consume x`, except the closed library-owned element context below.
 
 ```joyeer
 swap(a: &a, b: &b)        // both args are inout
@@ -256,10 +256,17 @@ plain(x: x, y: y)         // no marker → both are borrowing (read-only)
 ```
 
 The `&` marker is **mandatory** on `inout` and `initializing` arguments,
-and `consume` is **mandatory** on `consuming` arguments. Omitting either is
-a syntax-level error, not just a type error — this guarantees that mutation
+and `consume` is **mandatory** on ordinary `consuming` arguments. Omitting either is
+an access-marker error — this guarantees that mutation
 and ownership transfer are always visible at the call site by simple
 scanning (§0.1 principle 2).
+
+A consuming parameter of an `array_type` method declared with exactly the role's owned type
+parameter is an **owned argument context** (§20.12.5). This preserves `append(element:)`:
+an unmarked argument supplies an owned temporary or a copy of a copyable place, without
+uninitializing that place. `consume` explicitly moves it; `&` is invalid. The exception is
+classified before generic substitution, applies to neither receivers nor other parameters,
+and does not relax exclusivity or the must-transfer rule inside the library body.
 
 Last-use optimization still applies to plain `borrowing` bindings (§4.6);
 `consume` specifies **semantic** ownership transfer, not the optimization.

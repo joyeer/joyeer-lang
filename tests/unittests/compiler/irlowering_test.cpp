@@ -407,13 +407,13 @@ TEST_F(IRLoweringTest, ReturningAnOwningLocalOfANoncopyableTypeMovesIt) {
     EXPECT_EQ(opcodeCount(make, joyeer::ir::Opcode::take), 1u);
 }
 
-TEST_F(IRLoweringTest, ArrayRemoveLastLowersToOneInstructionWithAnOwnedOptionalResult) {
+TEST_F(IRLoweringTest, ArrayRemoveLastLowersToALibraryCallWithAnOwnedOptionalResult) {
     ASSERT_NO_FATAL_FAILURE(lower("func pop(): Int? {\n"
                                   "    var numbers: [Int] = [1, 2]\n"
                                   "    return &numbers.removeLast()\n"
                                   "}\n"));
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
-    EXPECT_EQ(opcodeCount(function("pop"), joyeer::ir::Opcode::arrayRemoveLast), 1u);
+    EXPECT_EQ(opcodeCount(function("pop"), joyeer::ir::Opcode::call), 2u);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
 
@@ -471,6 +471,8 @@ protected:
             for (auto& block : candidate.blocks) {
                 for (auto& instruction : block.instructions) {
                     if (instruction.opcode != opcode) continue;
+                    if (opcode == joyeer::ir::Opcode::call && instruction.callee.has_value() &&
+                        module.functions[*instruction.callee].arrayLiteral) continue;
                     mutate(instruction, module);
                     return !joyeer::ir::Verifier().verify(module).succeeded();
                 }
@@ -513,27 +515,27 @@ TEST_F(NewOpcodeVerifierTest, TheLoweredModuleVerifies) {
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
 
-TEST_F(NewOpcodeVerifierTest, ArrayRemoveLastNeedsExactlyOneOperand) {
+TEST_F(NewOpcodeVerifierTest, ArrayRemoveLastLibraryCallsNeedTheirExactOperands) {
     lowerPrograms();
     using joyeer::ir::Opcode;
-    EXPECT_TRUE(rejects("pop", Opcode::arrayRemoveLast, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("pop", Opcode::call, [](auto& instruction, auto&) {
         instruction.operands.clear();
     }));
-    EXPECT_TRUE(rejects("pop", Opcode::arrayRemoveLast, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("pop", Opcode::call, [](auto& instruction, auto&) {
         instruction.operands.push_back(instruction.operands.front());
     }));
 }
 
-TEST_F(NewOpcodeVerifierTest, ArrayRemoveLastNeedsAnOptionalOfTheElementType) {
+TEST_F(NewOpcodeVerifierTest, ArrayLibraryCallsNeedTheirDeclaredResultType) {
     lowerPrograms();
     using joyeer::ir::Opcode;
-    EXPECT_TRUE(rejects("pop", Opcode::arrayRemoveLast, [](auto& instruction, auto& module) {
+    EXPECT_TRUE(rejects("pop", Opcode::call, [](auto& instruction, auto& module) {
         instruction.result->type = typeNamed(module, "Int");
     }));
-    EXPECT_TRUE(rejects("pop", Opcode::arrayRemoveLast, [](auto& instruction, auto& module) {
+    EXPECT_TRUE(rejects("pop", Opcode::call, [](auto& instruction, auto& module) {
         instruction.result->type = typeNamed(module, "Handle");
     }));
-    EXPECT_TRUE(rejects("pop", Opcode::arrayRemoveLast, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("pop", Opcode::call, [](auto& instruction, auto&) {
         instruction.result->category = joyeer::ir::ValueCategory::address;
     }));
 }
@@ -1458,16 +1460,17 @@ return values[0] + lookup["answer"]
     const auto verification = joyeer::ir::Verifier().verify(*result.module);
     ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
     const auto& build = function("build");
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::constructArray), 1u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::stackBlock), 1u);
     EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::constructDictionary), 1u);
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::subscript), 2u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::subscript), 1u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::integerAddress), 4u);
 
     const auto arrayType = std::find_if(
             result.module->types.begin(),
             result.module->types.end(),
             [](const auto& type) { return type.name == "[Int]"; });
     ASSERT_NE(arrayType, result.module->types.end());
-    EXPECT_EQ(arrayType->kind, joyeer::typing::TypeKind::array);
+    EXPECT_EQ(arrayType->kind, joyeer::typing::TypeKind::structure);
     ASSERT_EQ(arrayType->arguments.size(), 1u);
     const auto elementType = std::find_if(
             result.module->types.begin(),
@@ -1491,7 +1494,7 @@ return values
     const auto verification = joyeer::ir::Verifier().verify(*result.module);
     ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
     const auto& build = function("build");
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::arrayAppend), 2u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::call), 3u);
     EXPECT_GE(opcodeCount(build, joyeer::ir::Opcode::copyValue), 1u);
     EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::returnValue), 1u);
 }
@@ -1529,8 +1532,8 @@ return values[0]
     const auto verification = joyeer::ir::Verifier().verify(*result.module);
     ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
     const auto& increment = function("incrementFirst");
-    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::subscriptAddress), 1u);
-    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::subscript), 2u);
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::integerAddress), 3u);
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::call), 3u);
 }
 
 TEST_F(IRLoweringTest, LowersEnumMatchesAndPayloadBindings) {
@@ -2091,25 +2094,26 @@ let copy = value
             joyeer::lowering::DiagnosticId::missingReturn);
 }
 
-TEST_F(IRLoweringTest, ConsumeEmptyLowersToOneInstructionOnTheArrayAddress) {
+TEST_F(IRLoweringTest, ConsumeEmptyLowersToAConsumingLibraryCall) {
     ASSERT_NO_FATAL_FAILURE(lower("func end() {\n"
                                   "    var numbers: [Int] = []\n"
                                   "    consume numbers.consumeEmpty()\n"
                                   "}\n"));
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
-    EXPECT_EQ(opcodeCount(function("end"), joyeer::ir::Opcode::arrayConsumeEmpty), 1u);
+    EXPECT_EQ(opcodeCount(function("end"), joyeer::ir::Opcode::call), 2u);
+    EXPECT_EQ(opcodeCount(function("end"), joyeer::ir::Opcode::take), 1u);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
 
-TEST_F(NewOpcodeVerifierTest, ArrayConsumeEmptyNeedsExactlyOneArrayOperandAndNoResult) {
+TEST_F(NewOpcodeVerifierTest, ArrayConsumeEmptyLibraryCallsNeedTheirExactOperands) {
     ASSERT_NO_FATAL_FAILURE(lower("func end() {\n"
                                   "    var numbers: [Int] = []\n"
                                   "    consume numbers.consumeEmpty()\n"
                                   "}\n"));
-    EXPECT_TRUE(rejects("end", joyeer::ir::Opcode::arrayConsumeEmpty, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("end", joyeer::ir::Opcode::call, [](auto& instruction, auto&) {
         instruction.operands.clear();
     }));
-    EXPECT_TRUE(rejects("end", joyeer::ir::Opcode::arrayConsumeEmpty, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("end", joyeer::ir::Opcode::call, [](auto& instruction, auto&) {
         instruction.operands.push_back(instruction.operands.at(0));
     }));
 }
@@ -2121,7 +2125,7 @@ TEST_F(NewOpcodeVerifierTest, ArrayConsumeEmptyRejectsANonArrayATargetAndAnUnkno
                                   "    consume numbers.consumeEmpty()\n"
                                   "}\n"));
     using joyeer::ir::Opcode;
-    EXPECT_TRUE(rejects("end", Opcode::arrayConsumeEmpty, [](auto& instruction, auto& module) {
+    EXPECT_TRUE(rejects("end", Opcode::call, [](auto& instruction, auto& module) {
         const auto intType = typeNamed(module, "Int");
         for (auto& candidate : module.functions) {
             for (auto& block : candidate.blocks) {
@@ -2133,10 +2137,10 @@ TEST_F(NewOpcodeVerifierTest, ArrayConsumeEmptyRejectsANonArrayATargetAndAnUnkno
             }
         }
     }));
-    EXPECT_TRUE(rejects("end", Opcode::arrayConsumeEmpty, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("end", Opcode::call, [](auto& instruction, auto&) {
         instruction.targets.push_back(0);
     }));
-    EXPECT_TRUE(rejects("end", Opcode::arrayConsumeEmpty, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("end", Opcode::call, [](auto& instruction, auto&) {
         instruction.operands.at(0) = 987654;
     }));
 }

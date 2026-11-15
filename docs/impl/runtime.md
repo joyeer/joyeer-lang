@@ -165,16 +165,23 @@ program was allocation-free.
 
 Arrays provide construction, checked indexing, mutable element projection,
 ownership-transferring append/growth, recursive clone, and reverse-order
-element destruction. The built-in
+element destruction. The source library in `lib/Runtime/collections.joyeer` implements
 `&values.append(element: value)` requires an addressable mutable `Array<T>`.
 `values.removeLast()` calls `joyeer_array_remove_last_abi`, which moves the last element's bytes into the
 result payload and shortens the array without destroying the element.
 `consume values.consumeEmpty()` calls `joyeer_array_consume_empty_abi`, which traps (`array not empty`)
 unless the count is zero and otherwise frees the storage and zeroes the handle.
-Lowering transfers a type-correct `T` to `joyeer_array_append_owned_abi`;
+The library transfers a type-correct `T` through a typed stack slot to `joyeer_array_append_owned_abi`;
 the runtime grows geometrically and retains element clone/destroy callbacks.
 Borrowed heap-backed elements are cloned before transfer; owned temporaries
 move directly into the array.
+
+The library `deinit` destroys the live range last to first, clears the count, then invokes
+`joyeer_array_destroy_abi` to free exactly the original block. The C imports use the runtime's scalar
+address ABI (`Int`), avoiding a second LLVM pointer-typed declaration of those same functions.
+The compiler retains role-keyed constant-block encoding, native byte/string-array marshalling,
+`String.utf8()`, syntax/display binding, and the collection capability checks; it does not dispatch array
+methods by their public names.
 
 Dictionary lookup is linear, not hashed. Dictionaries provide construction,
 count, primitive/string-key lookup, mutable insert/update growth, recursive
@@ -336,7 +343,8 @@ loaded and is not replaced by a caller-supplied prelude
 ([0024](../decisions/0024-library-optional-and-result.md)). It is not a runtime unit (it may declare no C bindings), but its
 declarations may use the layout intrinsics, and are verified as runtime code, including the four collection capabilities of
 [0025](../decisions/0025-library-collection-capabilities.md) (`clone_at`, `destroy_range`, `clone_callback`,
-`destroy_callback`); the library array they serve is Phase 3.
+`destroy_callback`). A third independent runtime-authorized prelude, `lib/Runtime/collections.joyeer`,
+provides `Array` and its calls to the existing runtime algorithms.
 
 `lib/Runtime/core/channels.joyeer` is the fifth archive object (decision [0019](../decisions/0019-channels.md),
 spec §21.9), linked only into a program that creates a channel (which also links the thread object and
