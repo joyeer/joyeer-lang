@@ -518,13 +518,21 @@ TEST(IRModelTest, VerifiesDictionaryGetKeyAndExactOptionalResult) {
         joyeer::semantic::invalidSymbolId, { 1, 2 },
     });
     module.types.push_back(TypeName {
-        4, "Bool?", joyeer::typing::TypeKind::optional,
-        joyeer::semantic::invalidSymbolId, { 2 },
+        4, "Bool?", joyeer::typing::TypeKind::enumeration,
+        10, { 2 },
     });
     module.types.push_back(TypeName {
-        5, "Bool??", joyeer::typing::TypeKind::optional,
-        joyeer::semantic::invalidSymbolId, { 4 },
+        5, "Bool??", joyeer::typing::TypeKind::enumeration,
+        10, { 4 },
     });
+    // Role-bound instances of one declaration (decision 0024): Some is the present case.
+    for (const auto& [type, payload] : std::vector<std::pair<joyeer::typing::TypeId, joyeer::typing::TypeId>> { { 4, 2 }, { 5, 4 } }) {
+        module.enumerations.push_back(EnumerationDefinition {
+            10, type, type == 4 ? "Bool?" : "Bool??",
+            { EnumCaseDefinition { 11, "Some", { payload } }, EnumCaseDefinition { 12, "None", {} } },
+            EnumerationRole::optional, 0, 1,
+        });
+    }
     auto& function = module.functions[0];
     function.parameters = {
         Parameter { Value { 0, 3, ValueCategory::value }, std::nullopt, "values", false, {} },
@@ -538,6 +546,21 @@ TEST(IRModelTest, VerifiesDictionaryGetKeyAndExactOptionalResult) {
     const auto valid = Verifier().verify(module);
     ASSERT_TRUE(valid.succeeded()) << dump(valid);
     EXPECT_NE(dump(module).find("dictionary_get"), std::string::npos);
+    // A role-bound enum must keep its shape, and one role belongs to one declaration (decision 0024).
+    {
+        auto misshaped = module;
+        misshaped.enumerations[0].secondRoleCase = misshaped.enumerations[0].firstRoleCase;
+        EXPECT_TRUE(hasError(Verifier().verify(misshaped), VerificationErrorId::typeMismatch));
+        auto swapped = module;
+        std::swap(swapped.enumerations[0].firstRoleCase, swapped.enumerations[0].secondRoleCase);
+        EXPECT_TRUE(hasError(Verifier().verify(swapped), VerificationErrorId::typeMismatch));
+        auto otherDeclaration = module;
+        otherDeclaration.enumerations[1].symbol = 99;
+        EXPECT_TRUE(hasError(Verifier().verify(otherDeclaration), VerificationErrorId::typeMismatch));
+        auto unbound = module;
+        unbound.enumerations[0].role = EnumerationRole::none;
+        EXPECT_TRUE(hasError(Verifier().verify(unbound), VerificationErrorId::typeMismatch));
+    }
     for (const auto badType : { 1u, 2u, 5u }) {
         auto invalid = module;
         invalid.functions[0].blocks[0].instructions[0].result->type = badType;
@@ -558,6 +581,92 @@ TEST(IRModelTest, VerifiesDictionaryGetKeyAndExactOptionalResult) {
     invalid = module;
     invalid.functions[0].blocks[0].instructions[0].result.reset();
     EXPECT_FALSE(Verifier().verify(invalid).succeeded());
+}
+
+// Decision 0024: every malformed role binding is rejected by the verifier, not trusted from lowering.
+TEST(IRModelTest, VerifierRejectsMalformedRoleEnumerations) {
+    auto module = validAddModule();
+    module.types.push_back(TypeName {
+        4, "Bool?", joyeer::typing::TypeKind::enumeration, 10, { 2 },
+    });
+    module.types.push_back(TypeName {
+        6, "Result<Bool, Int>", joyeer::typing::TypeKind::enumeration, 20, { 2, 1 },
+    });
+    module.enumerations.push_back(EnumerationDefinition {
+        10, 4, "Bool?",
+        { EnumCaseDefinition { 11, "Some", { 2 } }, EnumCaseDefinition { 12, "None", {} } },
+        EnumerationRole::optional, 0, 1,
+    });
+    module.enumerations.push_back(EnumerationDefinition {
+        20, 6, "Result<Bool, Int>",
+        { EnumCaseDefinition { 21, "Ok", { 2 } }, EnumCaseDefinition { 22, "Err", { 1 } } },
+        EnumerationRole::result, 0, 1,
+    });
+    const auto valid = Verifier().verify(module);
+    ASSERT_TRUE(valid.succeeded()) << dump(valid);
+
+    // Each mutation must trip the role rule itself, not some unrelated type check.
+    const auto rejects = [&](const char* what, const auto& mutate) {
+        auto invalid = module;
+        mutate(invalid);
+        const auto verification = Verifier().verify(invalid);
+        EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch)) << what;
+        EXPECT_TRUE(std::any_of(verification.errors.begin(), verification.errors.end(), [](const auto& error) {
+            return error.message.find("role") != std::string::npos;
+        })) << what << ": " << dump(verification);
+    };
+    // Equal type arguments make the payloads alone unable to tell success from failure.
+    {
+        auto equal = module;
+        equal.types.push_back(TypeName {
+            7, "Result<Int, Int>", joyeer::typing::TypeKind::enumeration, 20, { 1, 1 },
+        });
+        equal.enumerations.push_back(EnumerationDefinition {
+            20, 7, "Result<Int, Int>",
+            { EnumCaseDefinition { 31, "Ok", { 1 } }, EnumCaseDefinition { 32, "Err", { 1 } } },
+            EnumerationRole::result, 0, 1,
+        });
+        ASSERT_TRUE(Verifier().verify(equal).succeeded()) << dump(Verifier().verify(equal));
+        std::swap(equal.enumerations.back().firstRoleCase, equal.enumerations.back().secondRoleCase);
+        const auto swapped = Verifier().verify(equal);
+        EXPECT_TRUE(hasError(swapped, VerificationErrorId::typeMismatch)) << dump(swapped);
+    }
+    rejects("role value outside the closed set", [](auto& m) {
+        m.enumerations[1].role = static_cast<EnumerationRole>(7);
+    });
+    rejects("one declaration bound to both roles", [](auto& m) {
+        m.enumerations[1].symbol = 10;
+    });
+    rejects("optional payload disagrees with the type argument", [](auto& m) {
+        m.enumerations[0].cases[0].payloadTypes = { 1 };
+    });
+    rejects("result success and failure swapped", [](auto& m) {
+        std::swap(m.enumerations[1].firstRoleCase, m.enumerations[1].secondRoleCase);
+    });
+    rejects("result with a third case", [](auto& m) {
+        m.enumerations[1].cases.push_back(EnumCaseDefinition { 23, "Extra", {} });
+    });
+    rejects("result failure case without a payload", [](auto& m) {
+        m.enumerations[1].cases[1].payloadTypes.clear();
+    });
+    rejects("optional absent case with a payload", [](auto& m) {
+        m.enumerations[0].cases[1].payloadTypes = { 2 };
+    });
+    rejects("case index out of range", [](auto& m) {
+        m.enumerations[1].secondRoleCase = 2;
+    });
+    rejects("role type is not an enumeration", [](auto& m) {
+        m.types[m.types.size() - 1].kind = joyeer::typing::TypeKind::structure;
+    });
+    rejects("result failure payload disagrees with the second type argument", [](auto& m) {
+        m.enumerations[1].cases[1].payloadTypes = { 2 };
+    });
+    rejects("wrong number of type arguments", [](auto& m) {
+        m.types[m.types.size() - 1].arguments = { 2 };
+    });
+    rejects("type and definition name different declarations", [](auto& m) {
+        m.types[m.types.size() - 1].symbol = 99;
+    });
 }
 
 TEST(IRModelTest, ReportsDuplicateAndUndefinedValueIds) {

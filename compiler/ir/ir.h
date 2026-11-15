@@ -287,11 +287,24 @@ struct EnumCaseDefinition {
     std::vector<TypeId> payloadTypes;
 };
 
+// The language role of a library enum (decision 0024). The backend and verifier read the bound
+// case indices from the definition and never compare case names.
+enum class EnumerationRole : uint8_t {
+    none,
+    optional,
+    result,
+};
+
 struct EnumerationDefinition {
     semantic::SymbolId symbol = semantic::invalidSymbolId;
     TypeId type = typing::invalidTypeId;
     std::string name;
     std::vector<EnumCaseDefinition> cases;
+    EnumerationRole role = EnumerationRole::none;
+    // Indices into `cases`: for `optional` the present then the absent case, for `result` the success
+    // then the failure case. Meaningless when `role` is none.
+    uint32_t firstRoleCase = 0;
+    uint32_t secondRoleCase = 0;
 };
 
 // Read-only array data shared by every use of one top-level constant. `data`

@@ -204,9 +204,7 @@ DestructionAnalysis::DestructionAnalysis(const Module& module) {
                 }
                 break;
             }
-            case typing::TypeKind::enumeration:
-            case typing::TypeKind::optional:
-            case typing::TypeKind::result: {
+            case typing::TypeKind::enumeration: {
                 const auto enumeration = enumerations.find(id);
                 if (enumeration != enumerations.end()) {
                     result = std::any_of(
@@ -437,8 +435,7 @@ VerificationResult Verifier::verify(const Module& module) const {
     std::unordered_set<TypeId> noncopyableTypes;
     std::vector<TypeId> pendingNoncopyable;
     for (const auto& type : module.types) {
-        if (type.kind == typing::TypeKind::array || type.kind == typing::TypeKind::dictionary ||
-            type.kind == typing::TypeKind::optional || type.kind == typing::TypeKind::result) {
+        if (type.kind == typing::TypeKind::array || type.kind == typing::TypeKind::dictionary) {
             for (const auto argument : type.arguments) copyDependents[argument].push_back(type.id);
         }
     }
@@ -595,6 +592,66 @@ VerificationResult Verifier::verify(const Module& module) const {
             }
         }
     }
+
+    // Role-bound enums (decision 0024): the case indices must name cases of the required shape, and
+    // every definition of one role is an instance of the same declaration.
+    std::unordered_map<EnumerationRole, semantic::SymbolId> roleDeclarations;
+    std::unordered_map<semantic::SymbolId, EnumerationRole> declarationRoles;
+    for (const auto& enumeration : module.enumerations) {
+        if (enumeration.role == EnumerationRole::none) continue;
+        const bool isOptional = enumeration.role == EnumerationRole::optional;
+        bool shaped = enumeration.role == EnumerationRole::optional || enumeration.role == EnumerationRole::result;
+        if (shaped) {
+            // One declaration per role, and one role per declaration.
+            const auto declaration = roleDeclarations.emplace(enumeration.role, enumeration.symbol);
+            const auto bound = declarationRoles.emplace(enumeration.symbol, enumeration.role);
+            shaped = declaration.first->second == enumeration.symbol && bound.first->second == enumeration.role &&
+                    enumeration.cases.size() == 2 &&
+                    enumeration.firstRoleCase < 2 && enumeration.secondRoleCase < 2 &&
+                    enumeration.firstRoleCase != enumeration.secondRoleCase;
+            // Lowering binds a result's success to case 0 and its failure to case 1; the payload
+            // types alone cannot tell the two apart when both type arguments are equal.
+            if (shaped && !isOptional) shaped = enumeration.firstRoleCase == 0 && enumeration.secondRoleCase == 1;
+        }
+        if (shaped) {
+            const auto& first = enumeration.cases[enumeration.firstRoleCase];
+            const auto& second = enumeration.cases[enumeration.secondRoleCase];
+            shaped = first.payloadTypes.size() == 1 &&
+                    second.payloadTypes.size() == (isOptional ? 0u : 1u);
+        }
+        if (shaped) {
+            // The payloads are the instance's type arguments: the first case carries the first one
+            // and the result's failure case carries the second.
+            const auto type = types.find(enumeration.type);
+            shaped = type != types.end() && type->second->kind == typing::TypeKind::enumeration &&
+                    type->second->symbol == enumeration.symbol &&
+                    type->second->arguments.size() == (isOptional ? 1u : 2u) &&
+                    enumeration.cases[enumeration.firstRoleCase].payloadTypes[0] == type->second->arguments[0] &&
+                    (isOptional ||
+                     enumeration.cases[enumeration.secondRoleCase].payloadTypes[0] == type->second->arguments[1]);
+        }
+        if (!shaped) {
+            report(
+                    VerificationErrorId::typeMismatch,
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "enumeration '" + enumeration.name + "' does not have the shape of its " +
+                            (enumeration.role == EnumerationRole::optional ? "optional"
+                             : enumeration.role == EnumerationRole::result ? "result" : "unknown") + " role");
+        }
+    }
+    // The payload of an optional instance's present case.
+    const auto optionalPayload = [&enumerations](TypeId type) -> std::optional<TypeId> {
+        const auto found = enumerations.find(type);
+        if (found == enumerations.end() || found->second->role != EnumerationRole::optional ||
+            found->second->firstRoleCase >= found->second->cases.size()) {
+            return std::nullopt;
+        }
+        const auto& payloads = found->second->cases[found->second->firstRoleCase].payloadTypes;
+        if (payloads.size() != 1) return std::nullopt;
+        return payloads[0];
+    };
 
     auto enumCaseFor = [&enumerations](
             TypeId type,
@@ -2128,9 +2185,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                                     arrayType->kind == typing::TypeKind::array &&
                                     arrayType->arguments.size() == 1 &&
                                     resultType != nullptr &&
-                                    resultType->kind == typing::TypeKind::optional &&
-                                    resultType->arguments.size() == 1 &&
-                                    resultType->arguments[0] == arrayType->arguments[0];
+                                    optionalPayload(resultType->id) == std::optional<TypeId>(arrayType->arguments[0]);
                             if (!matches) {
                                 report(
                                         VerificationErrorId::typeMismatch,
@@ -2268,9 +2323,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                                     dictionaryType->arguments.size() == 2 &&
                                     dictionaryType->arguments[0] == operands[1]->type &&
                                     resultType != nullptr &&
-                                    resultType->kind == typing::TypeKind::optional &&
-                                    resultType->arguments.size() == 1 &&
-                                    resultType->arguments[0] == dictionaryType->arguments[1];
+                                    optionalPayload(resultType->id) == std::optional<TypeId>(dictionaryType->arguments[1]);
                             if (!matches) {
                                 report(
                                         VerificationErrorId::typeMismatch,
@@ -2810,7 +2863,13 @@ std::string dump(const Module& module) {
                 out << ')';
             }
         }
-        out << (enumeration->cases.empty() ? "}\n" : " }\n");
+        out << (enumeration->cases.empty() ? "}" : " }");
+        if (enumeration->role != EnumerationRole::none) {
+            out << " role=" << (enumeration->role == EnumerationRole::optional ? "optional"
+                                : enumeration->role == EnumerationRole::result ? "result" : "unknown") << '('
+                << enumeration->firstRoleCase << ',' << enumeration->secondRoleCase << ')';
+        }
+        out << '\n';
     }
     for (const auto* scope : sortedDebugScopes) {
         out << "  debug_scope #" << scope->id << ' '

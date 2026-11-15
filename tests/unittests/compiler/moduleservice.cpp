@@ -101,10 +101,11 @@ TEST_F(ModuleServiceTest, CompilesExplicitSourcesAcrossDirectoriesWithoutDiscove
     ASSERT_NE(result, nullptr);
     EXPECT_EQ(result->content, firstText);
     ASSERT_NE(result->joyeerIR, nullptr);
-    ASSERT_EQ(result->joyeerIR->sourceFiles.size(), 3u);
+    ASSERT_EQ(result->joyeerIR->sourceFiles.size(), 4u);
     EXPECT_EQ(result->joyeerIR->sourceFiles[0].fileName, "a.joyeer");
     EXPECT_EQ(result->joyeerIR->sourceFiles[1].fileName, "z.joyeer");
     EXPECT_EQ(result->joyeerIR->sourceFiles[2].fileName, "concurrency.joyeer");
+    EXPECT_EQ(result->joyeerIR->sourceFiles[3].fileName, "roles.joyeer");
     EXPECT_TRUE(result->llvmHasEntryPoint);
     const auto ir = result->llvmIR;
 
@@ -123,7 +124,7 @@ TEST_F(ModuleServiceTest, DistinctModulesMayUseFilesFromTheSameDirectory) {
     CompilerService compiler(&diagnostics, options);
     compiler.compile();
     ASSERT_FALSE(diagnostics.hasFailure()) << errors();
-    EXPECT_EQ(compiler.getLastCompiledSourceFile()->joyeerIR->sourceFiles.size(), 4u);
+    EXPECT_EQ(compiler.getLastCompiledSourceFile()->joyeerIR->sourceFiles.size(), 5u);
 }
 
 TEST_F(ModuleServiceTest, ModuleNamesDoNotImplyParentModulesOrDirectories) {
@@ -132,7 +133,7 @@ TEST_F(ModuleServiceTest, ModuleNamesDoNotImplyParentModulesOrDirectories) {
     CompilerService compiler(&diagnostics, options);
     compiler.compile();
     ASSERT_FALSE(diagnostics.hasFailure()) << errors();
-    EXPECT_EQ(compiler.getLastCompiledSourceFile()->joyeerIR->sourceFiles.size(), 3u);
+    EXPECT_EQ(compiler.getLastCompiledSourceFile()->joyeerIR->sourceFiles.size(), 4u);
 }
 
 TEST_F(ModuleServiceTest, CompilesPublicShortNamesWithoutMergingModuleIdentities) {
@@ -148,7 +149,7 @@ TEST_F(ModuleServiceTest, CompilesPublicShortNamesWithoutMergingModuleIdentities
     const auto& compiled = compiler.getLastCompiledSourceFile();
     ASSERT_NE(compiled->joyeerIR, nullptr);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*compiled->joyeerIR).succeeded());
-    EXPECT_EQ(compiled->joyeerIR->sourceFiles.size(), 3u);
+    EXPECT_EQ(compiled->joyeerIR->sourceFiles.size(), 4u);
     EXPECT_TRUE(compiled->llvmHasEntryPoint);
 }
 
@@ -177,7 +178,7 @@ TEST_F(ModuleServiceTest, CompilesReachableGraphWithoutParsingUnusedSources) {
     CompilerService compiler(&diagnostics, options);
     compiler.compile();
     ASSERT_FALSE(diagnostics.hasFailure()) << errors();
-    EXPECT_EQ(compiler.getLastCompiledSourceFile()->joyeerIR->sourceFiles.size(), 4u);
+    EXPECT_EQ(compiler.getLastCompiledSourceFile()->joyeerIR->sourceFiles.size(), 5u);
 }
 
 TEST_F(ModuleServiceTest, ResolvesRelativeFilePathsAgainstExplicitWorkingDirectory) {

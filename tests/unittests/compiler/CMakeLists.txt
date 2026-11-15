@@ -1056,6 +1056,10 @@ if(JOYEER_CLANG_EXECUTABLE)
             "ok\n10\nerr\n20\nhello\n31\ncloned\n30\n"
             0 1 2 3)
     add_joyeer_native_regression(
+            E2EOptionalNestedLayers optional_nested_layers
+            "0\n0\n0\n2\n1\n2\n3\n0\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
             E2EGenericTypes generic_types
             "6\nbox\n2\n7\ntwo\n9\nfalse\nstr\n"
             0 1 2 3)
@@ -1560,6 +1564,12 @@ add_joyeer_rejected_regression(TypePropagationWrongError type-checking
         propagation_wrong_error type-checking.mismatched-propagation-error)
 set_tests_properties(TypePropagationWrongReturn TypePropagationWrongError PROPERTIES
         LABELS "type-checking;safety;regression;propagation")
+add_joyeer_rejected_regression(TypeOptionalEqualityRejected type-checking
+        optional_equality type-checking.invalid-operator-operands)
+add_joyeer_rejected_regression(TypeResultEqualityRejected type-checking
+        result_equality type-checking.invalid-operator-operands)
+set_tests_properties(TypeOptionalEqualityRejected TypeResultEqualityRejected PROPERTIES
+        LABELS "type-checking;regression;library-containers")
 add_joyeer_rejected_regression(TypeRegressionConditionalExclusivity type-checking
         regression_type_conditional_exclusivity type-checking.overlapping-access)
 add_joyeer_rejected_regression(TypeRegressionReceiverExclusivity type-checking

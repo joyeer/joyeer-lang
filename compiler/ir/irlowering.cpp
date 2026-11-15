@@ -51,14 +51,17 @@ public:
         module->sourceName = std::move(sourceName);
         module->sourceInfo = std::move(sourceInfo);
         module->sourceFiles = std::move(sources);
-        const auto& prelude = model->semanticModel()->preludeSource();
-        if (prelude != nullptr && (!module->sourceFiles.empty() || module->sourceInfo.has_value())) {
-            if (module->sourceFiles.empty()) module->sourceFiles.push_back(*module->sourceInfo);
-            const auto sourceId = prelude->tokens.front()->span.sourceId;
-            if (module->sourceFiles.size() == sourceId) {
-                module->sourceFiles.push_back(ir::SourceInfo {
-                    prelude->getAbstractPath().filename().string(), prelude->getParentFolder(),
-                    prelude->content.size(), prelude->lineStarts });
+        if (!module->sourceFiles.empty() || module->sourceInfo.has_value()) {
+            for (const auto& prelude : model->semanticModel()->preludeSources()) {
+                if (prelude == nullptr || prelude->tokens.empty()) continue;
+                if (module->sourceFiles.empty()) module->sourceFiles.push_back(*module->sourceInfo);
+                const auto sourceId = prelude->tokens.front()->span.sourceId;
+                // The driver supplies these already; a direct caller gets them appended in identity order.
+                if (module->sourceFiles.size() == sourceId) {
+                    module->sourceFiles.push_back(ir::SourceInfo {
+                        prelude->getAbstractPath().filename().string(), prelude->getParentFolder(),
+                        prelude->content.size(), prelude->lineStarts });
+                }
             }
         }
 
@@ -549,11 +552,9 @@ private:
                     ? nullptr
                     : semanticModel.symbol(type->symbol);
             if (type != nullptr && !model->types().mentionsTypeParameter(id) &&
-                (type->kind == typing::TypeKind::optional ||
-                 type->kind == typing::TypeKind::result ||
-                 (type->kind == typing::TypeKind::enumeration &&
-                  symbol != nullptr &&
-                  symbol->kind == semantic::SymbolKind::builtinType))) {
+                type->kind == typing::TypeKind::enumeration &&
+                symbol != nullptr &&
+                symbol->kind == semantic::SymbolKind::builtinType) {
                 collectBuiltinEnumeration(*type);
             }
         }
@@ -661,6 +662,24 @@ private:
                 std::move(payloads),
             });
         }
+        if (symbol.has_value()) {
+            const auto* declared = semanticModel.symbol(*symbol);
+            const auto role = declared == nullptr ? semantic::LibraryRole::none : declared->libraryRole;
+            if (role == semantic::LibraryRole::optional || role == semantic::LibraryRole::result) {
+                enumeration.role = role == semantic::LibraryRole::optional
+                        ? ir::EnumerationRole::optional : ir::EnumerationRole::result;
+                // Positional binding (decision 0024): optional's present case is the one with a payload;
+                // result's success case is the first. The type checker validated the shape.
+                for (uint32_t index = 0; index < enumeration.cases.size(); ++index) {
+                    const bool payload = !enumeration.cases[index].payloadTypes.empty();
+                    if (role == semantic::LibraryRole::optional) {
+                        (payload ? enumeration.firstRoleCase : enumeration.secondRoleCase) = index;
+                    } else {
+                        (index == 0 ? enumeration.firstRoleCase : enumeration.secondRoleCase) = index;
+                    }
+                }
+            }
+        }
         module->enumerations.push_back(std::move(enumeration));
     }
 
@@ -686,14 +705,8 @@ private:
             const auto* enumCase = semanticModel.symbol(caseSymbol);
             if (enumCase == nullptr) continue;
             std::vector<typing::TypeId> payloadTypes;
-            if (type.kind == typing::TypeKind::optional && enumCase->name == "Some") {
-                payloadTypes.push_back(type.arguments[0]);
-            } else if (type.kind == typing::TypeKind::result && enumCase->name == "Ok") {
-                payloadTypes.push_back(type.arguments[0]);
-            } else if (type.kind == typing::TypeKind::result && enumCase->name == "Err") {
-                payloadTypes.push_back(type.arguments[1]);
-            } else if (type.kind == typing::TypeKind::enumeration &&
-                       enumCase->callable.has_value()) {
+            if (type.kind == typing::TypeKind::enumeration &&
+                enumCase->callable.has_value()) {
                 for (const auto& parameter : enumCase->callable->parameters) {
                     if (!parameter.type.has_value()) continue;
                     const auto payload = model->types().typeForSymbol(*parameter.type);
@@ -1449,7 +1462,7 @@ private:
             case stringLiteral: opcode = ir::Opcode::stringConstant; break;
             case byteLiteral: opcode = ir::Opcode::byteConstant; break;
             case nilLiteral: {
-                const auto none = findEnumCase(*type, "None");
+                const auto none = findRoleCase(*type, ir::EnumerationRole::optional, true);
                 if (!none.has_value()) {
                     report(
                             DiagnosticId::missingSymbol,
@@ -1660,8 +1673,8 @@ private:
             ir::Value operand,
             typing::TypeId resultType) {
         const auto* result = model->types().type(resultType);
-        const auto okCase = findEnumCase(resultType, "Ok");
-        const auto errCase = findEnumCase(resultType, "Err");
+        const auto okCase = findRoleCase(resultType, ir::EnumerationRole::result, false);
+        const auto errCase = findRoleCase(resultType, ir::EnumerationRole::result, true);
         if (result == nullptr || result->arguments.size() != 2 ||
             !okCase.has_value() || !errCase.has_value()) {
             report(DiagnosticId::missingType, expression->span,
@@ -2200,6 +2213,22 @@ private:
                 *type, *caseSymbol, expression->arguments, expression->span);
     }
 
+    // The case a role binds (decision 0024): present/success is the first role case, absent/failure
+    // the second. Never found by spelling.
+    std::optional<semantic::SymbolId> findRoleCase(
+            typing::TypeId type,
+            ir::EnumerationRole role,
+            bool second) const {
+        const auto enumeration = std::find_if(
+                module->enumerations.begin(),
+                module->enumerations.end(),
+                [type](const auto& candidate) { return candidate.type == type; });
+        if (enumeration == module->enumerations.end() || enumeration->role != role) return std::nullopt;
+        const auto index = second ? enumeration->secondRoleCase : enumeration->firstRoleCase;
+        if (index >= enumeration->cases.size()) return std::nullopt;
+        return enumeration->cases[index].symbol;
+    }
+
     std::optional<semantic::SymbolId> findEnumCase(
             typing::TypeId type,
             const std::string& name) const {
@@ -2309,14 +2338,11 @@ private:
         const auto resultType = typeOf(expression);
         if (!operand.has_value() || !resultType.has_value()) return std::nullopt;
         const auto* operandType = model->types().type(operand->type);
-        const bool isResult = operandType != nullptr &&
-                operandType->kind == typing::TypeKind::result;
-        const auto successCase = findEnumCase(
-                operand->type, isResult ? "Ok" : "Some");
-        const auto failureCase = findEnumCase(
-                operand->type, isResult ? "Err" : "None");
-        const auto returnedFailureCase = findEnumCase(
-                currentFunction().resultType, isResult ? "Err" : "None");
+        const bool isResult = model->types().isResult(operandType);
+        const auto role = isResult ? ir::EnumerationRole::result : ir::EnumerationRole::optional;
+        const auto successCase = findRoleCase(operand->type, role, false);
+        const auto failureCase = findRoleCase(operand->type, role, true);
+        const auto returnedFailureCase = findRoleCase(currentFunction().resultType, role, true);
         if (operandType == nullptr || !successCase.has_value() ||
             !failureCase.has_value() || !returnedFailureCase.has_value()) {
             report(
@@ -2618,7 +2644,7 @@ private:
                         result.integerValue = literal->literal->intValue;
                         break;
                     case nilLiteral: {
-                        const auto none = findEnumCase(*type, "None");
+                        const auto none = findRoleCase(*type, ir::EnumerationRole::optional, true);
                         if (!none.has_value()) return std::nullopt;
                         result.kind = ir::PatternKind::enumCase;
                         result.symbol = *none;
@@ -3699,11 +3725,10 @@ private:
             SourceSpan span) {
         if (value.type == destination || destination == model->types().anyType()) return value;
         const auto* destinationType = model->types().type(destination);
-        if (destinationType != nullptr &&
-            destinationType->kind == typing::TypeKind::optional &&
+        if (model->types().isOptional(destinationType) &&
             destinationType->arguments.size() == 1 &&
             destinationType->arguments[0] == value.type) {
-            const auto some = findEnumCase(destination, "Some");
+            const auto some = findRoleCase(destination, ir::EnumerationRole::optional, false);
             if (some.has_value()) {
                 return emitEnumConstruction(destination, *some, { value }, span);
             }

@@ -1716,6 +1716,23 @@ TEST_F(SemanticAnalysisTest, SomeAndOkWildcardsDropALinearPayload) {
             << joyeer::analysis::dump(result.diagnostics);
 }
 
+// The substituted payload of the prelude's role enums decides the drop (decision 0024): a wildcard
+// over a real library linear type, not only a user struct, is a dropped result.
+TEST_F(SemanticAnalysisTest, WildcardsOverAJoinHandleInsideOptionalAndResultDropALinearPayload) {
+    const std::string work = "func work(value: consuming Int): Int { return value }\n";
+    analyze(work +
+            "func run() {\n"
+            "    let h: JoinHandle<Int>? = spawn(function: work, input: consume 1)\n"
+            "    match consume h { .Some(_) => (), .None => () }\n}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+    analyze(work +
+            "func run(r: consuming Optional<Result<JoinHandle<Int>, String>>) {\n"
+            "    match consume r { .Some(.Ok(_)) => (), .Some(.Err(_)) => (), .None => () }\n}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
 TEST_F(SemanticAnalysisTest, PeekingAtABorrowedLinearEnumWithAWildcardIsAccepted) {
     analyzeToolchain(std::string(linearPrelude) +
                      "enum Box {\n    Full(Token),\n    Empty,\n}\n"

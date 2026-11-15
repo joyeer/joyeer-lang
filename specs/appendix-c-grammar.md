@@ -17,6 +17,7 @@ top_decl          ::= func_decl
                    |  extension_decl
                    |  binding
                    |  prelude_struct                        // compiler-bundled source only
+                   |  prelude_enum                          // compiler-bundled source only
 
 binding           ::= ( 'let' | 'var' ) pattern [ ':' type ] [ '=' expression ]
 
@@ -53,6 +54,9 @@ struct_decl       ::= [ visibility ] 'struct' identifier [ generic_params ]     
 // Compiler-bundled prelude only (§20.12.5); not admitted by ordinary or --runtime-module input.
 prelude_struct    ::= prelude_metadata+ [ visibility ] [ 'linear' ] 'struct' identifier
                       [ generic_params ] '{' struct_member* '}'
+// (compiler-bundled source only, as prelude_struct)
+prelude_enum      ::= prelude_metadata+ [ visibility ] 'enum' identifier [ generic_params ]
+                      '{' enum_case ( ',' enum_case )* ','? ( func_decl | subscript_decl )* '}'
 prelude_metadata  ::= '@compiler_transfer' '(' ')'
                    |  '@compiler_role' '(' identifier ')'
 // A bundled struct method may also carry @compiler_role before its visibility/effect.

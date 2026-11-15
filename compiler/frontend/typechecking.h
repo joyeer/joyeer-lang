@@ -36,8 +36,6 @@ enum class TypeKind {
     enumeration,
     array,
     dictionary,
-    optional,
-    result,
     int8,
     int16,
     int32,
@@ -166,6 +164,12 @@ public:
     [[nodiscard]] TypeId dictionaryType(TypeId key, TypeId value);
     [[nodiscard]] TypeId optionalType(TypeId wrapped);
     [[nodiscard]] TypeId resultType(TypeId success, TypeId failure);
+    // Whether `record` is an instance of the enum bound to the `optional` or `result` role (decision
+    // 0024): the language binds `T?`, `nil` and postfix `?` to the role, never to a name.
+    [[nodiscard]] bool isOptional(const TypeRecord* record) const;
+    [[nodiscard]] bool isResult(const TypeRecord* record) const;
+    [[nodiscard]] bool isOptional(TypeId id) const { return isOptional(type(id)); }
+    [[nodiscard]] bool isResult(TypeId id) const { return isResult(type(id)); }
     // The type of a generic parameter, or of `Self` in a protocol when `symbol` is the protocol.
     [[nodiscard]] TypeId typeParameterType(semantic::SymbolId symbol);
     // `type` with every type parameter in `substitution` replaced; parameters not in it stay.

@@ -326,10 +326,14 @@ depend on `readStdinLine` flushing standard output before it blocks.
 
 The public generic ends and their methods are declared in `lib/Runtime/concurrency.joyeer`,
 bundled into the compiler's source prelude ([0023](../decisions/0023-library-concurrency.md)).
-They are ordinary `deinit` structs, including the hidden live flag; the ABI handle remains a private
+The ends are ordinary `deinit` structs, including the hidden live flag; the ABI handle remains a private
 `Int`. Creation uses raw `Int` output slots and then constructs both ends. Sending/receiving use
 typed stack slots, not message allocations. A failed send destroys its unsent value, and the
 destruction query leaves the callback null for trivial element types.
+
+`Optional` and `Result` live in a second bundled prelude, `lib/Runtime/roles.joyeer`, which is always
+loaded and is not replaced by a caller-supplied prelude
+([0024](../decisions/0024-library-optional-and-result.md)).
 
 `lib/Runtime/core/channels.joyeer` is the fifth archive object (decision [0019](../decisions/0019-channels.md),
 spec §21.9), linked only into a program that creates a channel (which also links the thread object and

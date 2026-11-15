@@ -63,8 +63,6 @@ TypeContext::TypeContext(const semantic::SemanticModel& model): model(model) {
 
     registerGenericBuiltin("Array", TypeKind::array, 1);
     registerGenericBuiltin("Dict", TypeKind::dictionary, 2);
-    registerGenericBuiltin("Optional", TypeKind::optional, 1);
-    registerGenericBuiltin("Result", TypeKind::result, 2);
     for (const auto& [name, kind] : {
             std::pair {"Int8", TypeKind::int8}, {"Int16", TypeKind::int16},
             {"Int32", TypeKind::int32}, {"Int64", TypeKind::int64},
@@ -130,9 +128,19 @@ TypeId TypeContext::dictionaryType(TypeId key, TypeId value) {
 }
 
 TypeId TypeContext::optionalType(TypeId wrapped) {
-    const auto symbol = builtinSymbol("Optional");
-    assert(symbol.has_value());
+    const auto symbol = model.roleSymbol(semantic::LibraryRole::optional);
+    if (!symbol.has_value()) return errorTypeId;
     return typeForSymbol(*symbol, { wrapped }).value_or(errorTypeId);
+}
+
+bool TypeContext::isOptional(const TypeRecord* record) const {
+    return record != nullptr && record->kind == TypeKind::enumeration &&
+            record->symbol == model.roleSymbol(semantic::LibraryRole::optional);
+}
+
+bool TypeContext::isResult(const TypeRecord* record) const {
+    return record != nullptr && record->kind == TypeKind::enumeration &&
+            record->symbol == model.roleSymbol(semantic::LibraryRole::result);
 }
 
 TypeId TypeContext::functionType(
@@ -149,8 +157,8 @@ TypeId TypeContext::functionType(
 }
 
 TypeId TypeContext::resultType(TypeId success, TypeId failure) {
-    const auto symbol = builtinSymbol("Result");
-    assert(symbol.has_value());
+    const auto symbol = model.roleSymbol(semantic::LibraryRole::result);
+    if (!symbol.has_value()) return errorTypeId;
     return typeForSymbol(*symbol, { success, failure }).value_or(errorTypeId);
 }
 
@@ -291,6 +299,20 @@ std::string TypeContext::displayName(TypeId id, bool disambiguateNominals) const
     const auto* value = type(id);
     if (value == nullptr) return "<invalid-type>";
 
+    if (isOptional(value) && value->arguments.size() == 1) {
+        // `((Int): Int)?` is an optional function; `(Int): Int?` returns an optional.
+        const auto* wrapped = type(value->arguments[0]);
+        // `Int??` lexes as the `??` operator and cannot be written, so a nested optional prints nominally.
+        if (isOptional(wrapped)) return "Optional<" + displayName(value->arguments[0], disambiguateNominals) + ">";
+        const bool function = wrapped != nullptr && wrapped->kind == TypeKind::function;
+        return (function ? "(" : "") + displayName(value->arguments[0], disambiguateNominals) +
+                (function ? ")?" : "?");
+    }
+    if (isResult(value) && value->arguments.size() == 2) {
+        return "Result<" + displayName(value->arguments[0], disambiguateNominals) + ", " +
+                displayName(value->arguments[1], disambiguateNominals) + ">";
+    }
+
     switch (value->kind) {
         case TypeKind::error:
             return "<error>";
@@ -299,16 +321,6 @@ std::string TypeContext::displayName(TypeId id, bool disambiguateNominals) const
         case TypeKind::dictionary:
             return "[" + displayName(value->arguments[0], disambiguateNominals) + ": " +
                     displayName(value->arguments[1], disambiguateNominals) + "]";
-        case TypeKind::optional: {
-            // `((Int): Int)?` is an optional function; `(Int): Int?` returns an optional.
-            const auto* wrapped = type(value->arguments[0]);
-            const bool function = wrapped != nullptr && wrapped->kind == TypeKind::function;
-            return (function ? "(" : "") + displayName(value->arguments[0], disambiguateNominals) +
-                    (function ? ")?" : "?");
-        }
-        case TypeKind::result:
-            return "Result<" + displayName(value->arguments[0], disambiguateNominals) + ", " +
-                    displayName(value->arguments[1], disambiguateNominals) + ">";
         case TypeKind::typeParameter: {
             const auto* declaration = model.symbol(value->symbol);
             if (declaration != nullptr && declaration->kind == semantic::SymbolKind::protocol) return "Self";
@@ -338,10 +350,26 @@ std::string TypeContext::displayName(TypeId id, bool disambiguateNominals) const
                 suffix += (index == 0 ? "<" : ", ") + displayName(value->arguments[index], disambiguateNominals);
             }
             if (!suffix.empty()) suffix += ">";
-            if (!disambiguateNominals) return name + suffix;
+            if (!disambiguateNominals) {
+                // A user type that shares its name with a role-bound enum must not print like it, in
+                // every diagnostic (decision 0024): `Result<A, B>` of the prelude is not the user's.
+                if (declaration->libraryRole == semantic::LibraryRole::none &&
+                    (value->kind == TypeKind::structure || value->kind == TypeKind::enumeration)) {
+                    for (const auto role : {semantic::LibraryRole::optional, semantic::LibraryRole::result}) {
+                        const auto roleSymbol = model.roleSymbol(role);
+                        const auto* roleDeclaration = roleSymbol.has_value() ? model.symbol(*roleSymbol) : nullptr;
+                        if (roleDeclaration == nullptr || roleDeclaration->name != name) continue;
+                        const auto* module = model.moduleName(declaration->moduleId);
+                        return ((module != nullptr && !module->empty()) ? *module : std::string("<main>")) + "." +
+                                name + suffix;
+                    }
+                }
+                return name + suffix;
+            }
             if (value->kind != TypeKind::structure && value->kind != TypeKind::enumeration) return name + suffix;
             bool duplicate = false;
             bool sameModule = false;
+            bool roleCollision = false;
             for (const auto& other : model.symbols()) {
                 if (other.id == declaration->id || other.name != name ||
                     (other.kind != semantic::SymbolKind::structure &&
@@ -349,10 +377,14 @@ std::string TypeContext::displayName(TypeId id, bool disambiguateNominals) const
                      other.kind != semantic::SymbolKind::builtinType)) continue;
                 duplicate = true;
                 sameModule |= other.moduleId == declaration->moduleId;
+                roleCollision |= other.libraryRole != semantic::LibraryRole::none;
             }
             if (duplicate) {
                 if (const auto* module = model.moduleName(declaration->moduleId);
                     module != nullptr && !module->empty()) name = *module + "." + name;
+                // The unnamed root module of single-file mode: a user type that shares its name with a
+                // role-bound enum must not print like it (decision 0024).
+                else if (roleCollision && declaration->libraryRole == semantic::LibraryRole::none) name = "<main>." + name;
                 if (sameModule) name += "@" + std::to_string(declaration->span.sourceId);
             }
             return name + suffix;
@@ -365,13 +397,16 @@ bool TypeContext::isAssignable(TypeId source, TypeId destination) const {
     if (source == destination || source == neverTypeId || destination == anyTypeId) return true;
 
     const auto* destinationType = type(destination);
-    if (destinationType == nullptr || destinationType->kind != TypeKind::optional) {
+    if (!isOptional(destinationType)) {
         return false;
     }
     const auto* sourceType = type(source);
-    if (sourceType != nullptr && sourceType->kind == TypeKind::optional) {
+    if (isOptional(sourceType)) {
         return isAssignable(sourceType->arguments[0], destinationType->arguments[0]);
     }
+    // One implicit promotion wraps one layer (§2.6.1): `Int` does not become `Int??`, and lowering
+    // wraps exactly one layer, so a destination whose payload is itself optional is not reachable.
+    if (isOptional(type(destinationType->arguments[0]))) return false;
     return isAssignable(source, destinationType->arguments[0]);
 }
 
@@ -531,8 +566,6 @@ bool TypeCheckedModel::isLinear(
     switch (type->kind) {
         case TypeKind::array:
         case TypeKind::dictionary:
-        case TypeKind::optional:
-        case TypeKind::result:
             for (const auto argument : type->arguments) {
                 if (isLinear(argument, visiting, clean)) { linear = true; break; }
             }
@@ -633,8 +666,6 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
     switch (type->kind) {
         case TypeKind::array:
         case TypeKind::dictionary:
-        case TypeKind::optional:
-        case TypeKind::result:
             for (const auto argument : type->arguments) {
                 if (noncopyableReason(argument, visiting, clean).has_value()) {
                     reason = name + " holds the noncopyable type '" +
@@ -692,6 +723,17 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
             break;
         }
         case TypeKind::enumeration: {
+            if (typeContext.isOptional(type) || typeContext.isResult(type)) {
+                // Role-bound enums keep their wording: the instance holds the noncopyable argument.
+                for (const auto argument : type->arguments) {
+                    if (noncopyableReason(argument, visiting, clean).has_value()) {
+                        reason = name + " holds the noncopyable type '" +
+                                typeContext.displayName(argument) + "'";
+                        break;
+                    }
+                }
+                break;
+            }
             const auto* symbol = semanticModelValue->symbol(type->symbol);
             if (symbol == nullptr || !symbol->declaration.has_value()) break;
             const auto declaration = semanticModelValue->node(*symbol->declaration);
@@ -855,6 +897,14 @@ public:
         if (root != nullptr) {
             for (const auto& item : root->items) resolveTopLevelDeclaration(item);
             validatePreludeContracts();
+            // A malformed prelude role must not cascade into errors in function bodies (decision 0024).
+            // Declaration-time prelude errors (an extension of a role enum, a role annotation outside the
+            // prelude) count as well as the shape errors.
+            if (std::any_of(diagnostics.begin(), diagnostics.end(), [](const auto& diagnostic) {
+                    return diagnostic.id == TypeCheckingDiagnosticId::invalidPrelude;
+                })) {
+                return TypeCheckingResult { model, std::move(diagnostics) };
+            }
             const auto declarationDiagnostics = diagnostics.size();
             checkExpandingRecursion(true);
             if (diagnostics.size() != declarationDiagnostics) {
@@ -936,10 +986,11 @@ private:
             return type != nullptr && type->kind == TypeKind::structure &&
                     symbol != nullptr && symbol->libraryRole == role;
         };
+        std::unordered_map<semantic::LibraryRole, int> roleDeclarations;
         for (const auto& symbol : model->semanticModelValue->symbols()) {
             if (!symbol.declaration.has_value() || !model->semanticModelValue->isPreludeSource(symbol.span) ||
                 (symbol.kind != semantic::SymbolKind::function && symbol.kind != semantic::SymbolKind::method &&
-                 symbol.kind != semantic::SymbolKind::structure)) {
+                 symbol.kind != semantic::SymbolKind::structure && symbol.kind != semantic::SymbolKind::enumeration)) {
                 continue;
             }
             const auto node = model->semanticModelValue->node(*symbol.declaration);
@@ -969,6 +1020,7 @@ private:
             }
             if (!valid || symbol.libraryRole == semantic::LibraryRole::none) continue;
             bool matches = false;
+            std::string roleFailure;
             switch (symbol.libraryRole) {
                 case semantic::LibraryRole::taskHandle:
                 case semantic::LibraryRole::channelSender:
@@ -1024,12 +1076,81 @@ private:
                                 symbol.callable->parameters[2].access == syntax::AccessEffect::initializing;
                     }
                     break;
+                case semantic::LibraryRole::optional:
+                case semantic::LibraryRole::result: {
+                    // Positional shape (decision 0024): the binding belongs to the declaration.
+                    const bool isOptional = symbol.libraryRole == semantic::LibraryRole::optional;
+                    const std::string roleName = isOptional ? "optional" : "result";
+                    if (node->kind != syntax::Kind::enumDecl) {
+                        roleFailure = "the " + roleName + " role requires an enum";
+                        break;
+                    }
+                    if (parameters == nullptr || parameters->size() != (isOptional ? 1u : 2u)) {
+                        roleFailure = "the " + roleName + " role requires " + (isOptional ? "one" : "two") +
+                                " type parameter" + (isOptional ? "" : "s");
+                        break;
+                    }
+                    if (symbol.acceptsLinearArguments || std::any_of(parameters->begin(), parameters->end(),
+                            [&](const auto parameter) { return !model->constraints(parameter).empty(); })) {
+                        roleFailure = "the " + roleName + " role's type parameters take no constraints and no "
+                                "linear marker";
+                        break;
+                    }
+                    if (symbol.visibility != syntax::Visibility::public_) {
+                        roleFailure = "the " + roleName + " role requires a public enum";
+                        break;
+                    }
+                    const auto enumeration = std::static_pointer_cast<syntax::EnumDeclSyntax>(node);
+                    if (enumeration->cases.size() != 2 || !enumeration->methods.empty()) {
+                        roleFailure = "the " + roleName + " role requires exactly two cases and no methods";
+                        break;
+                    }
+                    const auto parameterType = [&](size_t index) {
+                        return model->typeContext.typeParameterType((*parameters)[index]);
+                    };
+                    std::vector<std::vector<TypeId>> payloads;
+                    bool shaped = true;
+                    for (const auto& enumCase : enumeration->cases) {
+                        const auto caseSymbol = model->semanticModelValue->declaredSymbol(enumCase);
+                        const auto* caseSignature = caseSymbol.has_value() ? model->callable(*caseSymbol) : nullptr;
+                        if (caseSignature == nullptr) { shaped = false; break; }
+                        for (const auto& associated : enumCase->associatedTypes) {
+                            if (associated->label != nullptr) shaped = false;
+                        }
+                        payloads.push_back(caseSignature->parameters);
+                    }
+                    if (!shaped) {
+                        roleFailure = "the " + roleName + " role's cases take unlabelled payloads";
+                        break;
+                    }
+                    if (isOptional) {
+                        const auto present = payloads[0].empty() ? 1u : 0u;
+                        matches = payloads[present] == std::vector<TypeId> { parameterType(0) } &&
+                                payloads[1 - present].empty();
+                        if (!matches) roleFailure = "the optional role requires one case carrying exactly the "
+                                "type parameter and one case without a payload";
+                    } else {
+                        // Lowering binds success to the first case and failure to the second.
+                        matches = payloads[0] == std::vector<TypeId> { parameterType(0) } &&
+                                payloads[1] == std::vector<TypeId> { parameterType(1) };
+                        if (!matches) roleFailure = "the result role requires its first case to carry exactly "
+                                "the first type parameter and its second case the second";
+                    }
+                    // Each of these two roles is declared exactly once across both prelude sources.
+                    if (matches && ++roleDeclarations[symbol.libraryRole] > 1) {
+                        report(TypeCheckingDiagnosticId::invalidPrelude, symbol.span,
+                               "the compiler prelude declares a second enum for the same role");
+                    }
+                    break;
+                }
                 case semantic::LibraryRole::none:
                     break;
             }
             if (!matches) {
                 report(TypeCheckingDiagnosticId::invalidPrelude, symbol.span,
-                       "compiler prelude role does not match the declaration's kind, ownership, or signature");
+                       roleFailure.empty()
+                               ? "compiler prelude role does not match the declaration's kind, ownership, or signature"
+                               : roleFailure);
             }
         }
     }
@@ -1969,7 +2090,9 @@ private:
             Inference& inference) {
         if (!expectedResult.has_value() || !targetSymbol.containingSymbol.has_value()) return;
         const auto* expected = model->typeContext.type(*expectedResult);
-        if (expected != nullptr && expected->kind == TypeKind::optional && expected->arguments.size() == 1) {
+        // Spec 5.4.1: constructing the optional role enum itself never looks through a layer.
+        const bool constructsOptional = targetSymbol.containingSymbol == model->semanticModelValue->roleSymbol(semantic::LibraryRole::optional);
+        if (!constructsOptional && model->typeContext.isOptional(expected) && expected->arguments.size() == 1) {
             expected = model->typeContext.type(expected->arguments[0]);
         }
         if (expected == nullptr || (expected->kind != TypeKind::structure && expected->kind != TypeKind::enumeration) ||
@@ -2121,6 +2244,12 @@ private:
             const semantic::Symbol& targetSymbol,
             const std::vector<semantic::SymbolId>& parameters,
             const std::vector<TypeId>& arguments) {
+        // The role-bound enums take linear and `Never` arguments (decision 0024): an instance is linear
+        // exactly when its payload is, and the declaration has no code that could drop one.
+        if (targetSymbol.libraryRole == semantic::LibraryRole::optional ||
+            targetSymbol.libraryRole == semantic::LibraryRole::result) {
+            return;
+        }
         const auto copyable = model->copyableProtocol();
         const auto* owner = targetSymbol.containingSymbol.has_value()
                 ? symbolOf(*targetSymbol.containingSymbol) : nullptr;
@@ -2177,6 +2306,10 @@ private:
                 } else if (model->typeContext.mentionsTypeParameter(argument)) {
                     help = "inside a generic function, only a type parameter whose constraint lists '" +
                             symbolName(protocol) + "' satisfies it";
+                } else if (model->typeContext.isOptional(argument) || model->typeContext.isResult(argument)) {
+                    // An optional or result type cannot be extended (decision 0024), so no extension can fix this.
+                    help = "an optional or result type cannot conform to '" + symbolName(protocol) +
+                            "'; match the value first, as in 'match p { .Some(v) => show(value: v), .None => ... }'";
                 } else {
                     help = "declare 'extension " + model->typeContext.displayName(argument) + ": " +
                             symbolName(protocol) + " { ... }'";
@@ -2883,6 +3016,14 @@ private:
         const auto owner = model->semanticModelValue->referencedSymbol(declaration->extendedType);
         if (!owner.has_value()) return;
         const auto* ownerSymbol = symbolOf(*owner);
+        if (ownerSymbol != nullptr &&
+            (ownerSymbol->libraryRole == semantic::LibraryRole::optional ||
+             ownerSymbol->libraryRole == semantic::LibraryRole::result) &&
+            model->semanticModelValue->isPreludeSource(declaration->span)) {
+            // The role enums are closed: an extension would add members the role's shape rules never saw.
+            report(TypeCheckingDiagnosticId::invalidPrelude, declaration->span,
+                   "the compiler prelude may not extend the " + ownerSymbol->name + " role enum");
+        }
         if (ownerSymbol == nullptr || ownerSymbol->typeParameters.empty()) return;
         const auto& declared = model->semanticModelValue->extensionTypeParameters(declaration);
         checkExtensionHeader(declaration, *ownerSymbol, declared);
@@ -2999,6 +3140,14 @@ private:
     void resolveEnumeration(const syntax::EnumDeclSyntax::Ptr& declaration) {
         const auto enumeration = model->semanticModelValue->declaredSymbol(declaration);
         if (!enumeration.has_value()) return;
+        for (const auto& attribute : declaration->attributes) {
+            const auto name = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
+            if ((name == "compiler_role" || name == "compiler_transfer") &&
+                !model->semanticModelValue->isPreludeSource(attribute.span)) {
+                report(TypeCheckingDiagnosticId::invalidAnnotation, attribute.span,
+                       "compiler prelude metadata is reserved for compiler-bundled declarations");
+            }
+        }
         const auto enumerationType = model->typeContext
                 .typeForSymbol(*enumeration, enterGenericType(*enumeration, declaration->genericParameters))
                 .value_or(model->typeContext.errorType());
@@ -3542,7 +3691,7 @@ private:
                 ? model->typeContext.doubleType() : model->typeContext.intType();
         if (expected.has_value()) {
             auto* contextual = model->typeContext.type(*expected);
-            if (contextual != nullptr && contextual->kind == TypeKind::optional) {
+            if (model->typeContext.isOptional(contextual)) {
                 expected = contextual->arguments.front();
                 contextual = model->typeContext.type(*expected);
             }
@@ -3575,6 +3724,29 @@ private:
         return result;
     }
 
+    // When `type` is a user declaration that shares its name with a role-bound prelude enum, the
+    // help that tells an author the sugar did not bind to it (decision 0024).
+    [[nodiscard]] std::optional<std::string> roleShadowHelp(std::optional<TypeId> type) const {
+        const auto* record = type.has_value() ? model->typeContext.type(*type) : nullptr;
+        if (record == nullptr || (record->kind != TypeKind::enumeration && record->kind != TypeKind::structure)) {
+            return std::nullopt;
+        }
+        const auto* declaration = model->semanticModelValue->symbol(record->symbol);
+        if (declaration == nullptr || declaration->libraryRole != semantic::LibraryRole::none) return std::nullopt;
+        for (const auto role : {semantic::LibraryRole::optional, semantic::LibraryRole::result}) {
+            const auto roleSymbol = model->semanticModelValue->roleSymbol(role);
+            const auto* roleDeclaration = roleSymbol.has_value() ? model->semanticModelValue->symbol(*roleSymbol) : nullptr;
+            if (roleDeclaration != nullptr && roleDeclaration->name == declaration->name) {
+                return "'" + declaration->name + "' here is the declaration in your program, not the prelude's; " +
+                       (role == semantic::LibraryRole::optional
+                                ? "'T?', 'nil' and postfix '?' work only on the prelude's Optional"
+                                : "postfix '?' works only on the prelude's Result") +
+                       ". Rename your type, or remove it to use the prelude's";
+            }
+        }
+        return std::nullopt;
+    }
+
     TypeId checkLiteral(
             const syntax::LiteralExprSyntax::Ptr& expression,
             std::optional<TypeId> expected) {
@@ -3588,14 +3760,15 @@ private:
             case nilLiteral: {
                 if (expected.has_value()) {
                     const auto* expectedType = model->typeContext.type(*expected);
-                    if (expectedType != nullptr && expectedType->kind == TypeKind::optional) {
+                    if (model->typeContext.isOptional(expectedType)) {
                         return *expected;
                     }
                 }
                 report(
                         TypeCheckingDiagnosticId::missingContextualType,
                         expression->span,
-                        "'nil' requires an optional contextual type");
+                        "'nil' requires an optional contextual type",
+                        roleShadowHelp(expected));
                 return model->typeContext.errorType();
             }
             default:
@@ -3612,10 +3785,10 @@ private:
             *expected != model->typeContext.anyType() &&
             currentReturnType.has_value()) {
             const auto* returnType = model->typeContext.type(*currentReturnType);
-            if (returnType != nullptr && returnType->kind == TypeKind::result) {
+            if (model->typeContext.isResult(returnType)) {
                 const auto errorType = returnType->arguments[1];
                 operandExpected = model->typeContext.resultType(*expected, errorType);
-            } else if (returnType != nullptr && returnType->kind == TypeKind::optional) {
+            } else if (model->typeContext.isOptional(returnType)) {
                 operandExpected = model->typeContext.optionalType(*expected);
             }
         }
@@ -3626,12 +3799,13 @@ private:
 
         const auto* operandType = model->typeContext.type(operand);
         if (operandType == nullptr ||
-            (operandType->kind != TypeKind::result &&
-             operandType->kind != TypeKind::optional)) {
+            (!model->typeContext.isResult(operandType) &&
+             !model->typeContext.isOptional(operandType))) {
             report(
                     TypeCheckingDiagnosticId::invalidPropagationOperand,
                     expression->span,
-                    "postfix '?' requires a Result or Optional operand");
+                    "postfix '?' requires a Result or Optional operand",
+                    roleShadowHelp(operand));
             return model->typeContext.errorType();
         }
 
@@ -3639,15 +3813,20 @@ private:
                 ? model->typeContext.type(*currentReturnType)
                 : nullptr;
         auto result = operandType->arguments[0];
-        if (returnType == nullptr || returnType->kind != operandType->kind) {
+        const bool resultOperand = model->typeContext.isResult(operandType);
+        // Both sides must be instances of the same role (decision 0024), not merely the same enum.
+        const bool sameRole = returnType != nullptr &&
+                (resultOperand ? model->typeContext.isResult(returnType) : model->typeContext.isOptional(returnType));
+        if (!sameRole) {
             report(
                     TypeCheckingDiagnosticId::invalidPropagationContext,
                     expression->span,
-                    operandType->kind == TypeKind::result
+                    resultOperand
                             ? "postfix '?' on Result requires a Result-returning function"
-                            : "postfix '?' on Optional requires an Optional-returning function");
+                            : "postfix '?' on Optional requires an Optional-returning function",
+                    roleShadowHelp(currentReturnType));
             result = model->typeContext.errorType();
-        } else if (operandType->kind == TypeKind::result &&
+        } else if (resultOperand &&
                    operandType->arguments[1] != returnType->arguments[1]) {
             report(
                     TypeCheckingDiagnosticId::mismatchedPropagationError,
@@ -3841,7 +4020,19 @@ private:
             message += (index == 0 ? " '" : ", '") +
                     model->typeContext.displayName(operands[index]) + "'";
         }
-        report(TypeCheckingDiagnosticId::invalidOperatorOperands, span, std::move(message));
+        std::optional<std::string> help;
+        const bool equality = op != nullptr && (op->rawValue == "==" || op->rawValue == "!=");
+        if (equality && std::any_of(operands.begin(), operands.end(), [this](TypeId operand) {
+                return model->typeContext.isOptional(operand) || model->typeContext.isResult(operand);
+            })) {
+            // Equality on the role-bound enums is not defined (decision 0024, spec 5.2).
+            // The common `x == nil` has a drop-in replacement.
+            help = std::any_of(operands.begin(), operands.end(),
+                               [this](TypeId operand) { return model->typeContext.isOptional(operand); })
+                    ? "compare with 'match', for example 'match x { .None => true, .Some(_) => false }' for 'x == nil'"
+                    : "compare with 'match', for example 'match x { .Ok(_) => ..., .Err(_) => ... }'";
+        }
+        report(TypeCheckingDiagnosticId::invalidOperatorOperands, span, std::move(message), std::move(help));
     }
 
     TypeId commonType(TypeId left, TypeId right, SourceSpan mismatchSpan) {
@@ -4006,8 +4197,11 @@ private:
             case TypeKind::function: return true;
             case TypeKind::array:
             case TypeKind::dictionary:
-            case TypeKind::optional:
-            case TypeKind::result:
+                return std::any_of(record->arguments.begin(), record->arguments.end(),
+                        [this](TypeId argument) { return containsFunctionType(argument); });
+            case TypeKind::enumeration:
+                // Role-bound enums are looked through: an optional function value stays a function value.
+                if (!model->typeContext.isOptional(record) && !model->typeContext.isResult(record)) return false;
                 return std::any_of(record->arguments.begin(), record->arguments.end(),
                         [this](TypeId argument) { return containsFunctionType(argument); });
             default: return false;
@@ -4031,7 +4225,7 @@ private:
 
     bool isOptionalFunction(TypeId type) const {
         const auto* record = model->typeContext.type(type);
-        return record != nullptr && record->kind == TypeKind::optional && isFunctionType(record->arguments[0]);
+        return model->typeContext.isOptional(record) && isFunctionType(record->arguments[0]);
     }
 
     TypeId referencedValueType(const syntax::NodePtr& expression) {
@@ -4130,7 +4324,8 @@ private:
             expression->base != nullptr && model->semanticModelValue->referencedSymbol(expression->base).has_value() &&
             model->semanticModelValue->referencedSymbol(expression->base) == memberSymbol->containingSymbol) {
             const auto* expected = expectedResult.has_value() ? model->typeContext.type(*expectedResult) : nullptr;
-            if (expected != nullptr && expected->kind == TypeKind::optional && expected->arguments.size() == 1) {
+            const bool constructsOptional = memberSymbol->containingSymbol == model->semanticModelValue->roleSymbol(semantic::LibraryRole::optional);
+            if (!constructsOptional && model->typeContext.isOptional(expected) && expected->arguments.size() == 1) {
                 expectedResult = expected->arguments[0];
                 expected = model->typeContext.type(*expectedResult);
             }
@@ -5815,22 +6010,14 @@ private:
             {},
             enumerationType,
         };
-        if (type->kind == TypeKind::optional && symbol->name == "Some") {
-            signature.parameters.push_back(type->arguments[0]);
-        } else if (type->kind == TypeKind::optional && symbol->name != "None") {
-            return std::nullopt;
-        } else if (type->kind == TypeKind::result && symbol->name == "Ok") {
-            signature.parameters.push_back(type->arguments[0]);
-        } else if (type->kind == TypeKind::result && symbol->name == "Err") {
-            signature.parameters.push_back(type->arguments[1]);
-        } else if (type->kind == TypeKind::enumeration) {
+        if (type->kind == TypeKind::enumeration) {
             for (const auto& parameter : symbol->callable->parameters) {
                 if (!parameter.type.has_value()) return std::nullopt;
                 const auto payload = model->typeContext.typeForSymbol(*parameter.type);
                 if (!payload.has_value()) return std::nullopt;
                 signature.parameters.push_back(*payload);
             }
-        } else if (type->kind != TypeKind::optional && type->kind != TypeKind::result) {
+        } else {
             return std::nullopt;
         }
         return signature;
@@ -6039,7 +6226,7 @@ private:
             case byteLiteral: return model->typeContext.uint8Type();
             case nilLiteral: {
                 const auto* expectedType = model->typeContext.type(expected);
-                return expectedType != nullptr && expectedType->kind == TypeKind::optional
+                return model->typeContext.isOptional(expectedType)
                         ? expected
                         : model->typeContext.errorType();
             }
@@ -6338,8 +6525,6 @@ const char* typeKindName(TypeKind kind) {
         case TypeKind::enumeration: return "enumeration";
         case TypeKind::array: return "array";
         case TypeKind::dictionary: return "dictionary";
-        case TypeKind::optional: return "optional";
-        case TypeKind::result: return "result";
         case TypeKind::function: return "function";
         case TypeKind::typeParameter: return "type-parameter";
         case TypeKind::int8: return "int8";

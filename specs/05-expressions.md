@@ -36,6 +36,10 @@ to v0.2).
 
 Comparisons are non-chaining: `1 < x < 10` is a syntax error.
 
+`==` and `!=` are not defined on `Optional` or `Result` (§2.4, §2.5), as they are not on user
+structures and enumerations; the operands are rejected with `type-checking.invalid-operator-operands`.
+Compare with `match`, for example `match x { .Some(_) => …, .None => … }`. Equality through a protocol
+is the subject of [plan 0012](../docs/plan/0012-equatable.md).
 Signed `Int` division (`/`) truncates toward zero. The remainder (`%`) is
 zero or has the sign of the dividend; when defined, `a == (a / b) * b + a % b`.
 Both operators trap when the divisor is zero. Both also trap for the minimum
@@ -130,6 +134,9 @@ let lengths = optionalString?.count   // type: Int?
 ```
 
 #### 5.4.1 The `?` / `!` forms
+
+The `?` and `!` forms, `nil`, and implicit wrapping bind to the declarations carrying the `optional` and
+`result` roles (§2.4, §2.5), never to a name that happens to be in scope.
 
 | Form | Meaning | Section |
 |------|---------|---------|

@@ -304,6 +304,7 @@ public:
                 imports.emplace(import.name, target->second);
             }
         }
+        bindRolePreludeDeclarations();
         for (const auto& file : files) {
             activeModule = file.module;
             model->fileScope_ = file.scope;
@@ -332,6 +333,9 @@ private:
 
     SemanticModel::Ptr model;
     std::vector<NameResolutionDiagnostic> diagnostics;
+    // The builtin Array and Dict, whose `removeLast` and `get` return the `optional` role enum.
+    SymbolId arraySymbol = invalidSymbolId;
+    SymbolId dictionarySymbol = invalidSymbolId;
     uint32_t activeModule = 0;
     // The type `Self` denotes while resolving the signature or body of a member.
     std::optional<SymbolId> selfType;
@@ -659,6 +663,8 @@ private:
                         else if (name == "channel_sender") value.libraryRole = LibraryRole::channelSender;
                         else if (name == "channel_receiver") value.libraryRole = LibraryRole::channelReceiver;
                         else if (name == "stored_consumer") value.libraryRole = LibraryRole::storedConsumer;
+                        else if (name == "optional_type") value.libraryRole = LibraryRole::optional;
+                        else if (name == "result_type") value.libraryRole = LibraryRole::result;
                         else report(NameResolutionDiagnosticId::invalidPrelude, attribute.span,
                                     "unknown compiler prelude role '" + name + "'");
                     }
@@ -723,6 +729,57 @@ private:
         return id;
     }
 
+    // Records the prelude enums bound to the `optional` and `result` roles, then declares the builtin
+    // members that produce an `Optional` against the role-bound symbol (decision 0024). A missing
+    // declaration is a corrupt compiler bundle and is reported once.
+    void bindRolePreludeDeclarations() {
+        for (const auto& candidate : model->symbols_) {
+            if (candidate.kind != SymbolKind::enumeration || candidate.isInvalid) continue;
+            if (candidate.libraryRole == LibraryRole::optional && !model->optionalSymbol_.has_value()) {
+                model->optionalSymbol_ = candidate.id;
+            } else if (candidate.libraryRole == LibraryRole::result && !model->resultSymbol_.has_value()) {
+                model->resultSymbol_ = candidate.id;
+            }
+        }
+        if (!model->optionalSymbol_.has_value() || !model->resultSymbol_.has_value()) {
+            // Point into the role prelude's source (the prelude module that is not a runtime module).
+            SourceSpan where {};
+            for (const auto& [sourceId, isPrelude] : model->preludeSources_) {
+                const auto runtime = model->runtimeSources_.find(sourceId);
+                if (isPrelude && (runtime == model->runtimeSources_.end() || !runtime->second)) where.sourceId = sourceId;
+            }
+            report(NameResolutionDiagnosticId::invalidPrelude, where,
+                   "the compiler-bundled role prelude does not declare the 'optional' and 'result' enums");
+            if (!model->optionalSymbol_.has_value()) return;
+        }
+        const auto optionalType = *model->optionalSymbol_;
+        declareBuiltinMember(
+                dictionarySymbol,
+                SymbolKind::builtinMember,
+                "get",
+                optionalType,
+                CallableSignature {
+                    CallableKind::function,
+                    true,
+                    { CallableParameter {
+                        std::string("key"),
+                        true,
+                        std::nullopt,
+                        std::nullopt,
+                        std::nullopt,
+                    } },
+                });
+        // `removeLast()` gives back the last element as `Optional<T>`, or `.None` when empty; the
+        // element type comes from the receiver, as for `Dict.get`.
+        const auto removeLast = declareBuiltinMember(
+                arraySymbol,
+                SymbolKind::builtinMember,
+                "removeLast",
+                optionalType,
+                CallableSignature { CallableKind::function, true, {} });
+        symbol(removeLast).isMutable = true;
+    }
+
     void buildPrelude() {
         model->preludeScope_ = createScope(ScopeKind::prelude, std::nullopt, std::nullopt);
 
@@ -740,29 +797,13 @@ private:
         declareBuiltinType("Any");
         const auto arrayType = declareBuiltinType("Array");
         const auto dictionaryType = declareBuiltinType("Dict");
-        const auto optionalType = declareBuiltinType("Optional");
-        const auto resultType = declareBuiltinType("Result");
+        arraySymbol = arrayType;
+        dictionarySymbol = dictionaryType;
         const auto ioErrorType = declareBuiltinType("IOError");
 
         declareBuiltinMember(stringType, SymbolKind::builtinMember, "count", intType);
         declareBuiltinMember(arrayType, SymbolKind::builtinMember, "count", intType);
         declareBuiltinMember(dictionaryType, SymbolKind::builtinMember, "count", intType);
-        declareBuiltinMember(
-                dictionaryType,
-                SymbolKind::builtinMember,
-                "get",
-                optionalType,
-                CallableSignature {
-                    CallableKind::function,
-                    true,
-                    { CallableParameter {
-                        std::string("key"),
-                        true,
-                        std::nullopt,
-                        std::nullopt,
-                        std::nullopt,
-                    } },
-                });
         CallableSignature utf8Signature { CallableKind::function, true, {} };
         declareBuiltinMember(
             stringType,
@@ -789,16 +830,6 @@ private:
                 std::move(appendSignature));
         symbol(append).isMutable = true;
 
-        // `removeLast()` gives back the last element as `Optional<T>`, or `.None` when empty; the
-        // element type comes from the receiver, as for `Dict.get`.
-        const auto removeLast = declareBuiltinMember(
-                arrayType,
-                SymbolKind::builtinMember,
-                "removeLast",
-                optionalType,
-                CallableSignature { CallableKind::function, true, {} });
-        symbol(removeLast).isMutable = true;
-
         // `consume a.consumeEmpty()` ends an empty array (spec 2.6.4). The receiver is consumed, so it
         // is spelled in the signature the way a user method's `consuming` receiver is.
         declareBuiltinMember(
@@ -813,36 +844,7 @@ private:
                     CallableReceiver { std::nullopt, syntax::AccessEffect::consuming, std::nullopt },
                 });
 
-        CallableSignature singlePayload {
-            CallableKind::enumCase,
-            true,
-            { CallableParameter { std::nullopt, true, std::nullopt, std::nullopt, std::nullopt } },
-        };
         CallableSignature noPayload { CallableKind::enumCase, false, {} };
-        declareBuiltinMember(
-                optionalType,
-                SymbolKind::builtinEnumCase,
-                "Some",
-                optionalType,
-                singlePayload);
-        declareBuiltinMember(
-                optionalType,
-                SymbolKind::builtinEnumCase,
-                "None",
-                optionalType,
-                noPayload);
-        declareBuiltinMember(
-                resultType,
-                SymbolKind::builtinEnumCase,
-                "Ok",
-                resultType,
-                singlePayload);
-        declareBuiltinMember(
-                resultType,
-                SymbolKind::builtinEnumCase,
-                "Err",
-                resultType,
-                singlePayload);
 
         CallableSignature ioErrorCase {
             CallableKind::enumCase,
@@ -1844,7 +1846,11 @@ private:
             case syntax::Kind::optionalType: {
                 const auto optional = std::static_pointer_cast<syntax::OptionalTypeSyntax>(type);
                 resolveType(optional->wrapped, currentScope);
-                return bindBuiltinType(type, currentScope, "Optional");
+                // `T?` binds to the declaration carrying the `optional` role, never to a name in scope.
+                const auto role = model->roleSymbol(LibraryRole::optional);
+                if (!role.has_value()) return std::nullopt;
+                model->referenceSymbols_[nodeId(type)] = *role;
+                return role;
             }
             case syntax::Kind::functionType: {
                 // A function type is structural (spec 2.3.1): it names no symbol of its own.
@@ -2515,28 +2521,49 @@ NameResolutionResult NameResolver::resolve(const std::vector<ModuleInput>& modul
 }
 
 NameResolutionResult NameResolver::resolveWithPrelude(std::vector<ModuleInput> modules, bool singleFile) const {
+    // A caller-supplied prelude replaces only the concurrency prelude. The role prelude is
+    // toolchain-owned and always loaded (decision 0024).
     const bool supplied = std::any_of(modules.begin(), modules.end(),
-            [](const auto& module) { return module.preludeContext; });
-    if (supplied) return NameResolutionBuilder().build(modules, singleFile);
+            [](const auto& module) { return module.preludeContext && !module.rolePreludeContext; });
+    const bool suppliedRoles = std::any_of(modules.begin(), modules.end(),
+            [](const auto& module) { return module.rolePreludeContext; });
+    // The test seam implies prelude context; a module that sets only the role flag would be inert.
+    for (auto& module : modules) {
+        if (module.rolePreludeContext) module.preludeContext = true;
+    }
     uint32_t sourceId = 0;
     for (const auto& module : modules) {
         for (const auto& file : module.files) sourceId = std::max(sourceId, file->span.sourceId);
     }
-    if (sourceId == std::numeric_limits<uint32_t>::max()) {
+    // Source identities are dense: the concurrency prelude takes max+1 and the role prelude the next.
+    const uint32_t needed = (supplied ? 0u : 1u) + (suppliedRoles ? 0u : 1u);
+    if (sourceId > std::numeric_limits<uint32_t>::max() - needed) {
         auto result = NameResolutionBuilder().build(modules, singleFile);
         result.diagnostics.push_back({NameResolutionDiagnosticId::invalidPrelude, {},
                                       "source identities leave no space for the runtime prelude"});
         return result;
     }
-    auto prelude = parsePrelude(sourceId + 1);
-    if (prelude.root != nullptr) {
-        modules.push_back({"$prelude", {prelude.root}, true, false, true});
+    std::vector<Prelude> preludes;
+    uint32_t nextSourceId = sourceId + 1;
+    if (!supplied) preludes.push_back(parsePrelude(PreludeKind::concurrency, nextSourceId++));
+    if (!suppliedRoles) preludes.push_back(parsePrelude(PreludeKind::roles, nextSourceId++));
+    for (size_t index = 0; index < preludes.size(); ++index) {
+        auto& prelude = preludes[index];
+        const bool roles = !suppliedRoles && index + 1 == preludes.size();
+        if (prelude.root != nullptr) {
+            // Only the concurrency prelude may declare C bindings; the role prelude has none.
+            modules.push_back({roles ? "$role-prelude" : "$prelude", {prelude.root}, !roles, false, true});
+        }
     }
     auto result = NameResolutionBuilder().build(modules, singleFile);
-    result.model->preludeSource_ = std::move(prelude.source);
-    if (!prelude.problem.empty()) {
-        result.diagnostics.push_back({NameResolutionDiagnosticId::invalidPrelude,
-                                      SourceSpan {0, 0, sourceId + 1}, std::move(prelude.problem)});
+    uint32_t problemSourceId = sourceId + 1;
+    for (auto& prelude : preludes) {
+        result.model->preludeSourceFiles_.push_back(prelude.source);
+        if (!prelude.problem.empty()) {
+            result.diagnostics.push_back({NameResolutionDiagnosticId::invalidPrelude,
+                                          SourceSpan {0, 0, problemSourceId}, std::move(prelude.problem)});
+        }
+        ++problemSourceId;
     }
     return result;
 }

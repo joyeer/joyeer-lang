@@ -159,8 +159,6 @@ llvm::Type* Builder::llvmType(ir::TypeId id) {
         case typing::TypeKind::dictionary: name = "joyeer.dictionary"; break;
         case typing::TypeKind::structure:
         case typing::TypeKind::enumeration:
-        case typing::TypeKind::optional:
-        case typing::TypeKind::result:
             break;
         default: break;
     }
@@ -214,9 +212,7 @@ Layout Builder::layout(ir::TypeId id) {
             }
             result.size = alignTo(result.size, result.alignment);
             break;
-        case typing::TypeKind::enumeration:
-        case typing::TypeKind::optional:
-        case typing::TypeKind::result: {
+        case typing::TypeKind::enumeration: {
             size_t payloadSize = 0;
             for (const auto& enumCase : enumerations.at(id)->cases) {
                 size_t size = 0;

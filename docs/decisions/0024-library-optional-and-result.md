@@ -1,8 +1,8 @@
 # 0024: Optional and Result as role-bound library enums
 
-- Status: proposed (2026-11-14), revised after a language-designer review (see "Review").
+- Status: accepted by the user (2026-11-14) after three language-designer reviews (see "Review"); implementation and the acceptance gates below remain open.
   Phase 1 of the [library containers plan](../plan/0011-library-containers.md).
-- Spec: amendments listed under "Spec changes"; linked here once accepted.
+- Spec: [§2.4–2.6, §2.9](../../specs/02-types.md), [§4.1.1](../../specs/04-memory.md), [§5.2, §5.4.1](../../specs/05-expressions.md), [§8.3](../../specs/08-error-handling.md), [§19.4.7](../../specs/19-c-interop.md), [§20.12](../../specs/20-protocols.md), [Appendix C](../../specs/appendix-c-grammar.md) amended 2026-11-14. The `docs/impl/` notes change with the implementation.
 
 ## Context
 
@@ -12,7 +12,7 @@ symbols are synthesized by name resolution's `buildPrelude`, and the compiler re
 tags by comparing case spellings with `"Some"`, `"None"`, `"Ok"` and `"Err"`. There are about 20 such
 name comparisons and about 48 uses of the two kinds across the frontend, IR lowering, the verifier
 and the backend; the implementation starts by listing them (see "Consequences"). The backend already
-lays both out as ordinary enums (an 8-byte tag and the largest payload).
+lays both out as ordinary enums (an `i32` tag and the largest payload).
 
 Generic enums ([0022](0022-generic-types-and-layout-intrinsics.md)) and a bundled source prelude with
 closed compiler roles ([0023](0023-library-concurrency.md)) now exist, so the declarations can move to
@@ -39,7 +39,7 @@ an ordinary type in its scope (0022), and `T?` must not change meaning when one 
    `Optional` and its cases by `Some` and `None`. Small change, but it moves the name dispatch rather
    than removing it, and is ambiguous under user shadowing.
 3. **Prelude declarations bound by a closed enum role, cases bound by position.** The declaration
-   carries `@compiler_role(optional)` or `@compiler_role(result)`. The compiler validates its shape once
+   carries `@compiler_role(optional_type)` or `@compiler_role(result_type)`. The compiler validates its shape once
    and records which case is which. Syntax, propagation and compiler-made values refer to the role,
    never to a name.
 4. **As 3, with a role on each case** (`@compiler_role(optional_some)`). Member-level roles already
@@ -52,31 +52,81 @@ Option 3.
 
 ### Declarations and load order
 
-A toolchain-owned source prelude declares:
+A toolchain-owned source declares:
 
 ```joyeer
-@compiler_role(optional)
+@compiler_role(optional_type)
 public enum Optional<T> {
     Some(T),
     None,
 }
 
-@compiler_role(result)
+@compiler_role(result_type)
 public enum Result<T, E> {
     Ok(T),
     Err(E),
 }
 ```
 
-It is bundled into the compiler like the concurrency prelude. Name resolution's `buildPrelude`, which
-today declares builtin types, functions and members in one step before any module is collected, is
-split into three steps:
+The attribute spells the roles `optional_type` and `result_type`: `result` is a reserved word
+(Appendix A) and cannot be written as a role name. This record, the spec and the plan still call them
+the `optional` and `result` roles.
 
-1. builtin types and functions;
-2. the role prelude's top-level collection, which reads the role attributes and exports `Optional` and
-   `Result` to the prelude scope (their case symbols are created later by the ordinary member pass);
-3. builtin members that name `Optional` (`Array.removeLast`, `Dict.get`), declared against the
-   role-bound type symbol.
+The enums live in their own bundled source, the **role prelude**, separate from the concurrency prelude
+and always loaded. Today `resolveWithPrelude` appends the single bundled prelude as the last module
+(`$prelude`) and skips it entirely when a caller supplies a prelude module. Keeping the enums in that
+file would make every test-supplied prelude (`checkPrelude`, the cinterop prelude tests, including
+`MalformedCompilerRolesAreDiagnosedBeforeTheyAreCalled`) lose `Optional` and `Result` and fail with
+`name-resolution.invalid-prelude`. So:
+
+- the role prelude is parsed with its own source ID, becomes its own module (`$role-prelude`) with the
+  prelude-scope export rules of `$prelude`, and is added whether or not the concurrency prelude is
+  supplied;
+- a caller-supplied prelude replaces only the concurrency prelude, as today, and the `supplied` flag
+  in `resolveWithPrelude` is computed before the role module is appended;
+- the role prelude is toolchain-owned and cannot be replaced by a user or by the driver. Its shape
+  and missing-role tests need a seam, so `ModuleInput` gets an internal, test-only flag that replaces
+  the bundled role prelude with the supplied module (the way `preludeContext` replaces the
+  concurrency prelude). Without it, a malformed `@compiler_role(optional_type)` enum placed in
+  `checkPrelude` would collide with the bundled one ("runtime prelude conflicts with", or a
+  duplicate role) and mask the diagnostic under test.
+- the role prelude's flags are `preludeContext = true` (to keep its items out of the root module)
+  and `runtimeContext = false` (least privilege; `$prelude` has `runtimeContext = true`);
+- the source file is named `lib/Runtime/roles.joyeer` and is embedded by a second variable in
+  `prelude_source.h.in` and `compiler/CMakeLists.txt` (with its own `CMAKE_CONFIGURE_DEPENDS`). It
+  stays out of `lib/Runtime/core/`, which holds the runtime core units.
+
+#### Source IDs and source tables
+
+Everything downstream assumes one prelude source today (the driver pushes one into
+`compilationSources`; `reportSpannedDiagnostic` does `sources.at(span.sourceId)`; lowering appends
+one only when `sourceFiles.size() == sourceId`; `SemanticModel` has a single `preludeSource_`; the
+backend does `debugFiles.at(declarationSpan->sourceId)`). A role-bound instance gains a
+`declarationSpan` where builtins had none, so a missing source would throw in the backend. Therefore:
+
+- IDs are `max+1` for the concurrency prelude and `max+2` for the role prelude, where `max` is the
+  largest user source ID. They are dense and match the push order. The overflow check becomes
+  `>= max-1`.
+- Both sources are always set, even when parsing fails, so IDs stay dense.
+- `preludeSource()` is replaced by an ordered accessor. The driver pushes both sources and asserts
+  `id == index`; lowering's fallback pushes both. The `SemanticModel` table is already keyed by
+  source ID (`isPreludeSource` works for both).
+- The invalid-prelude span at the end of `resolveWithPrelude` handles either source.
+- Existing assertions that hard-code one prelude change: the module-service tests and
+  `irlowering_test.cpp`'s `.back() == "concurrency.joyeer"` (its meaning depends on the order
+  chosen above, so it becomes an explicit check of both).
+- A prelude `extension` of `Optional` or `Result` can only come from the role-prelude source (the
+  same-module rule), so Phase 2 methods on these types must live there.
+
+Name resolution collects the role prelude in the ordinary module loop, as `$prelude` is today, rather
+than inside `buildPrelude`. The one ordering change is that builtin members naming `Optional`
+(`Array.removeLast`, `Dict.get`) are no longer declared in `buildPrelude`:
+
+1. `buildPrelude` declares builtin types and functions, as today, minus `Optional` and `Result`;
+2. the module loop collects and exports the role prelude's enums with the other modules (their case
+   symbols are created later by the ordinary member pass);
+3. after the loop and before `collectMembers`, the builtin members that name `Optional` are declared
+   against the role-bound type symbol.
 
 So no "runtime prelude conflicts with" error arises. `TypeContext::optionalType` and `resultType`
 find the declaration by role, not with `builtinSymbol("Optional")`. Standard modules (`lib/System`,
@@ -85,9 +135,19 @@ the prelude scope. Runtime core units (§19.4.7) do not use these types today; m
 there is a separate change.
 
 A missing role declaration is `name-resolution.invalid-prelude`, reported when step 3 needs it. A
-malformed one is `type-checking.invalid-prelude`, reported by the prelude metadata pass, which runs
-before function bodies are checked. Either way `T?` does not fall back to a cascade of unrelated
-errors.
+malformed one is `type-checking.invalid-prelude`, reported by the prelude metadata pass. The
+mechanism that prevents a cascade of unrelated errors:
+
+- name resolution binds `T?` (and `nil`, `?`) to the role-bound symbol, never through
+  `lookupType(..., "Optional")`, and an unbound role yields the error type instead of the assertion
+  that `bindBuiltinType` and `TypeContext::optionalType`/`resultType` make today;
+- type checking stops after its declaration phase when prelude validation reported an error, so
+  function bodies are not checked against a malformed role. Today `validatePreludeContracts` runs
+  after declarations are resolved but `declarationDiagnostics` is snapshotted after it, so prelude
+  errors never trigger the early return; the new exit is placed before that snapshot.
+
+A missing role still lets name resolution check bodies without `Array.removeLast` and `Dict.get`,
+so `unknown-member` errors can follow. That is accepted: it means the compiler bundle is corrupt.
 
 Cases are declared in today's tag order (`Some` = 0, `None` = 1, `Ok` = 0, `Err` = 1), so layouts and
 generated code are unchanged. Tag numbering is not a language guarantee and has no C ABI (§19). The
@@ -102,8 +162,16 @@ compiler-bundled prelude, which is the only source parsed with prelude annotatio
   `parser.unsupported-syntax`, as it does for structs.
 - **In a non-prelude source parsed with prelude annotations** (the parser-mode unit tests),
   `resolveEnumeration` reports `type-checking.invalid-annotation`, mirroring `resolveStructure`.
-- **In the prelude,** a role used twice, an unrecognized role, a shape mismatch, or
-  `@compiler_transfer()` on either enum is `type-checking.invalid-prelude`.
+- **In the prelude,** an unrecognized role is `name-resolution.invalid-prelude`, as today (type
+  checking then adds no second error through the driver, which stops after name resolution; a test
+  that calls `TypeChecker` directly also sees the type-checking report). A second `optional` or
+  `result` role (counted across both prelude modules), a shape mismatch, or `@compiler_transfer()` on
+  either enum is `type-checking.invalid-prelude`. The duplicate check is new and is scoped to these
+  two roles: the 0023 roles legitimately appear more than once
+  (`BundledPreludeDeclaresEachCompilerRoleExactlyOnce` expects three `storedConsumer` uses), so a
+  generic "role used twice" rule would break it. A role used on the wrong kind of declaration
+  (`optional` on a struct or function, or an existing role such as `channel_sender` on an enum) is
+  `type-checking.invalid-prelude`.
 - **The prelude metadata validation pass** (`typechecking.cpp`, which today skips enumerations) also
   visits enumerations; without this, none of these checks would run for an enum.
 
@@ -113,10 +181,12 @@ instance's payload types:
 | Role | Required shape | Binding |
 |---|---|---|
 | `optional` | one type parameter; exactly two cases: one with no payload, one whose sole payload is exactly the first parameter | the unary case is *present*, the empty case *absent* |
-| `result` | two type parameters; exactly two cases, each with one payload: one exactly the first parameter, the other exactly the second | the case carrying the first parameter is *success*, the one carrying the second *failure* |
+| `result` | two type parameters; exactly two cases, each with one payload: one exactly the first parameter, the other exactly the second, in that order | the first case (carrying the first parameter) is *success*, the second (carrying the second parameter) *failure* |
 
-Payloads must be unlabelled and exactly a parameter (not `[T]` or `T?`). `indirect` cases, parameter
-constraints, `deinit`, methods, subscripts and conformances are rejected. So `Result<String, String>`
+The declaration must be `public`. Payloads must be unlabelled and exactly a parameter (not `[T]` or
+`T?`). `indirect` cases, parameter constraints, `deinit`, methods, subscripts, and a prelude
+`extension` of either enum (the only way to give it a conformance, since `enum_decl` has no
+conformance clause and the same-module rule permits a prelude extension) are rejected. So `Result<String, String>`
 is unambiguous: success and failure are the declaration's cases, whatever the arguments are.
 `Optional<Void>` works as today (`.Some(())` and `.None`).
 
@@ -127,12 +197,21 @@ is unambiguous: success and failure are the declaration's cases, whatever the ar
   declaration; they no longer create a separate kind.
 - **Sugar binds to the role, not the name.** `T?`, `nil`, implicit wrapping, `x!`, `x?.field`,
   `value?(...)`, `?`, and `??` when implemented always use the role-bound declaration. A user
-  `enum Optional<T>` in scope shadows the *name* `Optional` (0022, §21.9.1) but never `T?`; this is
-  today's behavior.
+  `enum Optional<T>` in scope shadows the *name* `Optional` (0022, §21.9.1) but never `T?`. Types
+  already work this way, but `bindBuiltinType` resolves the reference symbol of `T?` with
+  `lookupType(currentScope, "Optional")`, so a user `enum Optional` misbinds it today; binding to
+  the role symbol fixes that.
 - **No hidden layer.** 0022 B2's one-`?` look-through of the expected type does not apply when the
-  type being constructed is the `optional` role's own declaration. `let x: Int?? = Optional.None`,
-  `= .None` and `= nil` are each the outer `None`, as today, and `Optional.Some(nil)` is the inner one
-  (§2.6.1: no optional layer is flattened).
+  type being constructed is the `optional` role's own declaration. `let x: Optional<Int?> = Optional.None`,
+  `= .None` and `= nil` are each the outer `None` (§2.6.1: no optional layer is flattened). Before this
+  decision `Optional.None` was rejected outright, so there is no earlier behavior to preserve; the
+  look-through is skipped at both `bindFromExpectedType` and the payload-free member path, and
+  `tests/e2e/optional_nested_layers.joyeer` matches the layer at run time.
+  (`Int??` is not written: it lexes as the `??` operator, so a nested optional prints as
+  `Optional<Int?>` in diagnostics. With an expected `Optional<Int?>`, `Optional.Some(nil)` is `Some(None)`
+  and `Optional.Some(5)` is `Some(Some(5))`; without a contextual type `Optional.Some(nil)` is still
+  `missing-contextual-type`.) One implicit promotion wraps one layer: `Int` is not assignable to
+  `Optional<Int?>`, because lowering wraps one layer and a silent second wrap would be a hidden layer.
 - **Propagation** (§8.3) requires the operand and the enclosing result to be instances of the same
   role. For `result`, the failure types must be identical: the same concrete type or the same type
   parameter (§20.7).
@@ -140,7 +219,12 @@ is unambiguous: success and failure are the declaration's cases, whatever the ar
   `Result<T, E>` on every path, through a role branch in `TypeContext::displayName` placed before its
   general disambiguation. Today ordinary diagnostics display types without disambiguation. They now
   disambiguate a nominal type whose name collides with a role-bound declaration, so the user type is
-  the one qualified. Text changes only in programs with such a collision. When `nil` or `?` meets a
+  the one qualified. Today `displayName` qualifies by module name only when it is non-empty, and
+  adds `@sourceId` only when the modules match, so in the unnamed root module of single-file mode a
+  user `Result` prints like the prelude one. This is a new rule, scoped to collisions with
+  role-bound types: there the user type is qualified as `<main>.Result`. Collisions with other
+  prelude names (such as `Task`) are unchanged, so text changes only in programs that declare their
+  own `Optional` or `Result`. When `nil` or `?` meets a
   shadowing user `Optional` or `Result`, the existing diagnostic gains help text naming that
   declaration; no new ID.
 
@@ -206,8 +290,11 @@ intentional change to accepted programs:
   the present and absent tags from it instead of comparing case names. IR lowering's builtin
   enumeration collection and `findEnumCase(..., "Ok")` lookups (for `as?`) use the role.
 - The verifier checks that:
-  - a role is attached only to an enum of the required shape, and to at most one enum;
-  - `arrayRemoveLast` and `dictionaryGet` return an `optional`-role instance.
+  - a role is attached only to an enum of the required shape, and every definition carrying a given
+    role has the same declaration `symbol` (IR has one `EnumerationDefinition` per concrete
+    instance, so `Int?` and `String?` are two definitions of one role);
+  - `arrayRemoveLast` and `dictionaryGet` return an `optional`-role instance whose present case's
+    payload is the array element type or the dictionary value type, as the verifier checks today.
 - Removing `TypeKind::optional` and `result` renumbers the serialized `TypeName.kind`, and the
   enumeration record gains a field, so the backend wire version goes up from 18. Add a round-trip test.
 - Compiler-created values (`as?`, `removeLast`, `get`) request their instance through the role
@@ -223,7 +310,13 @@ that change is expected, and the affected fixtures are updated together with thi
 ### Removed
 
 `TypeKind::optional`, `TypeKind::result`, their generic-builtin registration, the synthesized case
-symbols, and every comparison against a case's spelling.
+symbols, name resolution's binding of `T?` to the builtin `"Optional"`, the `optional` and `result`
+clauses of IR lowering's builtin enumeration collection (the collection and its
+`SymbolKind::builtinType` branch stay: `IOError` and the host builtin enumerations use them), and every comparison against a case's spelling. The syntactic `Optional<X>` to `X?` spelling
+in `platform.cpp` stays: that pass compares signatures before names resolve, so it cannot tell a
+prelude `Optional` from a user one, and a user `Optional<X>` next to `X?` at worst reports an overlap
+that is not one. The plan's progress log holds the
+line-level inventory.
 
 ## Spec changes
 
@@ -236,9 +329,12 @@ symbols, and every comparison against a case's spelling.
 - §19.4.7: core units still cannot use these types; the stated reason changes.
 - §20.4.2, §20.5: `T?` is a role-bound enum instance, not a builtin container. It still satisfies no
   user protocol, since conformances are rejected on these declarations.
-- §20.12.3: role-bound enums are a second exception to the linear-argument rule, keyed on the role.
+- §20.12.3: role-bound enums are a second exception to both the linear-argument and the
+  `Never`-argument rules, keyed on the role; reword "the sole exception". (The opening paragraph
+  concerns parameters inside the declaration and does not change.)
 - §20.12.5: amend "never layout or executable lowering". The `optional` and `result` roles bind syntax
-  and propagation lowering to their declarations; they still select no layout.
+  and propagation lowering to their declarations; they still select no layout. Add a pointer that
+  amends 0023's "contracts do not construct results" (decision 0023, line 55).
 - Appendix C:
   - add `| prelude_enum` to `top_decl`, marked "compiler-bundled source only", next to `prelude_struct`;
   - add `prelude_enum ::= prelude_metadata+ [ visibility ] 'enum' identifier [ generic_params ]
@@ -247,14 +343,17 @@ symbols, and every comparison against a case's spelling.
     rejects them with one diagnostic path;
   - the prelude parser accepts an `enumDecl` where it accepts a `structDecl` today and attaches its
     attributes; the ordinary parser keeps rejecting it.
-- `docs/impl/supported-features.md`, `ir.md`, `backend.md`.
+- `docs/impl/supported-features.md`, `ir.md`, `backend.md`, and `runtime.md` (its prelude description).
+
 
 ## Consequences
 
 - The compiler no longer contains a second enum implementation, and Phases 3 and 4 can produce and
   match `Optional` through the same path as user enums.
 - The role set grows by two. Unlike 0023's contracts, these roles change how syntax is lowered, not
-  only how calls are validated; this is the narrow price of keeping `T?` and `?` independent of names.
+  only how calls are validated, and compiler-created values (`as?`, `removeLast`, `get`) construct
+  role-bound instances. This amends 0023's statement that contracts do not construct results. It is
+  the narrow price of keeping `T?` and `?` independent of names.
 - Implementation starts with an inventory of every kind use and case-name comparison, checked into
   the plan's progress log, so none is missed.
 - Diagnostics: no new IDs. Prelude errors use `type-checking.invalid-prelude`; user-unit roles keep
@@ -270,12 +369,15 @@ symbols, and every comparison against a case's spelling.
   - `[JoinHandle<Int>?]`, and `removeLast` on `[JoinHandle<Int>]`, matched and joined.
 - **`Never`:** every form in `tests/e2e/propagation.joyeer` checked at the type-checking stage, and the
   existing uninitialized-parameter case.
-- **Nesting:** `Int??` with `Optional.None`, `.None`, `nil` and `Optional.Some(nil)`, each matched to
-  show which layer is absent.
+- **Nesting:** `Optional<Int?>` with `Optional.None`, `.None` and `nil`, each matched to show which
+  layer is absent.
 - **Function types:** optional function values at top level, as dictionary keys, and with `print` stay
   rejected.
-- **Equality:** `==` and `!=` on `Int?`, `Point?`, `Result<Int, String>` and against `nil` are
-  `invalid-operator-operands` with the `match` help.
+- **Equality:** `==` and `!=` on `Int?`, `Point?`, `Result<Int, String>`, and `x == nil` /
+  `x != nil`, are `invalid-operator-operands` with the `match` help. `nil == x` is
+  `type-checking.missing-contextual-type`, because the left operand is checked with the enclosing
+  expected type and not the other operand's; with an expected optional type (`let b: Bool? = nil == x`)
+  it is `invalid-operator-operands`. Both forms are tests.
 - **Shadowing:**
   - a user `enum Optional<T>` coexisting with `T?`;
   - a user `Result` that `?` does not propagate through;
@@ -286,7 +388,8 @@ symbols, and every comparison against a case's spelling.
     parser-mode non-prelude source (`invalid-annotation`);
   - each malformed shape (labelled, `indirect`, non-parameter payload, extra case, method,
     conformance, `@compiler_transfer()`);
-  - the existing "each role exactly once" test extended with `optional` and `result`.
+  - a duplicated `optional` or `result` role in the prelude (new compiler check), and the existing
+    "each role exactly once" test extended with both roles.
 - **IR:** wire round trip; verifier rejection of a misshaped role, a duplicated role, and a
   non-role `removeLast`/`get` result.
 - **Concurrency:** send a `Result<Int, String>` through a channel, and return `JoinHandle<Int>?` from
@@ -296,8 +399,10 @@ symbols, and every comparison against a case's spelling.
 
 ### Measurement
 
-Diff `--emit-ir` across the e2e corpus at `-O0` and `-O2`; apart from symbol names it should be
-identical. Measure compile time on a representative program in both profiles.
+Diff `--emit-ir` across the e2e corpus at `-O0` and `-O2`. Expected differences are limited to: the
+source table gains the role-prelude source, `symbol#` numbering shifts (the Array/Dict builtin members
+are declared later), and each runtime archive object gains a source and debug file. Executable
+instructions and layouts should otherwise be identical. Measure compile time on a representative program in both profiles.
 
 ## Review
 
