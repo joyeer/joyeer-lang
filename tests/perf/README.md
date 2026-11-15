@@ -14,6 +14,12 @@ be compared against a baseline on the same machine and configuration.
   --release-compiler <release-joyeer> --output-dir <new-directory>`. The directory must not
   already exist, so the baseline executables cannot be overwritten accidentally.
 
+- `array_*.joyeer` and `benchmark_arrays.py` (plan 0011, phase 3): growth by appending, `a[i]` reads and
+  writes including a nested array, `removeLast` drains, nested destruction (`[[String]]` build, copy, drop) and
+  the linear drain of `[JoinHandle<Int>]`. The script reuses `benchmark_concurrency.py` (same `build` and
+  `measure` commands, same interleaved paired comparison and bootstrap) with its own workloads. Each program
+  prints one checksum, computed independently in Python, and a run with another output is rejected.
+
 Record the numbers in the decision or the pull request that changes the runtime, with the machine,
 the operating system and the build configuration.
 

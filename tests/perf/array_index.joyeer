@@ -1,0 +1,44 @@
+// Array element access baseline (plan 0011, phase 3): borrowed reads, in-place writes, compound
+// updates and a nested array, all through `a[i]`, which is a bounds check plus a typed address today.
+func main() {
+    var items: [Int] = []
+    var index = 0
+    while index < 1024 {
+        &items.append(element: index)
+        index = index + 1
+    }
+    var grid: [[Int]] = []
+    var row = 0
+    while row < 32 {
+        var cells: [Int] = []
+        var column = 0
+        while column < 32 {
+            &cells.append(element: row + column)
+            column = column + 1
+        }
+        &grid.append(element: cells)
+        row = row + 1
+    }
+    var total = 0
+    var round = 0
+    while round < 12000 {
+        index = 0
+        while index < 1024 {
+            total = total + items[index]
+            &items[index] = items[index] + 1
+            &items[index] += 2
+            index = index + 1
+        }
+        row = 0
+        while row < 32 {
+            var column = 0
+            while column < 32 {
+                total = total + grid[row][column]
+                column = column + 1
+            }
+            row = row + 1
+        }
+        round = round + 1
+    }
+    print(value: total)
+}

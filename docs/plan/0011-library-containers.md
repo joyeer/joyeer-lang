@@ -106,8 +106,9 @@ cannot express element-dependent copyability, linearity, and destruction through
 
 ### Phase 3: Array
 
-- [ ] Benchmark construction, append/growth, borrowed indexing, removal, nested destruction,
-  and draining arrays of linear handles before changing the implementation.
+- [x] Benchmark construction, append/growth, borrowed indexing, removal, nested destruction,
+  and draining arrays of linear handles before changing the implementation. Evidence: the baseline of the
+  2026-11-15 log entry below (`tests/perf/array_*.joyeer`, `tests/perf/benchmark_arrays.py`).
 - [ ] Implement the existing array API in Joyeer, including constant-array clone boundaries,
   exact allocation/free sizes, and `consumeEmpty` and its trap.
 - [ ] Preserve subscript/storage-path/exclusivity behavior and existing diagnostics/fixtures.
@@ -367,4 +368,15 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   on the validator's rerun, the known parallel-load timeout pattern). Linux x86_64 (WSL Ubuntu, a fresh Git clone):
   Debug and Release build, `ctest` 1727 of 1727 and `fern test` 7 of 7, no reruns. macOS is run by the user and not
   reported here. The Phase 2 review item stays open only for that and for the open items listed above.
+- 2026-11-15: Phase 3 started on `feat/library-array`. Baseline of the builtin array before any change: five
+  programs in `tests/perf/` (`array_append_growth`, `array_index`, `array_remove_last`, `array_nested_destroy`,
+  `array_linear_drain`) and `benchmark_arrays.py`, built with the compilers of the Phase 2 validation tree (the
+  merged `main` content) at -O0 (Debug compiler) and -O2 (Release compiler), checksums verified against an
+  independent Python computation. Windows x64, idle machine, 15 interleaved repetitions, minimum and median in
+  milliseconds. -O0: append_growth 444 / 997 (one noisy run set, expect a wide interval), index 229 / 239,
+  remove_last 200 / 211, nested_destroy 166 / 178, linear_drain 135 / 147. -O2: append_growth 171 / 184, index 101 /
+  112, remove_last 100 / 109, nested_destroy 102 / 106, linear_drain 134 / 151. Executable sizes: -O0 88064 to 96256
+  bytes, -O2 43008 to 45568 bytes. The executables and `report.json` are kept outside the repository; the candidate
+  is compared with `--candidate-dir` against a rebuilt baseline, never against these numbers alone. The linear
+  drain is dominated by thread creation, so it can only show a large regression.
 
