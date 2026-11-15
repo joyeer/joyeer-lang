@@ -67,8 +67,7 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
         return builder.CreateCall(assemblyType, assembly, arguments, temporary());
     }
     if (descriptor.operation == Operation::staticSlot) {
-        // One zeroed table per program: every object that uses slots defines the
-        // same linkonce symbol in a comdat, and the linker keeps a single copy.
+        // Mach-O coalesces the linkonce symbol without COMDAT support.
         const std::string symbol(intrinsic::staticSlotSymbol);
         auto* tableType = llvm::ArrayType::get(builder.getInt64Ty(), static_cast<uint64_t>(intrinsic::staticSlotCount));
         auto* table = module().getNamedGlobal(symbol);
@@ -76,9 +75,11 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
             table = new llvm::GlobalVariable(module(), tableType, false,
                     llvm::GlobalValue::LinkOnceODRLinkage, llvm::ConstantAggregateZero::get(tableType), symbol);
             table->setAlignment(llvm::Align(8));
-            auto* comdat = module().getOrInsertComdat(symbol);
-            comdat->setSelectionKind(llvm::Comdat::Any);
-            table->setComdat(comdat);
+            if (!llvm::Triple(llvm::sys::getDefaultTargetTriple()).isOSBinFormatMachO()) {
+                auto* comdat = module().getOrInsertComdat(symbol);
+                comdat->setSelectionKind(llvm::Comdat::Any);
+                table->setComdat(comdat);
+            }
         }
         auto* outside = builder.CreateICmpUGE(arguments[0],
                 integer(static_cast<uint64_t>(intrinsic::staticSlotCount)), temporary());

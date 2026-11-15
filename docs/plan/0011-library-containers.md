@@ -477,4 +477,11 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   `Fern.Workspace` in Release passed only on the validator's rerun, the known parallel-load pattern). Linux x86_64
   (WSL, a fresh Git clone): Debug and Release build, `ctest` 1791 of 1791 and `fern test` 7 of 7, no reruns. macOS is
   run by the user and not reported here.
-
+- 2026-11-15: Stage 4 prerequisite on macOS/AArch64, using the existing LLVM 22.1.8 SDK and macOS 26.5 SDK.
+  The unchanged stage 3 runtime build aborted because Mach-O cannot lower the shared static-slot table's COMDAT.
+  `CInteropTest.LowersStaticSlotsToAMergedTableWithARangeCheck` was changed first to require no COMDAT on macOS
+  and observed failing. The backend now retains `linkonce_odr` coalescing on every platform but attaches a COMDAT
+  only on object formats that support it. The same test passes, the runtime builds, and the four
+  `JoyeerCInterop.StaticSlots{Debug,Optimized}` / `SharedStaticSlots{Debug,Optimized}` execution tests pass.
+  The unchanged array characterization (11 tests) and collection-role baseline (47 tests) also pass. This is not
+  full macOS acceptance or evidence that the library-array switch is implemented.

@@ -591,7 +591,7 @@ func use(function: Int, first: Int, second: Int) {
     EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
 }
 
-TEST_F(CInteropTest, LowersStaticSlotsToAMergedComdatTableWithARangeCheck) {
+TEST_F(CInteropTest, LowersStaticSlotsToAMergedTableWithARangeCheck) {
     ASSERT_NO_FATAL_FAILURE(lower(R"(
 @c_extern(symbol: "joyeer_intrinsic_static_slot")
 func slot(index: Int): Int
@@ -610,7 +610,11 @@ func variable(index: Int): Int { return slot(index: index) }
     // One zeroed table, merged across objects, indexed after an unsigned range check.
     EXPECT_NE(emitted.text.find("@joyeer_static_slots = linkonce_odr global [64 x i64] zeroinitializer"),
               std::string::npos);
+#if defined(__APPLE__)
+    EXPECT_EQ(emitted.text.find("comdat"), std::string::npos);
+#else
     EXPECT_NE(emitted.text.find("comdat"), std::string::npos);
+#endif
     EXPECT_NE(emitted.text.find("icmp uge i64"), std::string::npos);
     EXPECT_NE(emitted.text.find("getelementptr inbounds [64 x i64], ptr @joyeer_static_slots"),
               std::string::npos);
