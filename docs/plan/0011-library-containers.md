@@ -472,4 +472,9 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   `place_address` forms and verifier cases, the `array_literal` shape), and the stage fixture
   `tests/c-interop/layout-intrinsics.joyeer` runs `slot_address`, `stack_block` and `place_address` at -O0 to -O3.
   Not done in this commit: the cost gate (stage 4), Release, Linux and macOS.
+- 2026-11-15: `scripts/validate.py` on 7a1d748 (stages 2 and 3) passes. Windows x64: Debug and Release build, `ctest`
+  1815 of 1815 and `fern test` 7 of 7 (`Fern.Workspace` in Debug and `ValidationScriptTests`, `Fern.Manifest` and
+  `Fern.Workspace` in Release passed only on the validator's rerun, the known parallel-load pattern). Linux x86_64
+  (WSL, a fresh Git clone): Debug and Release build, `ctest` 1791 of 1791 and `fern test` 7 of 7, no reruns. macOS is
+  run by the user and not reported here.
 
