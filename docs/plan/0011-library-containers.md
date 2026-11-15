@@ -5,7 +5,8 @@
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0023](../decisions/0023-library-concurrency.md) (completed concurrency-library migration),
   [0024](../decisions/0024-library-optional-and-result.md) (Phase 1, accepted and merged in #26; macOS validation open),
-  [0025](../decisions/0025-library-collection-capabilities.md) (Phase 2 capabilities, accepted)
+  [0025](../decisions/0025-library-collection-capabilities.md) (Phase 2 capabilities, accepted,
+  [0026](../decisions/0026-library-array.md) (Phase 3 library `Array`, proposed)
 - Spec: [§2](../../specs/02-types.md), [§20](../../specs/20-protocols.md), and the affected
   ownership, expression, and pattern chapters in the [spec index](../../specs/README.md)
 
@@ -379,4 +380,12 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   bytes, -O2 43008 to 45568 bytes. The executables and `report.json` are kept outside the repository; the candidate
   is compared with `--candidate-dir` against a rebuilt baseline, never against these numbers alone. The linear
   drain is dominated by thread creation, so it can only show a large regression.
+- 2026-11-15: Drafted [0026](../decisions/0026-library-array.md) (proposed) for Phase 3 from an inventory of the
+  array machinery: the runtime already implements the array algorithms in Joyeer behind the public
+  `joyeer_array_*_abi`, so the decision makes `Array<T>` a thin typed library struct over those functions (not a
+  per-element-type reimplementation), declared in a third bundled prelude `collections.joyeer` so it may declare C
+  bindings, with a new `array_literal` role and a place-address intrinsic, the type kind and array opcodes
+  removed, and a characterization suite written first on the builtin array. The always-inliner is expected at
+  `-O0` (`buildO0DefaultPipeline`), to be confirmed by a prototype. It awaits a language-designer review; nothing
+  is implemented.
 
