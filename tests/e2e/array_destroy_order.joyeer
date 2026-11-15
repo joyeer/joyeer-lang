@@ -1,0 +1,94 @@
+// Characterization of array destruction (plan 0011 phase 3, decision 0026): elements are destroyed from the
+// last to the first, exactly once, on every way out of a scope. The `deinit` prints the id.
+struct Res {
+    var id: Int
+
+    deinit() {
+        print(value: self.id)
+    }
+}
+
+enum Failure {
+    Bad
+}
+
+func make(ok: Bool): Result<Res, Failure> {
+    if ok {
+        return .Ok(Res(id: 9))
+    }
+    return .Err(.Bad)
+}
+
+func scopeEnd() {
+    var items: [Res] = []
+    &items.append(element: Res(id: 1))
+    &items.append(element: Res(id: 2))
+    &items.append(element: Res(id: 3))
+    print(value: 100)
+}
+
+func overwrite() {
+    var items: [Res] = [Res(id: 4), Res(id: 5)]
+    print(value: 101)
+    items = [Res(id: 6)]
+    print(value: 102)
+}
+
+func early(ok: Bool): Result<Int, Failure> {
+    var items: [Res] = []
+    &items.append(element: Res(id: 7))
+    let extra = make(ok: ok)?
+    &items.append(element: consume extra)
+    return .Ok(items.count)
+}
+
+func earlyReturn(flag: Bool): Int {
+    let items: [Res] = [Res(id: 20), Res(id: 21)]
+    if flag {
+        return items.count
+    }
+    print(value: 103)
+    return 0
+}
+
+func build(ok: Bool): Result<[Res], Failure> {
+    return .Ok([Res(id: 30), make(ok: ok)?, Res(id: 32)])
+}
+
+func nested() {
+    var outer: [[Res]] = []
+    var first: [Res] = [Res(id: 40), Res(id: 41)]
+    var second: [Res] = [Res(id: 42)]
+    &outer.append(element: consume first)
+    &outer.append(element: consume second)
+    let popped = &outer[0].removeLast()
+    match consume popped {
+        .Some(handle) => { print(value: 200 + handle.id) },
+        .None => { print(value: -1) },
+    }
+    print(value: 104)
+}
+
+func main() {
+    scopeEnd()
+    overwrite()
+    match early(ok: false) {
+        .Ok(count) => { print(value: count) },
+        .Err(_) => { print(value: -2) },
+    }
+    match early(ok: true) {
+        .Ok(count) => { print(value: count) },
+        .Err(_) => { print(value: -2) },
+    }
+    print(value: earlyReturn(flag: true))
+    print(value: earlyReturn(flag: false))
+    match build(ok: false) {
+        .Ok(items) => { print(value: items.count) },
+        .Err(_) => { print(value: -3) },
+    }
+    match build(ok: true) {
+        .Ok(items) => { print(value: items.count) },
+        .Err(_) => { print(value: -3) },
+    }
+    nested()
+}

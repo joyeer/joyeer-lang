@@ -1,0 +1,75 @@
+// Characterization of arrays over every kind of element (plan 0011 phase 3, decision 0026): append, index,
+// copy, removeLast and drop for scalars, strings, nested arrays and dictionaries, function values, optionals
+// and unit values. A library array must behave the same for each class.
+func double(value: Int): Int {
+    return value * 2
+}
+
+func negate(value: Int): Int {
+    return 0 - value
+}
+
+func main() {
+    var ints: [Int] = [1, 2, 3]
+    let intsCopy = ints
+    &ints.append(element: 4)
+    print(value: ints.count + intsCopy.count)
+
+    var words: [String] = ["a", "b" + "c"]
+    let wordsCopy = words
+    &words.append(element: "d" + "e")
+    print(value: words[2])
+    print(value: wordsCopy.count)
+
+    var rows: [[Int]] = [[1, 2], [3]]
+    let rowsCopy = rows
+    &rows[0].append(element: 9)
+    print(value: rows[0].count)
+    print(value: rowsCopy[0].count)
+
+    var table: [[String: Int]] = [["a": 1]]
+    let tableCopy = table
+    print(value: table[0]["a"] + tableCopy.count)
+
+    var functions: [(Int): Int] = [double, negate]
+    let functionsCopy = functions
+    &functions.append(element: double)
+    print(value: (functions[0])(5) + (functionsCopy[1])(5) + functions.count)
+
+    var maybe: [Int?] = [1, nil, 3]
+    let maybeCopy = maybe
+    &maybe.append(element: nil)
+    var present = 0
+    var index = 0
+    while index < maybe.count {
+        match maybe[index] {
+            .Some(value) => { present = present + value },
+            .None => { present = present + 100 },
+        }
+        index = index + 1
+    }
+    print(value: present)
+    print(value: maybeCopy.count)
+
+    var units: [Void] = [(), ()]
+    &units.append(element: ())
+    let unitsCopy = units
+    print(value: units.count + unitsCopy.count)
+    let removed = &units.removeLast()
+    match removed {
+        .Some(_) => { print(value: units.count) },
+        .None => { print(value: -1) },
+    }
+
+    var drained = 0
+    var stack: [String] = ["x", "yy", "zzz"]
+    while true {
+        let popped = &stack.removeLast()
+        match popped {
+            .Some(text) => { drained = drained + text.count },
+            .None => { break },
+        }
+    }
+    print(value: drained)
+    print(value: stack.count)
+}

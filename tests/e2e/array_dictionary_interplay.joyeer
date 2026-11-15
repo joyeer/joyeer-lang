@@ -1,0 +1,15 @@
+// Characterization of arrays reached through a dictionary (plan 0011 phase 3, decision 0026): an array that
+// is only copied and dropped as a dictionary value, and one mutated in place through a key.
+func main() {
+    var table: [String: [Int]] = ["k": [1, 2]]
+    let copy = table
+    print(value: copy["k"].count)
+    &table["k"].append(element: 3)
+    print(value: table["k"].count)
+    print(value: copy["k"].count)
+
+    var names: [String: [String]] = ["a": ["x", "y"]]
+    let names2 = names
+    &names["a"] = ["z"]
+    print(value: names["a"].count + names2["a"].count)
+}

@@ -1,0 +1,36 @@
+// Characterization of top-level constant arrays (plan 0011 phase 3, decision 0026): read, counted, copied,
+// mutated as a copy, passed as a task input and returned as a task result. A constant is shared and read-only,
+// and an owned use is always a copy.
+let primes: [Int] = [2, 3, 5, 7]
+let names: [String] = ["ab", "cde"]
+
+func sum(values: consuming [Int]): Int {
+    var total = 0
+    var index = 0
+    while index < values.count {
+        total = total + values[index]
+        index = index + 1
+    }
+    return total
+}
+
+func echo(values: consuming [String]): [String] {
+    return values
+}
+
+func main() {
+    print(value: primes.count + names.count)
+    print(value: primes[2] + names[1].count)
+    var copy = primes
+    &copy.append(element: 11)
+    print(value: copy.count + primes.count)
+
+    let summed = spawn(function: sum, input: consume primes)
+    let total = consume summed.join()
+    print(value: total)
+    let echoed = spawn(function: echo, input: consume names)
+    let back = consume echoed.join()
+    print(value: back.count)
+    print(value: back[1])
+    print(value: primes.count + names.count)
+}

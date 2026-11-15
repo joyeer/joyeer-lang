@@ -397,4 +397,21 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   instead of extra marks, and the recursive-type, Dict, extension and Equatable risks. Phase 3 is staged as five
   changes: a characterization PR on the builtin array, a measurement PR, an infrastructure PR, the switch, and the
   cleanup. 0026 stays proposed until the measurement exists.
+- 2026-11-15: Characterization PR (stage 1 of 0026), tests only, written against the unchanged builtin array and
+  passing on it: eight e2e fixtures at -O0 to -O3 plus the automatic differential check
+  (`array_destroy_order`: end of scope, overwrite, `?`, early return, a literal with a fallible element, a nested array
+  emptied by `removeLast`; `array_element_classes`: scalars, strings, nested arrays, dictionaries, function values,
+  optionals, unit values; `array_zero_state`: a moved-out field, an uninitialized `var`, an `Optional` payload, drain
+  then `consumeEmpty`; `array_recursive_types`: `Tree`, a non-indirect `Json`, mutual recursion;
+  `array_dictionary_interplay`; `array_constant_uses`: read, copy, task input and result; `array_evaluation_order`;
+  `array_trap_order`, which pins that 7 is printed and 20 is not) and `CompilerArrayCharacterizationTests`
+  (11 tests of diagnostics: type spellings, unknown member, extension rejection, `for-in`, a user type named `Array`,
+  copy and linear reasons, markers and index types, `Never` and function-value elements). The two diagnostics
+  0026 changes are marked `CHANGES WITH 0026` in the test. Output values were checked by hand against the language
+  rules, not taken from the compiler. Windows x64 Debug: 65 of 65 pass. Findings while writing them: `[Int] == [Int]`
+  type checks today and then fails in the backend with `llvm.invalid-module` (a pre-existing defect that plan 0012
+  owns; not pinned as behavior); a user type named `Array` prints as `Array` today, which 0026 already lists as a
+  change. Not added because fixtures already exist: native `[String]` and `[UInt8]` parameters and `main(args:)`
+  (`entry_arguments`, `entry_argument_bytes`), `String.utf8()` (`string_utf8`), `[Void]` bounds (`unit_array_bounds`),
+  the removeLast and consumeEmpty cases (`array_remove_last`, `array_consume_empty`).
 

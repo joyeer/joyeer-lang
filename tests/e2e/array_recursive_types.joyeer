@@ -1,0 +1,60 @@
+// Characterization of recursive types through arrays (plan 0011 phase 3, decision 0026): a builtin array is
+// indirect, so a type may contain an array of itself. A library array must keep every one of these valid.
+struct Tree {
+    var value: Int
+    var kids: [Tree]
+}
+
+enum Json {
+    Number(Int),
+    List([Json]),
+}
+
+struct Left {
+    var items: [Right]
+}
+
+struct Right {
+    var items: [Left]
+    var id: Int
+}
+
+func total(tree: Tree): Int {
+    var sum = tree.value
+    var index = 0
+    while index < tree.kids.count {
+        sum = sum + total(tree: tree.kids[index])
+        index = index + 1
+    }
+    return sum
+}
+
+func weight(json: Json): Int {
+    return match json {
+        .Number(value) => value,
+        .List(items) => {
+            var sum = 0
+            var index = 0
+            while index < items.count {
+                sum = sum + weight(json: items[index])
+                index = index + 1
+            }
+            sum
+        },
+    }
+}
+
+func main() {
+    let leaf = Tree(value: 3, kids: [])
+    var root = Tree(value: 1, kids: [leaf, Tree(value: 5, kids: [leaf])])
+    let copy = root
+    &root.kids.append(element: leaf)
+    print(value: total(tree: root))
+    print(value: total(tree: copy))
+
+    let nested = Json.List([.Number(1), .List([.Number(2), .Number(3)]), .Number(4)])
+    print(value: weight(json: nested))
+
+    let pair = Left(items: [Right(items: [], id: 7), Right(items: [Left(items: [])], id: 8)])
+    print(value: pair.items.count + pair.items[1].items.count + pair.items[1].id)
+}

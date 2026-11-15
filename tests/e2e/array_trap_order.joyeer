@@ -1,0 +1,16 @@
+// Characterization of when an out-of-bounds index traps (plan 0011 phase 3, decision 0026): the index operand
+// is evaluated first, then the access traps before any later argument is evaluated. Prints 7, then traps;
+// 20 is never printed.
+func noisy(value: Int): Int {
+    print(value: value)
+    return value
+}
+
+func pair(first: Int, second: Int): Int {
+    return first + second
+}
+
+func main() {
+    let items: [Int] = [1, 2, 3]
+    print(value: pair(first: items[noisy(value: 7)], second: noisy(value: 20)))
+}
