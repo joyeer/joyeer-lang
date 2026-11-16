@@ -2424,7 +2424,8 @@ private:
                 return expressionType(
                         std::static_pointer_cast<syntax::AssignmentExprSyntax>(expression)->value);
             case syntax::Kind::arrayExpr:
-                return lookupType(model->fileScope_, "Array").symbol;
+                // The role-bound type, never the spelling: a user type named `Array` must not take literals.
+                return model->arraySymbol_;
             case syntax::Kind::dictionaryExpr:
                 return lookupType(model->fileScope_, "Dict").symbol;
             case syntax::Kind::subscriptExpr: {

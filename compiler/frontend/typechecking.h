@@ -426,7 +426,9 @@ public:
     [[nodiscard]] std::optional<semantic::SymbolId> arrayRoleMethod(TypeId type, semantic::LibraryRole role) const;
     // Consuming parameters declared with exactly the role's owned type parameter accept owned arguments.
     [[nodiscard]] bool isOwnedArgumentContext(semantic::SymbolId function, size_t parameter) const;
-    [[nodiscard]] std::optional<std::string> linearEndingMethod(TypeId type) const;
+    // The consuming method that ends a linear value of `type`. With `leaf`, arrays are looked through and the
+    // method is the one of the first linear element handle, not the array's own container_end method.
+    [[nodiscard]] std::optional<std::string> linearEndingMethod(TypeId type, bool leaf = false) const;
     // Generic functions (spec 20, decision 0021).
     // The type parameters of a generic function in declaration order; null for any other function.
     [[nodiscard]] const std::vector<semantic::SymbolId>* genericParameters(semantic::SymbolId function) const;

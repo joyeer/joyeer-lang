@@ -565,7 +565,7 @@ bool TypeCheckedModel::isLinear(TypeId type) const {
     return isLinear(type, visiting, clean);
 }
 
-std::optional<std::string> TypeCheckedModel::linearEndingMethod(TypeId type) const {
+std::optional<std::string> TypeCheckedModel::linearEndingMethod(TypeId type, bool leaf) const {
     std::unordered_set<TypeId> visited;
     std::function<std::optional<std::string>(TypeId)> visit = [&](TypeId id) -> std::optional<std::string> {
         if (!visited.insert(id).second || !isLinear(id)) return std::nullopt;
@@ -573,7 +573,7 @@ std::optional<std::string> TypeCheckedModel::linearEndingMethod(TypeId type) con
         if (record == nullptr) return std::nullopt;
         const auto arguments = record->arguments;
         const auto* declaration = semanticModelValue->symbol(record->symbol);
-        if (declaration != nullptr && declaration->libraryRole == semantic::LibraryRole::arrayType &&
+        if (!leaf && declaration != nullptr && declaration->libraryRole == semantic::LibraryRole::arrayType &&
             declaration->memberScope.has_value()) {
             const auto* members = semanticModelValue->scope(*declaration->memberScope);
             for (const auto& [name, symbol] : members->values) {
@@ -589,7 +589,8 @@ std::optional<std::string> TypeCheckedModel::linearEndingMethod(TypeId type) con
                 if (method->libraryRole == semantic::LibraryRole::storedConsumer) return name;
             }
         }
-        if (const auto structure = structureDeclaration(id)) {
+        const bool arrayRole = declaration != nullptr && declaration->libraryRole == semantic::LibraryRole::arrayType;
+        if (const auto structure = structureDeclaration(id); structure != nullptr && !(leaf && arrayRole)) {
             for (const auto& field : structure->fields) {
                 const auto symbol = semanticModelValue->declaredSymbol(field);
                 const auto fieldType = symbol.has_value() ? typeOf(*symbol) : std::optional<TypeId>();

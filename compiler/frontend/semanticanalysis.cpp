@@ -448,16 +448,18 @@ private:
         }
         if (!live) return;
         const auto* declaration = model->semanticModel()->symbol(symbol);
-        const auto ending = model->linearEndingMethod(*type);
+        // The handle's own ending method: looking through arrays, so nested and wrapped arrays name 'join', not
+        // the container's method.
+        const auto ending = model->linearEndingMethod(*type, true);
         auto help = ending.has_value()
                 ? "end each handle with its consuming '" + *ending +
                           "' method (or return it) on every path before this point"
                 : "consume it (or return it) on every path before this point; a function that only needs to use it can take it 'inout'";
         if (model->isArrayRoleType(*type) && ending.has_value()) {
-            const auto element = model->types().type(*type)->arguments[0];
-            if (const auto elementEnding = model->linearEndingMethod(element)) {
-                help = "end each handle with its consuming '" + *elementEnding +
-                        "' method after removing it, then end the empty container with '" + *ending + "'";
+            // A bare array: the elements are removed one by one, then the empty array is ended.
+            if (const auto containerEnding = model->linearEndingMethod(*type)) {
+                help = "end each handle with its consuming '" + *ending +
+                        "' method after removing it, then end the empty container with '" + *containerEnding + "'";
             }
         }
         diagnostics.push_back(Diagnostic {
