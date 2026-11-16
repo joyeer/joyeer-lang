@@ -30,6 +30,12 @@ be compared against a baseline on the same machine and configuration.
   array as the baseline, so a ratio above 1 is a cost of the library array. The results and the gate numbers are in
   decision 0026, Section 4.
 
+- `dict_*.joyeer` and `benchmark_dicts.py` (plan 0011, phase 4, decision 0027): Int-key lookup at sizes 1, 4, 16 and
+  64 (strict reads, `get` hits and misses), String-key lookup at sizes 4 and 16, insertion with growth to 16 and
+  replacement, a four-entry literal with a duplicate key, and nested destruction of `[String: [Int]]`. The same
+  `build` and `measure` commands as `benchmark_arrays.py`; each program prints one checksum computed independently in
+  Python.
+
 Record the numbers in the decision or the pull request that changes the runtime, with the machine,
 the operating system and the build configuration.
 
