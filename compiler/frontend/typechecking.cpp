@@ -1592,6 +1592,15 @@ private:
                 const auto resolved = model->typeContext.typeForSymbol(*symbol, arguments);
                 if (resolved.has_value()) {
                     result = *resolved;
+                    // `Array<Never>` is the same rejected type as `[Never]` and reads the same.
+                    if (arguments.size() == 1 && arguments[0] == model->typeContext.neverType()) {
+                        if (const auto* arrayDeclaration = model->semanticModelValue->symbol(*symbol);
+                            arrayDeclaration != nullptr &&
+                            arrayDeclaration->libraryRole == semantic::LibraryRole::arrayType) {
+                            result = rejectNeverElement(arguments[0], syntaxType->span);
+                            break;
+                        }
+                    }
                     if (!arguments.empty()) {
                         if (const auto* generic = model->semanticModelValue->symbol(*symbol);
                             generic != nullptr && !generic->typeParameters.empty() &&
@@ -6746,11 +6755,13 @@ private:
 
     // `Never` has no values, so an array of it could only be empty and every operation on one would bind a value
     // that cannot exist: it is rejected like `Never` in any other generic (decision 0026, revision 5).
-    TypeId rejectNeverElement(TypeId element, SourceSpan span) {
+    TypeId rejectNeverElement(TypeId element, SourceSpan span, bool literal = false) {
         if (element != model->typeContext.neverType()) return element;
         report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
                "the element type of an array cannot be 'Never'",
-               "'Never' has no values, so an array of it could never hold one (spec 2.9)");
+               literal ? "'Never' has no values (spec 2.9); give the literal a contextual element type, or put "
+                         "an element that has a value first"
+                       : "'Never' has no values, so an array of it could never hold one (spec 2.9)");
         return model->typeContext.errorType();
     }
 
@@ -6776,6 +6787,8 @@ private:
             return model->typeContext.errorType();
         }
 
+        const bool annotationRejected = expected.has_value() && *expected == model->typeContext.errorType();
+        const auto diagnosticsBefore = diagnostics.size();
         for (const auto& element : expression->elements) {
             permitMove(element);
             const auto actual = checkExpression(element, elementType).value_or(
@@ -6787,7 +6800,13 @@ private:
                 requireAssignable(actual, *elementType, element->span);
             }
         }
-        return model->typeContext.arrayType(rejectNeverElement(*elementType, expression->span));
+        // An element type of `Never` is reported once: not again when the annotation was already rejected or an
+        // element already produced an error (`[return, 1]`).
+        if (*elementType == model->typeContext.neverType() &&
+            (annotationRejected || diagnostics.size() != diagnosticsBefore)) {
+            return model->typeContext.errorType();
+        }
+        return model->typeContext.arrayType(rejectNeverElement(*elementType, expression->span, true));
     }
 
     TypeId checkDictionary(

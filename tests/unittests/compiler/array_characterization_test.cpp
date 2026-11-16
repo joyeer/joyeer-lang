@@ -164,6 +164,52 @@ TEST(ArrayCharacterization, NeverIsNotAnArrayElement) {
         EXPECT_TRUE(contains(text, "type-checking.invalid-type-argument")) << source << "\n" << text;
         EXPECT_TRUE(contains(text, "'Never'")) << source << "\n" << text;
     }
+    for (const auto* source : {
+                 "func main() { let a = [return, return] }\n",
+                 "func main() { let a = [[return]] }\n",
+                 "func f(a: [Never]?) {}\nfunc main() {}\n",
+                 "func f(a: Result<[Never], Int>) {}\nfunc main() {}\n",
+                 "struct S { var a: [Never] }\nfunc main() {}\n",
+                 "func f(a: [String: [Never]]) {}\nfunc main() {}\n",
+                 "func main() { for x in [return] { } }\n",
+         }) {
+        const auto text = diagnose(source);
+        EXPECT_TRUE(contains(text, "type-checking.invalid-type-argument")) << source << "\n" << text;
+    }
+    // The written spellings read the same, and the generic-parameter text is not used for an array.
+    for (const auto* source : { "func f(a: [Never]) {}\nfunc main() {}\n", "func f(a: Array<Never>) {}\nfunc main() {}\n" }) {
+        const auto text = diagnose(source);
+        EXPECT_TRUE(contains(text, "the element type of an array cannot be 'Never'")) << source << "\n" << text;
+        EXPECT_FALSE(contains(text, "type parameter 'T' of 'Array'")) << source << "\n" << text;
+    }
+    // Arrays that still have an element type, and a diverging element that does not decide it.
+    for (const auto* source : {
+                 "func main() { let a = [1, return] }\n",
+                 "func f(a: [Void]) {}\nfunc main() {}\n",
+                 "func f(a: Array<Never?>) {}\nfunc main() {}\n",
+                 "func f(a: Array<Optional<Never>>) {}\nfunc main() {}\n",
+                 "func main() { let a: [Int] = [return] }\n",
+                 "func main() { let a = [[1], [return]] }\n",
+         }) {
+        EXPECT_EQ(contains(diagnose(source), "element type of an array"), false) << source;
+    }
+    // One error per mistake: neither a rejected annotation nor an earlier element error is reported twice.
+    const auto count = [](const std::string& text, const std::string& needle) {
+        size_t found = 0;
+        for (auto at = text.find(needle); at != std::string::npos; at = text.find(needle, at + 1)) ++found;
+        return found;
+    };
+    for (const auto* source : {
+                 "func main() { let a: [Never] = [return] }\n",
+                 "func main() { let b: Array<Never> = [] }\n",
+                 "func main() { let a: [Never] = [] }\n",
+         }) {
+        const auto text = diagnose(source);
+        EXPECT_EQ(count(text, "invalid-type-argument"), 1u) << source << "\n" << text;
+        EXPECT_FALSE(contains(text, "missing-contextual-type")) << source << "\n" << text;
+    }
+    const auto order = diagnose("func main() { let a = [return, 1] }\n");
+    EXPECT_FALSE(contains(order, "element type of an array")) << order;
     // The rejected annotation poisons the binding: its empty literal adds no follow-on error.
     const auto cascade = diagnose("func main() { let n: [Never] = [] }\n");
     EXPECT_FALSE(contains(cascade, "missing-contextual-type")) << cascade;

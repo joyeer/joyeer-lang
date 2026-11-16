@@ -332,7 +332,8 @@ so it is not one change. In order, each revertable:
    golden; trap texts and the trap order against later arguments; destruction order of `[Resource]` with a printing
    `deinit` at scope end, on overwrite, on `?` and on early return, including a nested `[[Resource]]` whose inner
    array was emptied by `removeLast`; `removeLast` and `consumeEmpty` for copyable, noncopyable and linear
-   elements, empty and nonempty; every zero-state element class of 0025 section 4; `[Void]`, `[Never]`, `[Any]` and
+   elements, empty and nonempty; every zero-state element class of 0025 section 4; `[Void]`, `[Never]` (rejected
+   from revision 5, A10), `[Any]` and
    `[(Int): Int]`; a literal with a fallible element, `func f(): Result<[Res], E> { return .Ok([Res(id: 1),
    make()?, Res(id: 3)]) }`, with the allocation counter at zero; constants at every use; `main(args:)` and the
    native `[String]` and `[UInt8]` parameters and results; `String.utf8()`; the recursive-type, Dict, extension and
@@ -395,7 +396,7 @@ recorded here so that the decision record matches the code. The user accepted al
 | A7 | macOS linking | not addressed | `-force_load` of the runtime archive is removed; the archive loads lazily as on Linux. Two native callback probes conflicted with the test channel exports under `-force_load` | Programs on macOS stop importing unused thread and channel functions |
 | A8 | Diagnostics beyond the list under Consequences | `address` and `capacity` become `inaccessible-declaration`; the report goldens | Also `literal`, `element` and `duplicate` (with the whole `a.member` span and no help line); "it is a builtin method" is now "it is a method"; `&a.count = 5`, `a.count += 1` and passing `&a.count` inout carry an extra help line; `&a.append(element: &r)` reports `consuming argument requires 'consume' at the call site` with a fix-it; `consume a.count` is `partial-consume-of-deinit-type` (it was a pseudo-member); `&a.append(element: consume a[0])` on a noncopyable element is `type-checking.overlapping-access` (it was accepted until `a` was used again); the linear help names the handle's ending method, with the remove-then-`consumeEmpty` advice only for a bare array | The two rejections apply to programs the builtin accepted but could not run correctly; the rest are wording |
 | A9 | Cost measurements by platform | gates apply on Windows x64; Linux reported once its noise is known | Windows x64 passes (plan log, 2026-11-16). macOS/AArch64 reports flat drop at `-O2` at 1.019 to 1.021 with a lower bound above 1, and +16432 B on nested destruction at `-O2`, which is a 16 KiB Mach-O segment boundary. Linux performance is not measured | Proposal: executable bytes are gated on Windows x64 only, and a jump of exactly one segment page on Mach-O is reported, not gated |
-| A10 | `Never` is not an array element (revision 5, accepted 2026-11-16) | `[Never]` is accepted and pinned for compatibility; its zero-size representation is kept | `[Never]`, `Array<Never>` and an inferred element type `Never` (`[return]`) are rejected with `type-checking.invalid-type-argument`, like `Never` in any other generic; `[Never?]` stays valid. The checker had exempted the array role from the rule that applies to every other generic | A program that wrote `[Never]` stops compiling. The compiler crashes on iterating or indexing a `[Never]` (present before the switch) are removed by construction |
+| A10 | `Never` is not an array element (revision 5, accepted 2026-11-16) | `[Never]` is accepted and pinned for compatibility; its zero-size representation is kept | `[Never]`, `Array<Never>` and an inferred element type `Never` (`[return]`) are rejected with `type-checking.invalid-type-argument`, like `Never` in any other generic; `[Never?]` stays valid. The checker had exempted the array role from the rule that applies to every other generic | A program that wrote `[Never]` stops compiling. The compiler crashes on iterating or indexing a `[Never]` (present before the switch) are removed for arrays; the same crash remains for a `Dict` value of `Never` (gap (d)) |
 
 **Residual set (extends the list under "What done means here").** In addition to items 1 to 6: (7) the verifier's
 closed literal protocol and the `stack_block` and `place_address` lowering, keyed on the `arrayLiteral` mark of a
@@ -414,7 +415,10 @@ a debug-scope corruption introduced by inlining at `-O1` or above would not be c
 follow-up is an e2e array fixture at `-O1` and `-O2` with `-gfull` and a post-pipeline verification in a test build.
 (b) The spec text for A6 (§20.4.1 inference, §20.6 call checking) is not written. (c) The verifier's mutation tests
 assert failure, not which rule fired, and about ten verifier rules lack a malformed-IR test. (d) ~~The compiler still
-crashes on iterating a `[Never]` and on untyped indexing of one~~: closed by A10, which rejects `[Never]`.
+crashes on iterating a `[Never]` and on untyped indexing of one~~: closed for arrays by A10, which rejects `[Never]`.
+**Still open:** the same segfault, with no diagnostic, for a dictionary whose value type is `Never`
+(`let d: [String: Never] = [:]` then `let x = d["a"]`), present before the switch. `Dict` is builtin until Phase 4;
+the likely fix is the same rule (reject `Never` as a dictionary value), which needs the user's decision.
 
 The known gaps (a) to (d) are accepted as open follow-ups, not as waived requirements.
 
