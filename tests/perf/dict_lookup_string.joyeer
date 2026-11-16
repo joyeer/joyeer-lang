@@ -37,5 +37,5 @@ func lookups(size: Int, rounds: Int): Int {
 }
 
 func main() {
-    print(value: lookups(size: 4, rounds: 10000) + lookups(size: 16, rounds: 1400))
+    print(value: lookups(size: 4, rounds: 500000) + lookups(size: 16, rounds: 70000))
 }

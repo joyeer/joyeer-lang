@@ -11,7 +11,7 @@ func main() {
     }
     var total = 0
     var round = 0
-    while round < 500 {
+    while round < 100000 {
         var table: [String: [Int]] = [:]
         index = 0
         while index < 16 {

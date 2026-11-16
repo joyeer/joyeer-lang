@@ -668,3 +668,31 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   low: an address returned through an identity call (the author's duty, as for `place_address`), writes through the
   read-only address unchecked, the `key_kind` lowering error names no instantiation site, and the key-kind table exists
   in the checker, lowering and the backend (the backend copy goes at the cleanup stage).
+- 2026-11-17: Stage 2b head 0f937ac validated: Windows AMD64 Debug and Release `ctest` 1900/1900
+  (`E2ECheckedArrayEmptyO0` in Debug and `Fern.Workspace` in Release passed only on rerun), `fern test` 7/7; Linux
+  x86_64 1876/1876 and 7/7, no reruns.
+- 2026-11-17: 0027 stage 3 (measurement), Windows x64, idle machine, 25 interleaved repetitions, paired bootstrap.
+  The benchmarks of 3baf1cd were too small: process startup is about 90 ms here and every `-O2` total was within a
+  few ms of `hello`, so a first run measured process creation and is discarded. The rounds are scaled (×10 lookup,
+  ×50 `String` lookup, ×100 growth and literal, ×200 nested destroy; 0.3-0.5 s at `-O2`, 1.2-1.9 s at `-O0`) and the
+  checksums recomputed from closed forms. Noise (builtin against builtin): every median within 0.993-1.018, every
+  interval contains 1. Prototype: the role-less `Table<K, V>` of `tests/perf/dict_table_prelude.joyeer`
+  (`borrow_address`, `key_kind`, the runtime dictionary ABI) through `array-addressor-probe`, explicit methods,
+  `benchmark_dicts.py prototype`. Paired median ratios, Table over builtin:
+
+  | Program | `-O0` | `-O2` [95% interval] | size `-O0`/`-O2` |
+  |---|---|---|---|
+  | lookup (`Int`, sizes 1-64, `at` and `get`) | 1.039 | 0.997 [0.987, 1.004] | +1536/+0 |
+  | `String` lookup | 1.031 | 1.009 [0.986, 1.027] | +2560/+512 |
+  | insert with growth and replacement | 1.051 | 0.998 [0.994, 1.018] | +1536/+0 |
+  | nested destroy `[String: [Int]]` | 1.109 | 1.050 [1.035, 1.066] | +4096/+512 |
+
+  Verdict as measured: **no-go on nested destroy** (both profiles over the 1.05 `-O0` margin and the `-O2` gate);
+  insert growth at the margin (1.051); lookup and `get` go. Known non-like-for-like costs, all against the
+  prototype: without a role `Table` carries the hidden live flag (a 32-byte value and a flag test per drop; the role
+  type is a 24-byte inert-zero handle); its methods are not always-inlined at `-O0` (0026 A4 applies by role); `at`
+  returns `V` by copy where `d[k]` reads in place. Attribution: a builtin variant that also copies the two `[Int]`
+  values out (`let first = copy[k]`) reduces the nested-destroy ratio to 1.060 [1.054, 1.068] at `-O0`, but leaves
+  1.062 [1.057, 1.071] at `-O2`, so about 6% is unexplained; the builtin does clone the dictionary
+  (`joyeer_dictionary_clone_abi`), so the copy is like for like. Raw reports in `out/perf-gate/dict-stage3b` (not in
+  the repository). Next: attribute the remaining nested-destroy cost before stage 5.

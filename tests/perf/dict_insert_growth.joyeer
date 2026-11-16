@@ -3,7 +3,7 @@
 func main() {
     var total = 0
     var round = 0
-    while round < 3500 {
+    while round < 350000 {
         var table: [Int: Int] = [:]
         var key = 0
         while key < 16 {

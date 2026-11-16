@@ -1,0 +1,24 @@
+// dict_insert_growth.joyeer over the prototype `Table<K, V>` of dict_table_prelude.joyeer (decision 0027, stage 3).
+// Built only by benchmark_dicts.py through the array-addressor-probe tool. Prints 16100000.
+func main() {
+    var total = 0
+    var round = 0
+    while round < 350000 {
+        var table: Table<Int, Int> = emptyTable(key: 0, value: 0)
+        var key = 0
+        while key < 16 {
+            let inserted = key
+            &table.set(key: consume inserted, value: consume (key + round))
+            key = key + 1
+        }
+        key = 0
+        while key < 16 {
+            let replaced = key
+            &table.set(key: consume replaced, value: consume (key * 2))
+            key = key + 1
+        }
+        total = total + table.size() + table.at(key: 15)
+        round = round + 1
+    }
+    print(value: total)
+}
