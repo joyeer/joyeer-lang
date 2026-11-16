@@ -1,9 +1,8 @@
 # 0026: `Array<T>` as a library struct
 
 - Status: accepted (2026-11-15, revision 3, by the user "for now", including the `-O0` gate amendment of Section 4;
-  revisited if the switch's measurement contradicts it). **Revision 4** (the implementation amendments of the
-  section of that name, below) is **proposed 2026-11-16 and not yet accepted**: until it is, those items are
-  implementation facts, not accepted decisions.
+  revisited if the switch's measurement contradicts it). **Revision 4** (the implementation amendments A1 to A9 of the
+  section of that name, below) was **accepted by the user on 2026-11-16**, all nine items.
 - Spec: [§2.6](../../specs/02-types.md#26-generics), §2.6.2 and §2.6.4 (the members),
   [§3.1.1](../../specs/03-declarations.md#311-top-level-constants), [§4.3](../../specs/04-memory.md),
   [§19](../../specs/19-c-interop.md), [§20.12.5](../../specs/20-protocols.md) and
@@ -56,7 +55,10 @@ role and never to a spelling:
 5. the display of the role type as `[T]` and of syntactic `Array<X>` as `[X]` by name (`platform.cpp`), the same
    display special case 0024 kept for `Optional`;
 6. the `alwaysinline` attribute of the backend, keyed on the `elementAddressor` mark of the role's addressor, not
-   on arrays.
+   on arrays;
+7. to 9. (revision 4) the closed literal protocol of the verifier with the `stack_block` and `place_address`
+   lowering, the owned-argument classification, and the general diverging-call rule; see the section "Revision 4".
+   Item 6 also covers the closed wrappers of A4.
 
 `docs/impl/` states this set. The plan's wording "implement their existing operations in Joyeer" is reworded
 accordingly when the plan is next edited.
@@ -371,15 +373,15 @@ so it is not one change. In order, each revertable:
    here, and only if the benchmarks justify it.
 
 The implementation chose a private consuming literal method and artificial ownership-helper subprograms
-(amendments A1 and A5 below). They are proposed, not accepted.
+(amendments A1 and A5 below), accepted with revision 4.
 
-## Revision 4: implementation amendments (proposed 2026-11-16, not accepted)
+## Revision 4: implementation amendments (accepted 2026-11-16)
 
 The stage 4 and 5 implementation (commits 1ad202b, 4477d9b, 656ac2e, validated on Windows x64, Linux x86_64 and
 macOS/AArch64) departs from or adds to revision 3 in the places below. None adds source syntax, and none changes a
 gate: the Windows x64 measurements of the plan 0011 log (2026-11-16) meet every Section 4 limit as written. They are
-recorded here so that the decision record matches the code. **Each item is accepted or rejected separately by the
-user**; a rejected item means the code changes, not the record.
+recorded here so that the decision record matches the code. The user accepted all nine items on 2026-11-16
+("Accept all A1-A9"); where an item amends text above, this section governs.
 
 | # | Amendment | Revision 3 said | Implemented | Visible effect |
 |---|---|---|---|---|
@@ -412,8 +414,7 @@ follow-up is an e2e array fixture at `-O1` and `-O2` with `-gfull` and a post-pi
 assert failure, not which rule fired, and about ten verifier rules lack a malformed-IR test. (d) The compiler still
 crashes on iterating a `[Never]` and on untyped indexing of one, as it did before the switch.
 
-**To accept.** Reply per item (A1 to A9). Accepted items move into the sections they amend and the Status line is
-updated; a rejected item is listed as a change request against the code.
+The known gaps (a) to (d) are accepted as open follow-ups, not as waived requirements.
 
 ## Review
 

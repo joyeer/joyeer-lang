@@ -132,9 +132,8 @@ remain separate gates.
   allocation/free sizes, `consumeEmpty` and its trap) as the bundled `Array`, with subscript, storage-path and
   exclusivity behavior, diagnostics and the characterization fixtures preserved; the cost gate of 0026 Section 4.
   Green on macOS Debug/Release (1823/1823), Windows x64 and Linux x86_64 (`validate.py`), and the Windows x64 cost gate
-  passes (log, 2026-11-16). The item stays open until the user accepts the implementation amendments to 0026
-  (owned-element argument rule, closed literal protocol, wire flags, artificial `DISubprogram`s, diverging-call rule)
-  and the review fixes are validated.
+  passes (log, 2026-11-16). The user accepted the implementation amendments A1-A9 of 0026 (revision 4) on 2026-11-16. The item stays open
+  until `validate.py` passes on the review-fix commits (6dcfbee onward) on Windows and Linux.
 - [x] 0026 stage 5, cleanup: no `TypeKind::array` or array-specific executable opcode implementation remains.
   Type slot 10 and opcode slots 35-38 are reserved and rejected by the verifier; the wire is 23.
   Evidence: observed-failing removed-slot test, focused reviews and macOS Debug/Release validator 1823/1823.
