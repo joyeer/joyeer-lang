@@ -1767,7 +1767,7 @@ TEST_F(CollectionRoleTest, TheVerifierRejectsForgedArrayRolesAndLiteralFactories
     const auto module = lower();
     ASSERT_NE(module, nullptr);
     using joyeer::ir::StructureRole;
-    for (unsigned mutation = 0; mutation < 7; ++mutation) {
+    for (unsigned mutation = 0; mutation < 9; ++mutation) {
         SCOPED_TRACE(mutation);
         auto copy = *module;
         auto structure = std::find_if(copy.structures.begin(), copy.structures.end(), [](const auto& value) {
@@ -1786,6 +1786,17 @@ TEST_F(CollectionRoleTest, TheVerifierRejectsForgedArrayRolesAndLiteralFactories
             case 4: factory->parameters[0].isConsuming = false; break;
             case 5: factory->parameters[1].value.category = joyeer::ir::ValueCategory::address; break;
             case 6: factory->resultType = checking.model->types().intType(); break;
+            // The array role needs exactly one type argument (its element), checked before any rule that reads it.
+            case 7:
+            case 8: {
+                auto type = std::find_if(copy.types.begin(), copy.types.end(), [&](const auto& value) {
+                    return value.id == structure->type;
+                });
+                ASSERT_NE(type, copy.types.end());
+                if (mutation == 7) type->arguments.push_back(checking.model->types().intType());
+                else type->arguments.clear();
+                break;
+            }
         }
         EXPECT_FALSE(joyeer::ir::Verifier().verify(copy).succeeded());
     }

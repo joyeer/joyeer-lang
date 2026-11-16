@@ -1239,8 +1239,8 @@ private:
                     break;
                 }
                 case semantic::LibraryRole::arrayType: {
-                    // The library array (decision 0025): three private Int words, one owned type parameter and
-                    // the three method roles the compiler calls.
+                    // The library array (decisions 0025, 0026): three private Int words, one owned type parameter
+                    // and the four method roles the compiler calls.
                     if (node->kind != syntax::Kind::structDecl) {
                         roleFailure = "the array_type role requires a struct";
                         break;
@@ -1315,8 +1315,11 @@ private:
                                                                                        : "container_end";
                     const auto* owner = symbol.containingSymbol.has_value() ? symbolOf(*symbol.containingSymbol)
                                                                             : nullptr;
+                    // Fails closed: a method role missing from `collectionOwnerRole` has no owner role and is rejected.
+                    const auto ownerRole = collectionOwnerRole(symbol.libraryRole);
                     if (symbol.kind != semantic::SymbolKind::method || owner == nullptr ||
-                        owner->libraryRole != collectionOwnerRole(symbol.libraryRole) || !symbol.callable.has_value() ||
+                        ownerRole == semantic::LibraryRole::none || owner->libraryRole != ownerRole ||
+                        !symbol.callable.has_value() ||
                         !symbol.callable->receiver.has_value() || signature == nullptr) {
                         roleFailure = "the " + roleName + " role requires a method of an array_type struct";
                         break;

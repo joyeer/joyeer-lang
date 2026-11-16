@@ -639,3 +639,8 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   to the baseline compiler's (48 of 48). Deliberately left for stage 5, where the dictionary roles give them a second
   case and tests: the per-role shape checks and messages, the `index`-typed addressor shape, the literal-factory and
   packing verifier, the single-array-symbol checks in `ir.cpp`.
+- 2026-11-17: Stage 2a reviews. Type-system and IR/backend reviewers each found no behavior change (the IR reviewer
+  re-ran 46 compiles, byte-identical). Follow-ups applied: the method-role owner check fails closed for a role missing
+  from `collectionOwnerRole`; a stale comment; two verifier mutations (an array-role structure with two or with no
+  type arguments). Deferred to stage 5, where a second collection role exists: owned parameters taken from a per-role
+  table rather than all type parameters, and role names in the shape messages.
