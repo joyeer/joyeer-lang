@@ -6,7 +6,7 @@ struct Resource {
 }
 
 func leave(): Void {
-    var values: [Never] = []
+    var values: [Int] = []
     &values.append(element: return)
 }
 

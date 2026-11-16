@@ -105,8 +105,8 @@ TEST_F(CInteropTest, PreservesSourceLabelsAndImportBodyAbsence) {
     EXPECT_EQ(exported->parameters[0]->name->rawValue, "value");
 }
 
-TEST_F(CInteropTest, EmptyUninhabitedArrayLiteralsWorkInRuntimeUnits) {
-    ASSERT_NO_FATAL_FAILURE(lower("func bottom(): [Never] { return [] }\n"));
+TEST_F(CInteropTest, EmptyZeroSizeArrayLiteralsWorkInRuntimeUnits) {
+    ASSERT_NO_FATAL_FAILURE(lower("func unit(): [Void] { return [] }\n"));
     ASSERT_NE(module, nullptr);
     const auto verification = joyeer::ir::Verifier().verify(*module);
     EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);

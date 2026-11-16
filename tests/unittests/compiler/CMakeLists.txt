@@ -1075,7 +1075,7 @@ if(JOYEER_CLANG_EXECUTABLE)
             0 1 2 3)
     add_joyeer_native_regression(
             E2EArrayLibraryEdges array_library_edges
-            "0\n0\n0\n4\n1\n3\n"
+            "4\n1\n3\n"
             0 1 2 3)
     add_joyeer_native_regression(
             E2EArrayDivergingArgument array_diverging_argument

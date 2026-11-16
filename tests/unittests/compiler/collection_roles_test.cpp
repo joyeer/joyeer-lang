@@ -1826,7 +1826,7 @@ TEST_F(CollectionRoleTest, UnitAndUninhabitedElementSignaturesKeepTheirLayout) {
     EXPECT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
 }
 
-TEST_F(CollectionRoleTest, ACallWithADivergingElementDoesNotNeedAnUninhabitedInstance) {
+TEST_F(CollectionRoleTest, ACallWithADivergingElementDoesNotNeedAnInstance) {
     const auto library = buffer(bufferHead, bufferElement, bufferCopy, bufferEnd, R"(
     public mutating func append(element: consuming T) {
         joyeer_intrinsic_move_in<T>(address: self.address, value: consume element)
@@ -1836,7 +1836,7 @@ TEST_F(CollectionRoleTest, ACallWithADivergingElementDoesNotNeedAnUninhabitedIns
     }
 }
 )");
-    load("func main() { var values: [Never] = []\n &values.append(element: return) }\n", library);
+    load("func main() { var values: [Int] = []\n &values.append(element: return) }\n", library);
     const auto module = lower();
     ASSERT_NE(module, nullptr);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded()) << verifierMessages(*module);

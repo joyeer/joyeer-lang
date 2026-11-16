@@ -148,8 +148,27 @@ TEST(ArrayCharacterization, ConsumingAnElementOfANoncopyableTypeIsAccepted) {
     EXPECT_EQ(text, "") << text;
 }
 
-TEST(ArrayCharacterization, NeverElementsAreAcceptedAndAnyIsNotSyntax) {
-    EXPECT_EQ(diagnose("func f(a: [Never]) {}\nfunc main() {}\n"), "");
+// Decision 0026, revision 5: `Never` has no values, so an array of it can hold none and every operation on one
+// (iteration, indexing) binds a value that cannot exist. It is rejected like `Never` in any other generic.
+TEST(ArrayCharacterization, NeverIsNotAnArrayElement) {
+    for (const auto* source : {
+                 "func f(a: [Never]) {}\nfunc main() {}\n",
+                 "func f(a: Array<Never>) {}\nfunc main() {}\n",
+                 "func main() { let n: [Never] = [] }\n",
+                 "func main() { let n: [Never] = []\n for x in n { } }\n",
+                 "func main() { let n: [Never] = []\n let x = n[0] }\n",
+                 "func f(): [[Never]] { return [] }\nfunc main() {}\n",
+                 "func main() { let a = [return] }\n",
+         }) {
+        const auto text = diagnose(source);
+        EXPECT_TRUE(contains(text, "type-checking.invalid-type-argument")) << source << "\n" << text;
+        EXPECT_TRUE(contains(text, "'Never'")) << source << "\n" << text;
+    }
+    // `Never` inside an optional is a type with a value (`.None`), so it stays an ordinary element.
+    EXPECT_EQ(diagnose("func f(a: [Never?]) {}\nfunc main() {}\n"), "");
+}
+
+TEST(ArrayCharacterization, AnyIsNotSyntax) {
     const auto any = diagnose("func g(a: [Any]) {}\nfunc main() {}\n");
     EXPECT_TRUE(contains(any, "Syntax 'Any' is not supported")) << any;
 }

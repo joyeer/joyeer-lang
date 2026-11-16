@@ -1,17 +1,5 @@
-// Uninhabited arrays can only be empty; unit elements still count and move through the ordinary library API.
-func empty(): [Never] {
-    return []
-}
-
+// Unit elements still count and move through the ordinary library API. (`Never` is not an array element.)
 func main() {
-    var bottom: Array<Never> = empty()
-    print(value: bottom.count)
-    let popped = &bottom.removeLast()
-    print(value: match popped { .Some(_) => 1, .None => 0 })
-    let copy = bottom
-    print(value: copy.count)
-    consume bottom.consumeEmpty()
-
     var units: [Void] = [(), (), ()]
     &units.append(element: ())
     print(value: units.count)
