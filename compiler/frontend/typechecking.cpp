@@ -5183,12 +5183,45 @@ private:
             checkCallArgumentAccess(target, index, *argument);
         };
         if (name == "joyeer_intrinsic_needs_destroy") return model->typeContext.boolType();
+        if (name == "joyeer_intrinsic_key_kind") {
+            // Only the four admitted key types have a key kind; a generic one is checked per instance in lowering.
+            if (type != error && !model->typeContext.mentionsTypeParameter(type) && !admittedKeyKind(type)) {
+                report(TypeCheckingDiagnosticId::invalidTypeArgument, expression->typeArguments[0]->span,
+                       "'" + name + "' needs a dictionary key type, but '" + model->typeContext.displayName(type) +
+                               "' is not one",
+                       "keys are restricted to Int, Bool, UInt8 and String (spec 20.5)");
+            }
+            return model->typeContext.intType();
+        }
         if (name == "joyeer_intrinsic_size_of" || name == "joyeer_intrinsic_align_of" ||
             name == "joyeer_intrinsic_stack_slot" || name == "joyeer_intrinsic_clone_callback" ||
             name == "joyeer_intrinsic_destroy_callback") {
             return model->typeContext.intType();
         }
         if (expression->arguments.empty()) return error;
+        if (name == "joyeer_intrinsic_borrow_address") {
+            // `borrow_address<T>(value: place)`: the read-only address of a named readable place (a local, any
+            // parameter, or a field path of those), valid for the call it is a direct argument of; an rvalue has no
+            // place. Read-only is the library author's duty, as `place_address`'s direct-argument rule is checked
+            // here and not in the verifier (decision 0027).
+            if (expression->arguments.size() != 1) return error;
+            if (!permittedPlaceAddress.contains(expression.get())) {
+                report(TypeCheckingDiagnosticId::invalidCallArguments, expression->span,
+                       "'" + name + "' may only be a direct argument of a call",
+                       "write f(address: " + name + "<T>(value: place)), not a binding or a return value");
+            }
+            const auto& placeArgument = expression->arguments[0];
+            const auto actual = checkExpression(placeArgument->value,
+                    type == error ? std::nullopt : std::optional<TypeId>(type));
+            if (actual.has_value() && type != error) requireAssignable(*actual, type, placeArgument->value->span);
+            if (!storagePath(placeArgument->value).has_value()) {
+                report(TypeCheckingDiagnosticId::invalidCallArguments, placeArgument->value->span,
+                       "'" + name + "' needs a named place: a local, a parameter or a field path of those",
+                       "bind the value to a local first");
+            }
+            checkCallArgumentAccess(target, 0, *placeArgument);
+            return model->typeContext.intType();
+        }
         if (name == "joyeer_intrinsic_place_address") {
             // `place_address<T>(&place)`: the address of an `inout` place, as an `Int`, for passing the place to a
             // runtime function. It must be a direct argument of a call, so that call holds the `inout` access for
@@ -5426,12 +5459,17 @@ private:
             const auto inner = std::static_pointer_cast<syntax::CallExprSyntax>(direct);
             const auto innerTarget = model->callTarget(inner);
             const auto* innerSymbol = innerTarget.has_value() ? model->semanticModelValue->symbol(*innerTarget) : nullptr;
-            if (innerSymbol != nullptr && innerSymbol->name == "joyeer_intrinsic_place_address" &&
-                innerSymbol->kind == semantic::SymbolKind::builtinFunction && inner->arguments.size() == 1) {
+            const bool place = innerSymbol != nullptr && innerSymbol->name == "joyeer_intrinsic_place_address";
+            const bool borrowed = innerSymbol != nullptr && innerSymbol->name == "joyeer_intrinsic_borrow_address";
+            if ((place || borrowed) && innerSymbol->kind == semantic::SymbolKind::builtinFunction &&
+                inner->arguments.size() == 1) {
+                // `borrow_address` holds a read of its place for the call (decision 0027).
                 const auto placePath = storagePath(inner->arguments[0]->value);
                 if (placePath.has_value()) {
                     collectSubscriptIndexAccesses(inner->arguments[0]->value, accesses);
-                    accesses.push_back(CallAccess { *placePath, syntax::AccessEffect::inout, argument.value->span, true });
+                    accesses.push_back(CallAccess { *placePath,
+                            place ? syntax::AccessEffect::inout : syntax::AccessEffect::borrowing,
+                            argument.value->span, true });
                     return;
                 }
             }
@@ -6781,6 +6819,13 @@ private:
             }
         }
         return result;
+    }
+
+    // The four dictionary key types the runtime compares by kind (decision 0027, spec 20.5).
+    bool admittedKeyKind(TypeId type) const {
+        const auto* record = model->typeContext.type(type);
+        return record != nullptr && (record->kind == TypeKind::integer || record->kind == TypeKind::boolean ||
+                                     record->kind == TypeKind::string || record->kind == TypeKind::uint8);
     }
 
     // `Never` has no values, so an array of it could only be empty and every operation on one would bind a value

@@ -923,6 +923,13 @@ private:
                 { CallableParameter { std::string("value"), true, std::nullopt, std::nullopt, std::nullopt,
                                       syntax::AccessEffect::inout } },
                 intType);
+        // The read-only address of a named readable place, valid for the call it is an argument of (decision 0027).
+        layoutIntrinsic("joyeer_intrinsic_borrow_address",
+                { CallableParameter { std::string("value"), true, std::nullopt, std::nullopt, std::nullopt,
+                                      syntax::AccessEffect::borrowing } },
+                intType);
+        // The runtime key kind of an admitted dictionary key type, a constant per instance (decision 0027).
+        layoutIntrinsic("joyeer_intrinsic_key_kind", {}, intType);
         layoutIntrinsic("joyeer_intrinsic_stack_block",
                 { CallableParameter { std::string("count"), true, std::nullopt, std::nullopt, intType } },
                 intType);

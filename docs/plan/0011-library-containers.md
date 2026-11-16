@@ -644,3 +644,15 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   from `collectionOwnerRole`; a stale comment; two verifier mutations (an array-role structure with two or with no
   type arguments). Deferred to stage 5, where a second collection role exists: owned parameters taken from a per-role
   table rather than all type parameters, and role names in the shape messages.
+- 2026-11-17: `scripts/validate.py` on bf5f58c (stage 2a) passes: Windows AMD64 Debug and Release `ctest` 1897/1897
+  (`Fern.Manifest`, `Fern.Workspace` passed only on rerun), `fern test` 7/7; Linux x86_64 1873/1873 and 7/7.
+- 2026-11-17: 0027 stage 2b. Tests first (9e678e1, observed failing: the parser did not know either name):
+  `BorrowAddressIsAuthorizedAndOnlyADirectArgumentOfANamedPlace`, `KeyKindIsAdmittedOnlyForTheFourKeyTypes`, and the
+  stage fixture `tests/c-interop/layout-intrinsics.joyeer` (borrow_address of a `let`, a field, a borrowing parameter
+  and a `String` handle; the four key kinds; the `Entry<K, V>` layout equal to the runtime's entry formula for every
+  admitted key against `Void`, `UInt8`, `Bool`, `Int`, `String`, a padded struct, `Int?`, `[Int]` and an enum).
+  Implemented `joyeer_intrinsic_borrow_address` (direct call argument, named place, a read access for exclusivity,
+  lowered like `place_address`) and `joyeer_intrinsic_key_kind` (concrete non-admitted types rejected by the checker,
+  instances by lowering, never 0). Evidence: collection-role tests 69/69; the stage fixture passes at O0 with
+  `-gfull`, O1, O2 and O3; 484 matching tests pass on Windows x64 Debug; existing fixtures' LLVM IR is byte-identical
+  to the baseline (48/48). Spec §20.12.5 has the two rows.

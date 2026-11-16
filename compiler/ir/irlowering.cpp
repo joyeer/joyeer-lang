@@ -3497,7 +3497,32 @@ private:
             recordValue(result, ValueOwnership::trivial);
             return result;
         }
-        if (name == "joyeer_intrinsic_place_address") {
+        if (name == "joyeer_intrinsic_key_kind") {
+            // The runtime's key kinds (lib/Runtime/core/dictionaries.joyeer); any other type is an error, never 0,
+            // which would select the runtime's byte comparison (decision 0027).
+            int64_t kind = 0;
+            switch (model->types().type(type)->kind) {
+                case typing::TypeKind::integer: kind = 1; break;
+                case typing::TypeKind::boolean: kind = 2; break;
+                case typing::TypeKind::string: kind = 3; break;
+                case typing::TypeKind::uint8: kind = 4; break;
+                default: break;
+            }
+            if (kind == 0) {
+                report(DiagnosticId::unsupportedSyntax, expression->span,
+                       "'" + name + "' needs a dictionary key type, but '" + model->types().displayName(type) +
+                               "' is not one");
+                return std::nullopt;
+            }
+            auto constant = makeInstruction(ir::Opcode::integerConstant, expression->span);
+            constant.result = makeValue(model->types().intType(), ir::ValueCategory::value);
+            constant.integerValue = kind;
+            const auto result = *constant.result;
+            emit(std::move(constant));
+            recordValue(result, ValueOwnership::trivial);
+            return result;
+        }
+        if (name == "joyeer_intrinsic_place_address" || name == "joyeer_intrinsic_borrow_address") {
             if (expression->arguments.size() != 1) {
                 report(DiagnosticId::unsupportedSyntax, expression->span, "'" + name + "' takes a place");
                 return std::nullopt;
