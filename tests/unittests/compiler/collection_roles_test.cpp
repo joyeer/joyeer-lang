@@ -180,6 +180,22 @@ func main() {
     EXPECT_EQ(checking.model->types().displayName(id), "[Int]");
 }
 
+// A literal used directly as the base of a member access, or the sequence of a `for`, still binds to the role
+// type when a user type shadows `Array`: the member must resolve on the role's `count`, not the user's.
+TEST_F(CollectionRoleTest, ALiteralAsAMemberBaseBindsToTheRoleWhenArrayIsShadowed) {
+    load(R"(
+struct Array { var count: Int }
+func main() {
+    print(value: [1, 2].count)
+    var total = 0
+    for value in [3, 4] { total = total + value }
+    print(value: total + Array(count: 5).count)
+}
+)");
+    ASSERT_TRUE(checks()) << diagnostics();
+    EXPECT_NE(lower(), nullptr) << "the literal's member access must lower to a verified module";
+}
+
 TEST_F(CollectionRoleTest, ALiteralMovesIntoOneStackBlockAndCallsTheRoleMethod) {
     load("func main() { let values: [Int] = [1, 2, 3]\n print(value: values[0]) }\n");
     const auto module = lower();

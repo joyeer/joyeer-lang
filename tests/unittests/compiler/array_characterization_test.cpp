@@ -106,6 +106,24 @@ TEST(ArrayCharacterization, OwnershipReasonsNameTheElement) {
     EXPECT_TRUE(contains(linear, "help: end each handle with its consuming 'join' method")) << linear;
 }
 
+// The help for an unconsumed linear value names the handle's own ending method. Only a bare array is told to
+// remove its elements and end the empty container; a struct field or an Optional holding an array is not.
+TEST(ArrayCharacterization, LinearHelpNamesTheHandleNotTheContainerEnd) {
+    const auto nested = diagnose("func main() { let h: [[JoinHandle<Int>]] = [] }\n");
+    EXPECT_TRUE(contains(nested, "semantic-analysis.linear-not-consumed")) << nested;
+    EXPECT_TRUE(contains(nested, "end each handle with its consuming 'join' method")) << nested;
+    const auto wrapped = diagnose("struct W { var hs: [JoinHandle<Int>] }\n"
+                                  "func main() { let w = W(hs: []) }\n");
+    EXPECT_TRUE(contains(wrapped, "semantic-analysis.linear-not-consumed")) << wrapped;
+    EXPECT_TRUE(contains(wrapped, "help: end each handle with its consuming 'join' method (or return it)")) << wrapped;
+    EXPECT_FALSE(contains(wrapped, "consumeEmpty")) << wrapped;
+    const auto optional = diagnose("func main() { let o: Optional<[JoinHandle<Int>]> = .None }\n");
+    EXPECT_TRUE(contains(optional, "semantic-analysis.linear-not-consumed")) << optional;
+    EXPECT_TRUE(contains(optional, "help: end each handle with its consuming 'join' method (or return it)"))
+            << optional;
+    EXPECT_FALSE(contains(optional, "consumeEmpty")) << optional;
+}
+
 TEST(ArrayCharacterization, LinearElementsCannotBeIterated) {
     const auto text = diagnose("func main() { var hs: [JoinHandle<Int>] = []\n for h in hs { } }\n");
     EXPECT_TRUE(contains(text, "type-checking.linear-collection-element")) << text;
