@@ -100,8 +100,12 @@ func readBorrowed(value: Int): Int {
     return load64(address: joyeer_intrinsic_borrow_address<Int>(value: value)) as Int
 }
 
+func countWord(handle: Int): Int {
+    return load64(address: handle + 8) as Int
+}
+
 func countOf(text: String): Int {
-    return load64(address: joyeer_intrinsic_borrow_address<String>(value: text) + 8) as Int
+    return countWord(handle: joyeer_intrinsic_borrow_address<String>(value: text))
 }
 
 func discard<T>(value: consuming T) {
@@ -190,18 +194,18 @@ func exercise(): Int {
     if joyeer_intrinsic_key_kind<UInt8>() != 4 { return 35 }
 
     // The entry layout for every admitted key and a spread of values, including padding and a zero-size value.
-    if !entryMatches(key: 1, value: ()) { return 36 }
-    if !entryMatches(key: 1 as UInt8, value: 2) { return 37 }
-    if !entryMatches(key: true, value: 3 as UInt8) { return 38 }
-    if !entryMatches(key: "k", value: 4) { return 39 }
-    if !entryMatches(key: 5, value: "v") { return 40 }
-    if !entryMatches(key: 6 as UInt8, value: Mixed(flag: 1, wide: 2, small: true)) { return 41 }
+    if !entryMatches(key: consume 1, value: consume ()) { return 36 }
+    if !entryMatches(key: consume 1 as UInt8, value: consume 2) { return 37 }
+    if !entryMatches(key: consume true, value: consume 3 as UInt8) { return 38 }
+    if !entryMatches(key: consume "k", value: consume 4) { return 39 }
+    if !entryMatches(key: consume 5, value: consume "v") { return 40 }
+    if !entryMatches(key: consume 6 as UInt8, value: consume Mixed(flag: 1, wide: 2, small: true)) { return 41 }
     let some: Int? = 8
-    if !entryMatches(key: 7, value: some) { return 42 }
-    if !entryMatches(key: "list", value: [1, 2]) { return 43 }
+    if !entryMatches(key: consume 7, value: consume some) { return 42 }
+    if !entryMatches(key: consume "list", value: consume [1, 2]) { return 43 }
     let line: Shape = .Line(9, 10)
-    if !entryMatches(key: false, value: line) { return 44 }
-    if !entryMatches(key: 1 as UInt8, value: true) { return 45 }
+    if !entryMatches(key: consume false, value: consume line) { return 44 }
+    if !entryMatches(key: consume 1 as UInt8, value: consume true) { return 45 }
 
     // destroy_at runs the deinit exactly once.
     discard(value: consume Token(id: 8))

@@ -1528,6 +1528,62 @@ private func hold(address: Int): Int { return address }
     EXPECT_EQ(verifierMessages(*module).find("ir."), std::string::npos) << verifierMessages(*module);
 }
 
+// The place of `borrow_address` and `place_address` (stage 2b review): its type is exactly `T` (no optional
+// promotion), it is a local, a parameter or a field path of those (no subscript, computed member, constant or enum
+// case), and the address goes to a call that does not store its arguments (no initializer or enum case).
+TEST_F(CollectionRoleTest, BorrowAndPlaceAddressNeedTheExactTypeOfANamedLocalPlace) {
+    const auto withMethods = [&](const std::string& body) {
+        return buffer(bufferHead, bufferElement, bufferCopy, bufferEnd, R"(
+    deinit() {
+        joyeer_intrinsic_destroy_range<T>(address: self.address, count: self.count)
+    }
+)" + body + R"(
+}
+private func sink(address: Int, count: Int) {}
+private struct Holder { var address: Int }
+private let limit: Int = 5
+)");
+    };
+    const auto rejected = [&](const std::string& form) {
+        load("func main() {}\n", withMethods("    public mutating func bad(key: Int, text: String) {\n"
+                                             "        var slot = 1\n        " + form + "\n    }\n"));
+        EXPECT_TRUE(resolution.succeeded()) << diagnostics();
+        return !checking.succeeded();
+    };
+    // Optional promotion would describe an `Int?` layout over an 8-byte `Int`.
+    EXPECT_TRUE(rejected("sink(address: joyeer_intrinsic_borrow_address<Int?>(value: key), count: 1)")) << diagnostics();
+    EXPECT_TRUE(rejected("sink(address: joyeer_intrinsic_place_address<Int?>(value: &slot), count: 1)"))
+            << diagnostics();
+    // A subscript, a computed member, a constant and an enum case are not named places.
+    EXPECT_TRUE(rejected("sink(address: joyeer_intrinsic_borrow_address<T>(value: self[0]), count: 1)"))
+            << diagnostics();
+    EXPECT_TRUE(rejected("sink(address: joyeer_intrinsic_borrow_address<Int>(value: text.count), count: 1)"))
+            << diagnostics();
+    EXPECT_TRUE(rejected("sink(address: joyeer_intrinsic_borrow_address<Int>(value: limit), count: 1)"))
+            << diagnostics();
+    // An initializer or enum case stores its arguments, so the address would outlive the call.
+    EXPECT_TRUE(rejected("let held = Holder(address: joyeer_intrinsic_borrow_address<Int>(value: key))"))
+            << diagnostics();
+    EXPECT_TRUE(rejected("let held = Holder(address: joyeer_intrinsic_place_address<Int>(value: &slot))"))
+            << diagnostics();
+    const auto noKeyKind = [&](const std::string& declaration) {
+        load("func main() {}\n", buffer(bufferHead, bufferElement, bufferCopy, bufferEnd, R"(
+    deinit() {
+        joyeer_intrinsic_destroy_range<T>(address: self.address, count: self.count)
+    }
+}
+)" + declaration));
+        EXPECT_TRUE(resolution.succeeded()) << diagnostics();
+        return std::count_if(checking.diagnostics.begin(), checking.diagnostics.end(), [](const auto& diagnostic) {
+            return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::invalidTypeArgument;
+        });
+    };
+    // `Never` is reported once, and a type that can never be a key is rejected even in a generic body.
+    EXPECT_EQ(noKeyKind("public func bad(): Int { return joyeer_intrinsic_key_kind<Never>() }\n"), 1) << diagnostics();
+    EXPECT_EQ(noKeyKind("public func bad<K>(sample: K): Int { return joyeer_intrinsic_key_kind<[K]>() }\n"), 1)
+            << diagnostics();
+}
+
 // `key_kind<K>()` (decision 0027 Decision 3): the runtime key kind of an admitted key type, a constant per instance;
 // any other type is rejected, in the checker when it is concrete and in lowering when an instance substitutes it.
 TEST_F(CollectionRoleTest, KeyKindIsAdmittedOnlyForTheFourKeyTypes) {
