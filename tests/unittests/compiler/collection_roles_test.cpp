@@ -1459,6 +1459,112 @@ private func hold(address: Int): Int { return address }
     EXPECT_TRUE(checking.succeeded()) << diagnostics();
 }
 
+// `borrow_address<T>(value: place)` (decision 0027 Decision 3): the read-only address of a named readable place,
+// including a borrowing parameter, valid for the call it is a direct argument of.
+TEST_F(CollectionRoleTest, BorrowAddressIsAuthorizedAndOnlyADirectArgumentOfANamedPlace) {
+    load("func main() {\n    let value = 1\n    let address = joyeer_intrinsic_borrow_address<Int>(value: value)\n}\n");
+    ASSERT_TRUE(resolution.succeeded()) << diagnostics();
+    EXPECT_TRUE(hasTypeDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::unauthorizedIntrinsic))
+            << diagnostics();
+    const auto withMethods = [&](const std::string& body) {
+        return buffer(bufferHead, bufferElement, bufferCopy, bufferEnd, R"(
+    deinit() {
+        joyeer_intrinsic_destroy_range<T>(address: self.address, count: self.count)
+    }
+)" + body + R"(
+}
+private func sink(address: Int, count: Int) {}
+private func both(read: Int, write: Int) {}
+private func hold(address: Int): Int { return address }
+)");
+    };
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    // Accepted: a borrowing receiver's field, a borrowing parameter, a `let` and a `var` local.
+    load("func main() {}\n", withMethods(R"(
+    public borrowing func field() {
+        sink(address: joyeer_intrinsic_borrow_address<Int>(value: self.count), count: 1)
+    }
+    public borrowing func parameter(key: Int) {
+        sink(address: joyeer_intrinsic_borrow_address<Int>(value: key), count: 1)
+    }
+    public func locals() {
+        let fixed = 1
+        var moving = 2
+        sink(address: joyeer_intrinsic_borrow_address<Int>(value: fixed), count: 1)
+        sink(address: joyeer_intrinsic_borrow_address<Int>(value: moving), count: 1)
+    }
+)"));
+    ASSERT_TRUE(resolution.succeeded()) << diagnostics();
+    EXPECT_TRUE(checking.succeeded()) << diagnostics();
+    // Rejected: a stored or computed result, and an rvalue, which has no place.
+    const auto rejected = [&](const std::string& form) {
+        load("func main() {}\n", withMethods("    public func bad(key: Int) {\n        " + form + "\n    }\n"));
+        EXPECT_TRUE(resolution.succeeded()) << diagnostics();
+        return hasTypeDiagnostic(Id::invalidCallArguments);
+    };
+    EXPECT_TRUE(rejected("let address = joyeer_intrinsic_borrow_address<Int>(value: key)")) << diagnostics();
+    EXPECT_TRUE(rejected("let again = hold(address: 1) + joyeer_intrinsic_borrow_address<Int>(value: key)"))
+            << diagnostics();
+    EXPECT_TRUE(rejected("sink(address: joyeer_intrinsic_borrow_address<Int>(value: key + 1), count: 1)"))
+            << diagnostics();
+    // A read of a place held inout by a sibling argument overlaps.
+    load("func main() {}\n", withMethods(R"(
+    public mutating func overlap() {
+        both(read: joyeer_intrinsic_borrow_address<Int>(value: self.count),
+             write: joyeer_intrinsic_place_address<Buffer<T>>(value: &self))
+    }
+)"));
+    ASSERT_TRUE(resolution.succeeded()) << diagnostics();
+    EXPECT_TRUE(hasTypeDiagnostic(Id::overlappingAccess)) << diagnostics();
+    // It lowers to the address of the place, and the module verifies.
+    load("func use(items: Buffer<Int>) { items.peek(key: 3) }\n", withMethods(R"(
+    public borrowing func peek(key: Int) {
+        sink(address: joyeer_intrinsic_borrow_address<Int>(value: key), count: 1)
+    }
+)"));
+    const auto module = lower();
+    ASSERT_NE(module, nullptr);
+    EXPECT_NE(joyeer::ir::dump(*module).find("pointer_to_integer"), std::string::npos);
+    EXPECT_EQ(verifierMessages(*module).find("ir."), std::string::npos) << verifierMessages(*module);
+}
+
+// `key_kind<K>()` (decision 0027 Decision 3): the runtime key kind of an admitted key type, a constant per instance;
+// any other type is rejected, in the checker when it is concrete and in lowering when an instance substitutes it.
+TEST_F(CollectionRoleTest, KeyKindIsAdmittedOnlyForTheFourKeyTypes) {
+    const auto withFunction = [&](const std::string& body) {
+        return buffer(bufferHead, bufferElement, bufferCopy, bufferEnd, R"(
+    deinit() {
+        joyeer_intrinsic_destroy_range<T>(address: self.address, count: self.count)
+    }
+}
+)" + body);
+    };
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    load("func main() {}\n", withFunction(R"(
+public func kinds(): Int {
+    return joyeer_intrinsic_key_kind<Int>() * 1000 + joyeer_intrinsic_key_kind<Bool>() * 100 +
+            joyeer_intrinsic_key_kind<String>() * 10 + joyeer_intrinsic_key_kind<UInt8>()
+}
+)"));
+    ASSERT_TRUE(resolution.succeeded()) << diagnostics();
+    EXPECT_TRUE(checking.succeeded()) << diagnostics();
+    load("func main() {}\n", withFunction("public func bad(): Int { return joyeer_intrinsic_key_kind<Double>() }\n"));
+    ASSERT_TRUE(resolution.succeeded()) << diagnostics();
+    EXPECT_TRUE(hasTypeDiagnostic(Id::invalidTypeArgument)) << diagnostics();
+    // A generic body is checked once; the instance for a non-admitted type fails in lowering, never yields 0.
+    load("func main() { print(value: kindOf(sample: 1.5)) }\n",
+         withFunction("public func kindOf<K>(sample: K): Int { return joyeer_intrinsic_key_kind<K>() }\n"));
+    ASSERT_TRUE(checks()) << diagnostics();
+    analysis = joyeer::analysis::Analyzer().analyze(checking.model);
+    const auto info = [](const SourceFile::Ptr& file) {
+        return joyeer::ir::SourceInfo { "fixture.joyeer", ".", file->content.size(), file->lineStarts };
+    };
+    std::vector<joyeer::ir::SourceInfo> sources { info(userSource), info(roleSource) };
+    for (const auto& prelude : checking.model->semanticModel()->preludeSources()) sources.push_back(info(prelude));
+    const auto lowered = joyeer::lowering::Lowerer().lower(checking.model, "fixture.joyeer", info(userSource), sources);
+    EXPECT_FALSE(lowered.succeeded());
+}
+
 TEST_F(CollectionRoleTest, PlaceAddressLowersToTheAddressOfThePlace) {
     const auto library = buffer(bufferHead, bufferElement, bufferCopy, bufferEnd, R"(
     deinit() {
