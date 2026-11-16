@@ -128,12 +128,13 @@ remain separate gates.
 - [x] 0026 stage 3, infrastructure: collections prelude/seam/source IDs, `place_address`, `stack_block`,
   `array_literal` and internal linkage. Evidence: commit 7a1d748's Windows/Linux validation and the integrated
   candidate's macOS validator, including 65 collection-role tests.
-- [ ] 0026 stage 4, the switch: the existing array API in Joyeer (constant-array clone boundaries, exact
+- [x] 0026 stage 4, the switch: the existing array API in Joyeer (constant-array clone boundaries, exact
   allocation/free sizes, `consumeEmpty` and its trap) as the bundled `Array`, with subscript, storage-path and
   exclusivity behavior, diagnostics and the characterization fixtures preserved; the cost gate of 0026 Section 4.
-  Green on macOS Debug/Release (1823/1823), Windows x64 and Linux x86_64 (`validate.py`), and the Windows x64 cost gate
-  passes (log, 2026-11-16). The user accepted the implementation amendments A1-A9 of 0026 (revision 4) on 2026-11-16. The item stays open
-  until `validate.py` passes on the review-fix commits (6dcfbee onward) on Windows and Linux.
+  Green on macOS Debug/Release (1823/1823). Evidence for the review-fix head 71db2ec: Windows x64 `validate.py`
+  Debug and Release `ctest` 1854/1854 and `fern test` 7/7 (flaky `Fern.Manifest`, `Fern.Workspace` passed on rerun),
+  Linux x86_64 `validate.py` `ctest` 1830/1830 and `fern test` 7/7 in each configuration; the Windows x64 cost gate
+  passes (log, 2026-11-16); the user accepted the implementation amendments A1-A9 of 0026 (revision 4) on 2026-11-16.
 - [x] 0026 stage 5, cleanup: no `TypeKind::array` or array-specific executable opcode implementation remains.
   Type slot 10 and opcode slots 35-38 are reserved and rejected by the verifier; the wire is 23.
   Evidence: observed-failing removed-slot test, focused reviews and macOS Debug/Release validator 1823/1823.
@@ -597,3 +598,9 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   used). Result: the Windows numerical gates pass; the macOS drop and nested-size misses did not reproduce.
   The index O0 median is within 0.005 of its 1.15 limit. Linux performance is not measured. Acceptance of the
   amendments to 0026 and the final go-ahead remain the user's.
+- 2026-11-16: `scripts/validate.py` on 71db2ec (the pushed switch plus the review fixes, the doc corrections and
+  revision 4 of 0026) passes. Windows AMD64: Debug and Release build, `ctest` 1854/1854 in each (`Fern.Manifest` and
+  `Fern.Workspace` passed only on rerun), `fern test` 7/7. Linux x86_64: Debug and Release build, `ctest` 1830/1830
+  in each, `fern test` 7/7, no reruns. Open follow-ups accepted with revision 4: debug-info verification after the
+  optimization pipeline and an array fixture at `-O1`/`-O2` with `-gfull`, the spec text of the diverging-call rule,
+  stricter verifier mutation tests, and the `[Never]` compiler crashes.
