@@ -656,3 +656,15 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   instances by lowering, never 0). Evidence: collection-role tests 69/69; the stage fixture passes at O0 with
   `-gfull`, O1, O2 and O3; 484 matching tests pass on Windows x64 Debug; existing fixtures' LLVM IR is byte-identical
   to the baseline (48/48). Spec §20.12.5 has the two rows.
+- 2026-11-17: Stage 2b reviews. IR/backend: lowering, IR and backend sound for every place kind (spilled parameters,
+  locals, field paths, String handles, `self` in each receiver mode) at O0 with `-gfull` through O3; `key_kind`
+  constants substitute per instance, nested generics included. Type-system: revise. Both found, and f1cce50 (tests,
+  observed failing) and f3e0223 (fix) close: the place's type must equal `T` exactly (optional promotion described an
+  `Int?` layout over an `Int`; `place_address` had the same pre-existing gap); `borrow_address` takes only a local, a
+  parameter or a field path (subscripts, computed members, top-level constants and enum cases were accepted or failed
+  late); neither intrinsic may be an argument of an initializer or enum case, which stored the address; `key_kind`
+  reports `Never` once and rejects `[K]` in the checker. Collection-role tests 70/70; 485 matching tests pass. The
+  intermediate commit ae17955 has a stage fixture that does not compile (fixed in f1cce50). Still open, by design or
+  low: an address returned through an identity call (the author's duty, as for `place_address`), writes through the
+  read-only address unchecked, the `key_kind` lowering error names no instantiation site, and the key-kind table exists
+  in the checker, lowering and the backend (the backend copy goes at the cleanup stage).
