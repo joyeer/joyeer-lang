@@ -434,40 +434,22 @@ TEST(IRModelTest, RejectsZeroInitializationOfNonAddressValues) {
     EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch));
 }
 
-TEST(IRModelTest, VerifiesArrayAppendStorageAndElementTypes) {
+TEST(IRModelTest, RemovedArrayWireSlotsAreRejectedAndNeverReused) {
+    EXPECT_EQ(static_cast<unsigned>(Opcode::constructDictionary), 39u);
+    EXPECT_EQ(static_cast<unsigned>(Opcode::branch), 51u);
+    EXPECT_EQ(static_cast<unsigned>(joyeer::typing::TypeKind::dictionary), 11u);
+    for (unsigned slot = 35; slot <= 38; ++slot) {
+        auto module = validAddModule();
+        module.functions[0].blocks[0].instructions[0].opcode = static_cast<Opcode>(slot);
+        const auto verification = Verifier().verify(module);
+        EXPECT_FALSE(verification.succeeded());
+        EXPECT_NE(dump(verification).find("unknown or removed opcode"), std::string::npos);
+    }
     auto module = validAddModule();
-    module.types.push_back(TypeName {
-        3,
-        "[Int]",
-        joyeer::typing::TypeKind::array,
-        joyeer::semantic::invalidSymbolId,
-        { 1 },
-    });
-    auto& function = module.functions[0];
-    function.name = "append";
-    function.parameters.clear();
-    function.resultType = 0;
-    function.returnsValue = false;
-    function.blocks[0].instructions = {
-        Instruction {
-            Opcode::stackAllocate,
-            Value { 0, 3, ValueCategory::address },
-        },
-        Instruction {
-            Opcode::integerConstant,
-            Value { 1, 1, ValueCategory::value },
-            {}, {}, std::nullopt, std::nullopt, 42,
-        },
-        Instruction { Opcode::arrayAppend, std::nullopt, { 0, 1 } },
-        Instruction { Opcode::returnVoid },
-    };
-
-    const auto valid = Verifier().verify(module);
-    EXPECT_TRUE(valid.succeeded()) << dump(valid);
-
-    function.blocks[0].instructions[2].operands = { 1, 0 };
-    const auto invalid = Verifier().verify(module);
-    EXPECT_TRUE(hasError(invalid, VerificationErrorId::typeMismatch));
+    module.types.push_back(TypeName { 3, "removed array kind", static_cast<joyeer::typing::TypeKind>(10) });
+    const auto verification = Verifier().verify(module);
+    EXPECT_FALSE(verification.succeeded());
+    EXPECT_NE(dump(verification).find("unknown or removed type kind"), std::string::npos);
 }
 
 TEST(IRModelTest, VerifiesDictionarySetStorageKeyAndValueTypes) {

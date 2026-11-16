@@ -43,10 +43,9 @@ public struct Array<T> {
 
     @compiler_role(array_copy)
     private borrowing func duplicate(): Array<T> {
-        var copy: Array<T> = Array(address: 0, count: 0, capacity: 0)
-        cloneArray(output: joyeer_intrinsic_place_address<Array<T>>(value: &copy),
-                data: self.address, count: self.count)
-        return copy
+        let slot = joyeer_intrinsic_stack_slot<Array<T>>()
+        cloneArray(output: slot, data: self.address, count: self.count)
+        return joyeer_intrinsic_move_out<Array<T>>(address: slot)
     }
 
     public mutating func append(element: consuming T): Void {
@@ -70,16 +69,17 @@ public struct Array<T> {
 
     @compiler_role(array_literal)
     private consuming func literal(address: Int, count: Int): Array<T> {
-        var array: Array<T> = Array(address: 0, count: 0, capacity: 0)
-        createOwned(output: joyeer_intrinsic_place_address<Array<T>>(value: &array),
+        let slot = joyeer_intrinsic_stack_slot<Array<T>>()
+        createOwned(output: slot,
                 values: address, count: count, elementSize: joyeer_intrinsic_size_of<T>(),
                 cloneElement: joyeer_intrinsic_clone_callback<T>(),
                 destroyElement: joyeer_intrinsic_destroy_callback<T>())
-        return array
+        return joyeer_intrinsic_move_out<Array<T>>(address: slot)
     }
 
     deinit() {
         joyeer_intrinsic_destroy_range<T>(address: self.address, count: self.count)
+        if self.address == 0 { return }
         &self.count = 0
         destroyArray(array: joyeer_intrinsic_place_address<Array<T>>(value: &self))
     }

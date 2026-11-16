@@ -70,9 +70,9 @@ and `compiler/backend/`:
 | [native_module.h](../../compiler/backend/native_module.h) | Backend-only context/module storage and opaque handle definition |
 | [native_ir.h](../../compiler/backend/native_ir.h) | One lowering session's state, caches, and responsibility declarations |
 | [native_types.cpp](../../compiler/backend/native_types.cpp) | Construction sequence, type/layout mapping, runtime declarations, globals, and stack utilities |
-| [native_ownership.cpp](../../compiler/backend/native_ownership.cpp) | Type-specific clone/destroy helpers and active-payload ownership; a destroy helper calls the struct `deinit` first when the live flag is set (unconditionally for an inert-zero library array). Helper bodies are emitted after every source function is declared. A helper has no debug scope, so one that calls a `deinit` or a copier is `NoInline`: inlining it would corrupt the callee's inlined debug scopes. Conversely an element addressor of a library array is `alwaysinline`, so `a[i]` is inlined even at -O0 ([0026](../decisions/0026-library-array.md)) |
+| [native_ownership.cpp](../../compiler/backend/native_ownership.cpp) | Type-specific clone/destroy helpers and active-payload ownership; destruction calls `deinit` when live, unconditionally for an inert-zero role struct. Artificial helper subprograms and unknown-line implicit call locations preserve debug scopes while permitting inlining. Helpers inherit the referenced closed wrapper's `alwaysInline` policy |
 | [native_functions.cpp](../../compiler/backend/native_functions.cpp) | Functions, instructions, checked arithmetic, patterns, and runtime entry adapters |
-| [native_collections.cpp](../../compiler/backend/native_collections.cpp) | Arrays, dictionaries, bounds checks, and runtime ownership callbacks |
+| [native_collections.cpp](../../compiler/backend/native_collections.cpp) | Role-array constant blocks and `String.utf8()`, dictionary operations, and String/Dict bounds checks |
 | [native_host.cpp](../../compiler/backend/native_host.cpp) | External builtins (`print`, byte conversions), native-binding calls, and the memory intrinsics |
 | [native_debug.cpp](../../compiler/backend/native_debug.cpp) | DIBuilder types, scopes, variables, source files, and instruction locations |
 | [backend.cpp](../../compiler/backend/backend.cpp) | Target-specific optimization/object generation and embedded LLD drivers |
@@ -200,9 +200,11 @@ link would override the intended separation of leaf runtime objects and conflict
 that provide their own channel entries. Shared static slots use a coalesced `linkonce_odr` symbol; only
 ELF/COFF attach COMDAT metadata because Mach-O does not support COMDAT.
 
-Generated ownership helpers and authorized runtime wrappers have internal linkage. Owned-element wrappers
-carry the verified `alwaysInline` policy, so the extra library call frame disappears at O0 as well as O2.
-Ownership helpers require `NoInline` for debug-scope correctness only when debug information is enabled.
+Generated ownership helpers and authorized runtime wrappers have internal linkage. Closed literal, copy,
+destruction and owned-element wrappers carry the verified `alwaysInline` policy, so their extra frames disappear
+at O0 as well as O2. Every debug-enabled ownership helper has an artificial line-0 `DISubprogram`;
+otherwise-unlocated implicit helper calls use unknown line 0, never a fictitious user location.
+This replaces the earlier `NoInline` workaround without losing valid inline scopes.
 
 Homebrew macOS links LLD and some support libraries dynamically. Their C++
 types remain private to the backend, but in-process linking does not make

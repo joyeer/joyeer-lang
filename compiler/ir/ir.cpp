@@ -67,8 +67,6 @@ bool producesValue(Opcode opcode) {
         case Opcode::constantValue:
         case Opcode::integerFits:
         case Opcode::constructStruct:
-        case Opcode::constructArray:
-        case Opcode::arrayRemoveLast:
         case Opcode::constructDictionary:
         case Opcode::dictionaryGet:
         case Opcode::fieldAddress:
@@ -193,7 +191,6 @@ DestructionAnalysis::DestructionAnalysis(const Module& module) {
         bool result = false;
         switch (found->second->kind) {
             case typing::TypeKind::string:
-            case typing::TypeKind::array:
             case typing::TypeKind::dictionary:
                 result = true;
                 break;
@@ -395,6 +392,11 @@ VerificationResult Verifier::verify(const Module& module) const {
         }
     }
     for (const auto& type : module.types) {
+        const auto kindSlot = static_cast<uint64_t>(type.kind);
+        if (kindSlot == 10 || kindSlot > static_cast<uint64_t>(typing::TypeKind::typeParameter)) {
+            report(VerificationErrorId::typeMismatch, std::nullopt, std::nullopt, std::nullopt,
+                   "type '" + type.name + "' has an unknown or removed type kind");
+        }
         if (type.kind == typing::TypeKind::typeParameter) {
             report(
                     VerificationErrorId::typeMismatch,
@@ -440,7 +442,7 @@ VerificationResult Verifier::verify(const Module& module) const {
     std::unordered_set<TypeId> noncopyableTypes;
     std::vector<TypeId> pendingNoncopyable;
     for (const auto& type : module.types) {
-        if (type.kind == typing::TypeKind::array || type.kind == typing::TypeKind::dictionary) {
+        if (type.kind == typing::TypeKind::dictionary) {
             for (const auto argument : type.arguments) copyDependents[argument].push_back(type.id);
         }
     }
@@ -1474,11 +1476,19 @@ VerificationResult Verifier::verify(const Module& module) const {
         std::unordered_map<ValueId, TypeId> literalPlaces;
         // User functions may only form raw slots through this closed, straight-line initialize-and-transfer
         // protocol. Ordinary source uses of the layout intrinsics still need runtime authorization.
-        if (!function.runtimeContext) for (const auto& block : function.blocks) {
+        for (const auto& block : function.blocks) {
             for (size_t index = 0; index < block.instructions.size(); ++index) {
                 const auto& storage = block.instructions[index];
                 if (storage.opcode != Opcode::stackBlock || !storage.result.has_value() ||
                     storage.operands.size() != 1) continue;
+                if (function.runtimeContext && std::none_of(literalUses[storage.result->id].begin(),
+                        literalUses[storage.result->id].end(), [&](const auto& use) {
+                            return use.operand == 1 && use.instruction->opcode == Opcode::call &&
+                                    use.instruction->callee.has_value() &&
+                                    literalFactories.contains(*use.instruction->callee);
+                        })) {
+                    continue;
+                }
                 const auto* count = definingInstruction(storage.operands[0]);
                 const auto element = static_cast<TypeId>(storage.integerValue);
                 bool valid = count != nullptr && count->opcode == Opcode::integerConstant &&
@@ -1651,9 +1661,6 @@ VerificationResult Verifier::verify(const Module& module) const {
                             case Opcode::fieldAddress:
                             case Opcode::payloadAddress:
                             case Opcode::subscriptAddress:
-                            case Opcode::arrayAppend:
-                            case Opcode::arrayRemoveLast:
-                            case Opcode::arrayConsumeEmpty:
                             case Opcode::dictionarySet:
                             case Opcode::dictionaryGet:
                                 allowed = position == 0;
@@ -1871,6 +1878,12 @@ VerificationResult Verifier::verify(const Module& module) const {
             for (size_t index = 0; index < block.instructions.size(); ++index) {
                 const auto& instruction = block.instructions[index];
                 const auto location = std::optional<size_t>(index);
+                const auto opcodeSlot = static_cast<uint64_t>(instruction.opcode);
+                if ((opcodeSlot >= 35 && opcodeSlot <= 38) ||
+                    opcodeSlot > static_cast<uint64_t>(Opcode::stackBlock)) {
+                    report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
+                           "instruction has an unknown or removed opcode");
+                }
                 if (foundTerminator) {
                     report(
                             VerificationErrorId::instructionAfterTerminator,
@@ -2557,55 +2570,6 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         break;
                         }
-                        case Opcode::constructArray: {
-                        const auto* resultType = instruction.result.has_value() &&
-                            types.contains(instruction.result->type)
-                            ? types.at(instruction.result->type)
-                            : nullptr;
-                        bool matches = resultType != nullptr &&
-                            resultType->kind == typing::TypeKind::array &&
-                            resultType->arguments.size() == 1 &&
-                            instruction.result->category == ValueCategory::value &&
-                            instruction.targets.empty();
-                        if (resultType != nullptr && resultType->arguments.size() == 1) {
-                            for (const auto* operand : operands) {
-                                matches &= operand != nullptr &&
-                                        operand->category == ValueCategory::value &&
-                                        operand->type == resultType->arguments[0];
-                            }
-                        }
-                        if (!matches) {
-                            report(
-                                VerificationErrorId::typeMismatch,
-                                functionId,
-                                block.id,
-                                location,
-                                "array construction elements do not match its element type");
-                        }
-                        break;
-                        }
-                    case Opcode::arrayAppend:
-                        if (requireShape(2, 0) && operands[0] != nullptr &&
-                            operands[1] != nullptr) {
-                            const auto found = types.find(operands[0]->type);
-                            const auto* arrayType = found == types.end()
-                                    ? nullptr
-                                    : found->second;
-                            if (operands[0]->category != ValueCategory::address ||
-                                operands[1]->category != ValueCategory::value ||
-                                arrayType == nullptr ||
-                                arrayType->kind != typing::TypeKind::array ||
-                                arrayType->arguments.size() != 1 ||
-                                arrayType->arguments[0] != operands[1]->type) {
-                                report(
-                                        VerificationErrorId::typeMismatch,
-                                        functionId,
-                                        block.id,
-                                        location,
-                                        "array append requires an array address and matching element value");
-                            }
-                        }
-                        break;
                         case Opcode::constructDictionary: {
                         const auto* resultType = instruction.result.has_value() &&
                             types.contains(instruction.result->type)
@@ -2659,32 +2623,6 @@ VerificationResult Verifier::verify(const Module& module) const {
                             }
                         }
                         break;
-                    case Opcode::arrayRemoveLast:
-                        if (requireShape(1, 0) && operands[0] != nullptr && instruction.result.has_value()) {
-                            const auto* arrayType = types.contains(operands[0]->type)
-                                    ? types.at(operands[0]->type)
-                                    : nullptr;
-                            const auto* resultType = types.contains(instruction.result->type)
-                                    ? types.at(instruction.result->type)
-                                    : nullptr;
-                            const auto matches =
-                                    operands[0]->category == ValueCategory::address &&
-                                    instruction.result->category == ValueCategory::value &&
-                                    arrayType != nullptr &&
-                                    arrayType->kind == typing::TypeKind::array &&
-                                    arrayType->arguments.size() == 1 &&
-                                    resultType != nullptr &&
-                                    optionalPayload(resultType->id) == std::optional<TypeId>(arrayType->arguments[0]);
-                            if (!matches) {
-                                report(
-                                        VerificationErrorId::typeMismatch,
-                                        functionId,
-                                        block.id,
-                                        location,
-                                        "array remove-last requires an array address and an Optional of its element type");
-                            }
-                        }
-                        break;
                     case Opcode::functionAddress: {
                         if (!requireShape(0, 0)) break;
                         if (!knownCallee) {
@@ -2697,6 +2635,10 @@ VerificationResult Verifier::verify(const Module& module) const {
                                         types.contains(instruction.result->type)
                                 ? types.at(instruction.result->type)
                                 : nullptr;
+                        if (callee.arrayLiteral) {
+                            report(VerificationErrorId::callMismatch, functionId, block.id, location,
+                                   "array literal factories cannot be formed as function values");
+                        }
                         // Only a Joyeer function has the Joyeer convention; a C import, a data symbol
                         // and a builtin accepting any type have no address of a function type.
                         if (callee.nativeBinding.has_value() && !function.runtimeContext) {
@@ -2776,24 +2718,6 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         break;
                     }
-                    case Opcode::arrayConsumeEmpty:
-                        if (requireShape(1, 0) && operands[0] != nullptr) {
-                            const auto* arrayType = types.contains(operands[0]->type)
-                                    ? types.at(operands[0]->type)
-                                    : nullptr;
-                            if (operands[0]->category != ValueCategory::address ||
-                                arrayType == nullptr ||
-                                arrayType->kind != typing::TypeKind::array ||
-                                arrayType->arguments.size() != 1) {
-                                report(
-                                        VerificationErrorId::typeMismatch,
-                                        functionId,
-                                        block.id,
-                                        location,
-                                        "array consume-empty requires an array address");
-                            }
-                        }
-                        break;
                     case Opcode::dictionaryGet:
                         if (requireShape(2, 0) && operands[0] != nullptr &&
                             operands[1] != nullptr && instruction.result.has_value()) {
@@ -2978,7 +2902,6 @@ VerificationResult Verifier::verify(const Module& module) const {
                                         operands[0]->category == ValueCategory::value &&
                                         instruction.result->category == ValueCategory::value &&
                                         (baseType->kind == typing::TypeKind::string ||
-                                         baseType->kind == typing::TypeKind::array ||
                                          baseType->kind == typing::TypeKind::dictionary) &&
                                         resultType->kind == typing::TypeKind::integer;
                                 if (!matches) {
@@ -2987,7 +2910,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                                         functionId,
                                         block.id,
                                         location,
-                                        "count requires String/Array/Dict and produces Int");
+                                        "count requires String/Dict and produces Int");
                                 }
                         }
                         break;
@@ -3019,16 +2942,6 @@ VerificationResult Verifier::verify(const Module& module) const {
                                                 });
                                         if (intType != module.types.end()) expectedIndex = intType->id;
                                         if (byteType != module.types.end()) expectedResult = byteType->id;
-                                    } else if (baseType->kind == typing::TypeKind::array &&
-                                               baseType->arguments.size() == 1) {
-                                        const auto intType = std::find_if(
-                                                module.types.begin(),
-                                                module.types.end(),
-                                                [](const auto& type) {
-                                                    return type.kind == typing::TypeKind::integer;
-                                                });
-                                        if (intType != module.types.end()) expectedIndex = intType->id;
-                                        expectedResult = baseType->arguments[0];
                                     } else if (baseType->kind == typing::TypeKind::dictionary &&
                                                baseType->arguments.size() == 2) {
                                         expectedIndex = baseType->arguments[0];
@@ -3226,10 +3139,6 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::functionAddress: return "function_address";
         case Opcode::callIndirect: return "call_indirect";
         case Opcode::constructStruct: return "construct_struct";
-        case Opcode::constructArray: return "construct_array";
-        case Opcode::arrayAppend: return "array_append";
-        case Opcode::arrayRemoveLast: return "array_remove_last";
-        case Opcode::arrayConsumeEmpty: return "array_consume_empty";
         case Opcode::constructDictionary: return "construct_dictionary";
         case Opcode::dictionarySet: return "dictionary_set";
         case Opcode::dictionaryGet: return "dictionary_get";
@@ -3529,10 +3438,7 @@ std::string dump(const Module& module) {
                             out << ' ' << valueName(instruction.operands[0]);
                         }
                         break;
-                    case Opcode::arrayRemoveLast:
-                    case Opcode::arrayConsumeEmpty:
                     case Opcode::store:
-                    case Opcode::arrayAppend:
                     case Opcode::dictionarySet:
                     case Opcode::dictionaryGet:
                     case Opcode::add:
@@ -3575,7 +3481,6 @@ std::string dump(const Module& module) {
                         out << ')';
                         break;
                     case Opcode::constructStruct:
-                    case Opcode::constructArray:
                     case Opcode::constructDictionary:
                     case Opcode::constructEnum:
                         out << '(';

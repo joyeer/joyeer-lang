@@ -1,0 +1,36 @@
+struct Resource {
+    var id: Int
+    deinit() {
+        print(value: self.id)
+    }
+}
+
+func leave(): Void {
+    var values: [Never] = []
+    &values.append(element: return)
+}
+
+func accept<T: Copyable>(owned: consuming Resource, value: T, sample: T): Void {
+    print(value: owned.id)
+}
+
+func stop(): Void {
+    accept(owned: consume Resource(id: 7), value: return, sample: 1)
+}
+
+func existing(): Void {
+    accept(owned: consume Resource(id: 10), value: 1, sample: 2)
+    accept(owned: consume Resource(id: 11), value: return, sample: 3)
+}
+
+func caller<U: Copyable>(sample: U): Void {
+    accept(owned: consume Resource(id: 12), value: return, sample: sample)
+}
+
+func main() {
+    leave()
+    stop()
+    existing()
+    caller(sample: "sample")
+    print(value: 42)
+}

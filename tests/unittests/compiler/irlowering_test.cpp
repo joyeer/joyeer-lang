@@ -204,7 +204,7 @@ TEST_F(IRLoweringTest, VerifierRejectsUsedGenericPlaceholdersAndTypesContainingT
         auto type = placeholder->id;
         if (nested) {
             const auto id = static_cast<joyeer::ir::TypeId>(result.module->types.size());
-            result.module->types.push_back({id, "[T]", joyeer::typing::TypeKind::array,
+            result.module->types.push_back({id, "Box<T>", joyeer::typing::TypeKind::structure,
                                            joyeer::semantic::invalidSymbolId, {type}});
             type = id;
         }

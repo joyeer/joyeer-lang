@@ -596,7 +596,7 @@ TEST_F(LLVMBackendTest, RejectsLineTablesWithoutSourceInfo) {
             joyeer::llvmbackend::DiagnosticId::invalidModule);
 }
 
-TEST_F(LLVMBackendTest, OmitsDebugScopesFromHelpersAndEntryTrampoline) {
+TEST_F(LLVMBackendTest, KeepsHelperAndImplicitCleanupLocationsArtificial) {
     emit(
             R"JOYEER(func main() {
 let text = "value"
@@ -617,16 +617,18 @@ print(value: text)
     const auto helper = result.text.find("define internal void @joyeer_destroy_type_");
     const auto helperHeaderEnd = result.text.find('\n', helper);
     ASSERT_NE(helperHeaderEnd, std::string::npos);
-    EXPECT_EQ(
+    EXPECT_NE(
             result.text.substr(helper, helperHeaderEnd - helper).find("!dbg"),
             std::string::npos);
+    EXPECT_NE(result.text.find("DIFlagArtificial"), std::string::npos);
     const auto cleanup = result.text.find("  call void @joyeer_destroy_type_");
     const auto cleanupEnd = result.text.find('\n', cleanup);
     ASSERT_NE(cleanup, std::string::npos);
     ASSERT_NE(cleanupEnd, std::string::npos);
-    EXPECT_EQ(
+    EXPECT_NE(
             result.text.substr(cleanup, cleanupEnd - cleanup).find("!dbg"),
             std::string::npos);
+    EXPECT_NE(result.text.find("!DILocation(line: 0"), std::string::npos);
         const auto sourceFunction = result.text.find("define void @joyeer_fn_");
         const auto sourceFunctionEnd = result.text.find("\n}\n", sourceFunction);
         ASSERT_NE(sourceFunction, std::string::npos);
@@ -1014,7 +1016,7 @@ return values[index] + 1
             }
         }
         EXPECT_EQ(labels, 2u);
-        EXPECT_EQ(checkedInstructions, 11u);
+        EXPECT_EQ(checkedInstructions, 12u);
     }
 }
 

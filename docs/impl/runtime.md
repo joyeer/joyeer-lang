@@ -165,7 +165,7 @@ program was allocation-free.
 
 Arrays provide construction, checked indexing, mutable element projection,
 ownership-transferring append/growth, recursive clone, and reverse-order
-element destruction. The source library in `lib/Runtime/collections.joyeer` implements
+element destruction in `lib/Runtime/collections.joyeer`.
 `&values.append(element: value)` requires an addressable mutable `Array<T>`.
 `values.removeLast()` calls `joyeer_array_remove_last_abi`, which moves the last element's bytes into the
 result payload and shortens the array without destroying the element.
@@ -176,8 +176,10 @@ the runtime grows geometrically and retains element clone/destroy callbacks.
 Borrowed heap-backed elements are cloned before transfer; owned temporaries
 move directly into the array.
 
-The library `deinit` destroys the live range last to first, clears the count, then invokes
-`joyeer_array_destroy_abi` to free exactly the original block. The C imports use the runtime's scalar
+The library `deinit` destroys the live range last to first, preserving the linear range guard before any
+zero-address return. A live handle then clears its count and invokes `joyeer_array_destroy_abi` to free
+exactly the original block. Literal and clone output use typed raw stack slots, moved out without creating
+extra owning zero-output locals. The C imports use the runtime's scalar
 address ABI (`Int`), avoiding a second LLVM pointer-typed declaration of those same functions.
 The compiler retains role-keyed constant-block encoding, native byte/string-array marshalling,
 `String.utf8()`, syntax/display binding, and the collection capability checks; it does not dispatch array

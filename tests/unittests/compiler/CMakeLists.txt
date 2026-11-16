@@ -1078,6 +1078,10 @@ if(JOYEER_CLANG_EXECUTABLE)
             "0\n0\n0\n4\n1\n3\n"
             0 1 2 3)
     add_joyeer_native_regression(
+            E2EArrayDivergingArgument array_diverging_argument
+            "7\n10\n10\n11\n12\n42\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
             E2ETaskBasic task_basic
             "99\n49\nhi!\njob\n4\n5\n8\n8\n10\n"
             0 1 2 3)
@@ -1587,6 +1591,15 @@ add_test(NAME GenericTypesInstantiationReport
                 -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyInstantiationReport.cmake)
 set_tests_properties(GenericTypesInstantiationReport PROPERTIES
         LABELS "diagnostics;generics;ir-lowering" TIMEOUT 60)
+
+add_test(NAME LibraryArrayInstantiationReport
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/library_array_report.joyeer
+                -DEXPECTED_FILE=${JOYEER_TESTS_DIR}/type-checking/library_array_report.txt
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyInstantiationReport.cmake)
+set_tests_properties(LibraryArrayInstantiationReport PROPERTIES
+        LABELS "diagnostics;generics;ir-lowering;library-containers" TIMEOUT 60)
 
 add_test(NAME DiagnosticsCliRejectsUnsatisfiedGenericConstraint
         COMMAND ${CMAKE_COMMAND}

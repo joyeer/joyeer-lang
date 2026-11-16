@@ -73,8 +73,9 @@ remain separate gates.
   validate on Windows x64 and Linux x64 (WSL Ubuntu). Evidence: Windows `scripts/validate.py` Debug and
   Release `ctest` 1717/1717 and `fern test` 7/7 (three load-sensitive tests passed on the validator's
   rerun); Linux Debug and Release `ctest` 1693/1693 and `fern test` 7/7; both on commit c0e39c3.
-- [ ] macOS validation: run `python3 scripts/validate.py --llvm-root <sdk>` on macOS (Debug and Release,
-  unfiltered CTest and fern test). Owner: the user. Not run from the Windows/WSL environment.
+- [x] macOS validation: the integrated candidate passes `scripts/validate.py` on macOS/AArch64 with the
+  existing LLVM 22.1.8 and macOS 26.5 SDKs: Debug and Release unfiltered CTest 1823/1823 and fern test 7/7.
+  This includes Phase 1's compatibility tests; it is not an isolated rerun of the earlier Phase 1 commit.
 - [x] Phase 1 follow-ups found while implementing 0024 and by its reviews: the role-prelude test seam
   and the malformed-shape, duplicate-role, missing-role and prelude-`extension` tests; per-rule shape
   messages; constraint and linear-marker rejection; the lowering and wire tests; the driver's source-table
@@ -105,7 +106,8 @@ remain separate gates.
   collection wrappers; reject unauthorized and malformed uses. Evidence: the log entry of 2026-11-15
   (implementation); `CompilerCollectionRoleTests` 33 of 33; Windows x64 Debug `ctest` passes.
 - [ ] Review the type/ownership and IR/ABI changes separately from their author. First round done (log);
-  findings fixed; a re-review of the fixes and the Release/Linux/macOS validation are open.
+  final type-system, IR/backend and adversarial follow-ups are recorded below. The integrated candidate passes
+  macOS Debug/Release validation; final Windows/Linux validation and the gated measurements remain open.
 
 ### Phase 3: Array
 
@@ -121,13 +123,16 @@ remain separate gates.
 - [ ] 0026 stage 2, measurement: the cost of a library array's element access and drop against the builtin, the fixes
   it requires (`alwaysinline` on the addressor, the `slot_address` intrinsic), and the gate numbers. Evidence so far:
   the log entries of 2026-11-15; open until the measurement change is reviewed and merged.
-- [ ] 0026 stage 3, infrastructure: the collections prelude, the test seam, `place_address`, `stack_block`, the
-  `array_literal` role, internal linkage of prelude instances; tested with a `Buffer<T>` declaration.
+- [x] 0026 stage 3, infrastructure: collections prelude/seam/source IDs, `place_address`, `stack_block`,
+  `array_literal` and internal linkage. Evidence: commit 7a1d748's Windows/Linux validation and the integrated
+  candidate's macOS validator, including 65 collection-role tests.
 - [ ] 0026 stage 4, the switch: the existing array API in Joyeer (constant-array clone boundaries, exact
   allocation/free sizes, `consumeEmpty` and its trap) as the bundled `Array`, with subscript, storage-path and
   exclusivity behavior, diagnostics and the characterization fixtures preserved; the cost gate of 0026 Section 4.
-  Implementation is green on macOS Release (1809/1809); the item stays open for the final cost/platform gates.
-- [ ] 0026 stage 5, cleanup: remove array-specific opcodes, the type kind, and backend layout/ownership cases.
+  Implementation is green on macOS Debug/Release (1823/1823); the item stays open for the final cost/platform gates.
+- [x] 0026 stage 5, cleanup: no `TypeKind::array` or array-specific executable opcode implementation remains.
+  Type slot 10 and opcode slots 35-38 are reserved and rejected by the verifier; the wire is 23.
+  Evidence: observed-failing removed-slot test, focused reviews and macOS Debug/Release validator 1823/1823.
 - [ ] Benchmark again in both profiles, complete adversarial/role reviews, and run full
   platform validation.
 
@@ -518,3 +523,50 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   executables change by 0 to -288 bytes. These are preliminary macOS results, not a passed acceptance gate:
   0026 gates Windows x64, which is unavailable in this session, and requests Linux reporting. Final measurements,
   the one allowed doubled rerun of failing configurations, reviewers, cleanup and Debug/Release validation remain open.
+- 2026-11-16: Stage 5 and review fixes. The dedicated array type kind/opcodes, their builtin method dispatch,
+  and backend array layout/access/ownership branches are removed. Generic role capabilities, constant
+  headers, native marshalling and `String.utf8()` remain. The removed numeric slots are held.
+  The independent IR/backend review found two malformed-IR/wire gaps: a factory function value could reach
+  `call_indirect` without packing verification, and role 257 narrowed to valid uint8 role 1.
+  Both new tests were observed failing first. Factory function values are now rejected, and enum/unsigned
+  wire values are range-checked before narrowing. Independent re-review confirmed both fixes.
+- 2026-11-16: The actual product drop benchmark exposed redundant zero-state owners that the earlier Buffer
+  prototype did not include (O0 about 1.45, O2 with debug about 1.31). Literal/copy output now uses a typed raw
+  slot, moved out once; the range guard still precedes a zero-address return in deinit. Closed literal/copy/deinit
+  wrappers and their referenced helpers inline by role/declaration policy. Artificial helper `DISubprogram`s
+  and unknown-line implicit call locations replace the `NoInline` workaround. The scope test failed first;
+  native gfull execution and DWARF verification pass. Independent IR follow-up found no correctness issue.
+- 2026-11-16: An additional baseline comparison found `[Never].append(element: return)` compiled with the
+  builtin but failed by demanding an uninhabited generic instance after the switch. Calls with a statically
+  diverging argument remain fully type/constraint checked but do not demand a callee instance; lowering still
+  evaluates earlier operands with their normal ownership before stopping. Tests failed first and now pin
+  destruction, skipped later arguments, existing instances and generic-caller substitutions.
+  A separate runtime-unit empty-Never-literal failure was also reproduced and fixed: factory-associated
+  packing blocks get the same closed verification in all contexts, without relaxing ordinary raw-block rules.
+  The type-system follow-up and IR-context follow-up found no remaining issue in these changes.
+- 2026-11-16: Final review/validation evidence. The type-system follow-up checked role binding, declared-T
+  owned argument contexts, constraints, divergence and substitutions. The adversarial follow-up ran 18 native
+  executions and three validation attempts (return/propagation, nested moves/copies, Void/Never, task arrays,
+  nonempty ending traps and gfull equivalence) with no new findings. The full validator passes on the final
+  macOS/AArch64 candidate: Debug and Release builds, unfiltered CTest 1823/1823, and fern test 7/7, no reruns.
+  The first fern run exposed an unrelated order-sensitive System test, reproduced with the preserved builtin
+  compiler; the assertion now accepts either exact two-name order, matching spec 18.2's unspecified enumeration
+  order. No filesystem implementation behavior changed.
+- 2026-11-16: Final macOS measurements on the reviewed candidate, idle host, 25 interleaved pairs per
+  configuration and one 50-pair rerun of failing comparisons; all raw samples are retained in session artifacts.
+  In append/index/removal/nested-destruction/linear-drain order, O0 paired ratios are
+  1.000/1.073/1.070/1.067/0.998; O2 are 0.747/0.850/0.964/0.994/1.010.
+  All five O2 runtime comparisons are within or better than sampled noise. Nested destruction still adds
+  16432 executable bytes (a 16 KiB Mach-O segment boundary); its 50-pair runtime rerun is
+  0.994 [0.985, 1.001]. All other O2 executable changes are 0 to -288 bytes.
+  Flat index pairs in none/lines/full debug modes are O0 1.066/1.066/1.064 and O2 0.807/0.805/0.808.
+  Flat drop is O0 1.066/1.061/1.065; the O2 doubled reruns are
+  1.019 [1.016, 1.023], 1.019 [1.016, 1.021], 1.021 [1.018, 1.025], still a small regression outside sampled noise.
+  Hello O2 is 69488 vs 69536 bytes; its emit-LLVM frontend median ratio is 1.032 [1.021, 1.041].
+  Type-ID-normalized unoptimized LLVM IR differs as expected because source wrappers/role structs replace
+  builtin operations; all benchmark outputs and exit statuses match.
+- 2026-11-16: Acceptance remains open, not silently waived. Section 4 gates Windows x64, which this macOS
+  session cannot execute; final Windows/Linux validation and Windows gated performance measurements are unrun.
+  The macOS drop/noise and nested executable-size comparisons above are recorded failures against those
+  numerical limits, not claimed passes or a gate amendment. No push or PR is authorized until the required
+  post-commit personal testing/understanding/full-diff review confirmation; LLM use must be disclosed.

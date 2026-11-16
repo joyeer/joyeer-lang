@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <regex>
 #include <set>
+#include <sstream>
 #include <string>
 
 namespace {
@@ -190,7 +191,8 @@ TEST_F(CollectionRoleTest, ALiteralMovesIntoOneStackBlockAndCallsTheRoleMethod) 
         for (const auto& block : function.blocks) {
             for (const auto& instruction : block.instructions) {
                 blocks += instruction.opcode == joyeer::ir::Opcode::stackBlock;
-                constructions += instruction.opcode == joyeer::ir::Opcode::constructArray;
+                const auto wireSlot = static_cast<unsigned>(instruction.opcode);
+                constructions += wireSlot >= 35 && wireSlot <= 38;
                 if (instruction.opcode == joyeer::ir::Opcode::call && instruction.callee.has_value()) {
                     literals += module->functions[*instruction.callee].name.find(".literal") != std::string::npos;
                 }
@@ -1684,6 +1686,66 @@ TEST_F(CollectionRoleTest, AFactoryCallWithoutLiteralStorageIsRejected) {
     EXPECT_FALSE(joyeer::ir::Verifier().verify(copy).succeeded());
 }
 
+TEST_F(CollectionRoleTest, AFactoryFunctionValueWithoutLiteralStorageIsRejected) {
+    load("func make(): [Int] { return [1, 2] }\n");
+    const auto module = lower();
+    ASSERT_NE(module, nullptr);
+    auto copy = *module;
+    auto& function = named(copy, "make");
+    auto& instructions = function.blocks[0].instructions;
+    auto call = *std::find_if(instructions.begin(), instructions.end(), [](const auto& instruction) {
+        return instruction.opcode == joyeer::ir::Opcode::call;
+    });
+    const auto factory = *call.callee;
+    const auto functionType = static_cast<joyeer::ir::TypeId>(copy.types.size());
+    const auto integer = checking.model->types().intType();
+    copy.types.push_back({ functionType, "literal factory function", joyeer::typing::TypeKind::function,
+                           joyeer::semantic::invalidSymbolId,
+                           { call.result->type, integer, integer, call.result->type },
+                           { joyeer::syntax::AccessEffect::consuming, joyeer::syntax::AccessEffect::borrowing,
+                             joyeer::syntax::AccessEffect::borrowing } });
+    const auto receiver = call.operands[0];
+    const auto count = call.operands[2];
+    instructions.erase(std::find_if(instructions.begin(), instructions.end(), [](const auto& instruction) {
+        return instruction.opcode == joyeer::ir::Opcode::stackBlock;
+    }), instructions.end());
+    joyeer::ir::Instruction address { joyeer::ir::Opcode::functionAddress };
+    address.callee = factory;
+    address.result = joyeer::ir::Value { 9000, functionType, joyeer::ir::ValueCategory::value };
+    instructions.push_back(address);
+    call.opcode = joyeer::ir::Opcode::callIndirect;
+    call.callee.reset();
+    call.operands = { 9000, receiver, count, count };
+    instructions.push_back(call);
+    instructions.push_back({ joyeer::ir::Opcode::returnValue, std::nullopt, { call.result->id } });
+    const auto verification = joyeer::ir::Verifier().verify(copy);
+    EXPECT_FALSE(verification.succeeded());
+    EXPECT_NE(joyeer::ir::dump(verification).find("literal factories cannot be formed as function values"),
+              std::string::npos);
+}
+
+TEST_F(CollectionRoleTest, WireRejectsFullWidthValuesBeforeNarrowingRoles) {
+    for (const uint64_t role : { uint64_t { 256 }, uint64_t { 257 }, UINT64_MAX }) {
+        joyeer::ir::StructureDefinition structure;
+        joyeer::llvmbackend::wire::Writer writer;
+        writer(structure.symbol, structure.type, structure.name, structure.fields, structure.deinitializer,
+               role, structure.copier);
+        joyeer::ir::StructureDefinition decoded;
+        joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+        reader(decoded);
+        EXPECT_FALSE(reader.succeeded()) << role;
+    }
+    joyeer::ir::StructureDefinition structure;
+    structure.role = joyeer::ir::StructureRole::array;
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(structure);
+    joyeer::ir::StructureDefinition decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    EXPECT_TRUE(reader.succeeded());
+    EXPECT_EQ(decoded.role, structure.role);
+}
+
 TEST_F(CollectionRoleTest, TheVerifierRejectsForgedArrayRolesAndLiteralFactories) {
     load("func make(): [Int] { return [1] }\n");
     const auto module = lower();
@@ -1746,6 +1808,94 @@ TEST_F(CollectionRoleTest, UnitAndUninhabitedElementSignaturesKeepTheirLayout) {
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded()) << verifierMessages(*module);
     const auto emitted = joyeer::llvmbackend::Emitter().emit(*module);
     EXPECT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+}
+
+TEST_F(CollectionRoleTest, ACallWithADivergingElementDoesNotNeedAnUninhabitedInstance) {
+    const auto library = buffer(bufferHead, bufferElement, bufferCopy, bufferEnd, R"(
+    public mutating func append(element: consuming T) {
+        joyeer_intrinsic_move_in<T>(address: self.address, value: consume element)
+    }
+    deinit() {
+        joyeer_intrinsic_destroy_range<T>(address: self.address, count: self.count)
+    }
+}
+)");
+    load("func main() { var values: [Never] = []\n &values.append(element: return) }\n", library);
+    const auto module = lower();
+    ASSERT_NE(module, nullptr);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded()) << verifierMessages(*module);
+    EXPECT_TRUE(std::none_of(module->functions.begin(), module->functions.end(), [](const auto& function) {
+        return function.name.ends_with(".append");
+    }));
+}
+
+TEST_F(CollectionRoleTest, DivergingGenericCallsStillCheckTheirTypeArguments) {
+    load(R"(
+struct Resource { var id: Int
+    deinit() {}
+}
+func accept<U: Copyable>(value: U, sample: U) {}
+func stop() { accept(value: return, sample: Resource(id: 1)) }
+)");
+    EXPECT_NE(diagnostics().find("unsatisfied-constraint"), std::string::npos) << diagnostics();
+    load(R"(
+func accept<U>(value: U, sample: U) {}
+func stop(handle: consuming JoinHandle<Int>) { accept(value: return, sample: handle) }
+)");
+    EXPECT_NE(diagnostics().find("linear-type-argument"), std::string::npos) << diagnostics();
+}
+
+TEST_F(CollectionRoleTest, DivergingCallsKeepExistingInstancesAndCallerSubstitutions) {
+    load(R"(
+struct Resource { var id: Int
+    deinit() {}
+}
+func accept<U: Copyable>(owned: consuming Resource, value: U, sample: U) {}
+func caller<V: Copyable>(sample: V) {
+    accept(owned: consume Resource(id: 12), value: return, sample: sample)
+}
+func main() {
+    accept(owned: consume Resource(id: 10), value: 1, sample: 2)
+    caller(sample: "sample")
+    accept(owned: consume Resource(id: 11), value: return, sample: 3)
+}
+)");
+    const auto module = lower();
+    ASSERT_NE(module, nullptr);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded()) << verifierMessages(*module);
+    EXPECT_EQ(std::count_if(module->functions.begin(), module->functions.end(), [](const auto& function) {
+        return function.name.ends_with("accept<Int>");
+    }), 1);
+    EXPECT_EQ(std::count_if(module->functions.begin(), module->functions.end(), [](const auto& function) {
+        return function.name.ends_with("caller<String>");
+    }), 1);
+    EXPECT_TRUE(std::none_of(module->functions.begin(), module->functions.end(), [](const auto& function) {
+        return function.name.ends_with("accept<String>");
+    }));
+}
+
+TEST_F(CollectionRoleTest, OwnershipHelpersHaveArtificialDebugScopesForInlining) {
+    load("func count(items: Buffer<Int>): Int { return items.count }\n");
+    const auto module = lower();
+    ASSERT_NE(module, nullptr);
+    joyeer::llvmbackend::EmitOptions options;
+    options.emitLineTables = true;
+    options.emitVariables = true;
+    options.optimizationLevel = joyeer::OptimizationLevel::O2;
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(*module, options);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    std::istringstream lines(emitted.text);
+    std::string line;
+    size_t helpers = 0;
+    while (std::getline(lines, line)) {
+        if (!line.starts_with("define internal void @joyeer_clone_type_") &&
+            !line.starts_with("define internal void @joyeer_destroy_type_")) continue;
+        ++helpers;
+        EXPECT_NE(line.find("!dbg"), std::string::npos) << line;
+    }
+    EXPECT_GT(helpers, 0u);
+    EXPECT_NE(emitted.text.find("DIFlagArtificial"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("noinline"), std::string::npos);
 }
 
 TEST_F(CollectionRoleTest, ExpandingRecursionThroughARoleArrayIsRejected) {

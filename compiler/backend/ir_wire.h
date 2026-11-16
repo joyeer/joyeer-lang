@@ -3,6 +3,7 @@
 
 #include "compiler/ir/ir.h"
 
+#include <limits>
 #include <string_view>
 #include <type_traits>
 
@@ -146,6 +147,18 @@ private:
                 bits |= static_cast<uint64_t>(static_cast<unsigned char>(bytes[index])) << (index * 8);
             }
             bytes.remove_prefix(8);
+            if constexpr (std::is_enum_v<Value>) {
+                using Underlying = std::underlying_type_t<Value>;
+                if (bits > static_cast<uint64_t>(std::numeric_limits<Underlying>::max())) {
+                    valid = false;
+                    return;
+                }
+            } else if constexpr (std::is_unsigned_v<Value>) {
+                if (bits > static_cast<uint64_t>(std::numeric_limits<Value>::max())) {
+                    valid = false;
+                    return;
+                }
+            }
             value = static_cast<Value>(bits);
         } else {
             // Patterns are recursive; reject malformed input before exhausting

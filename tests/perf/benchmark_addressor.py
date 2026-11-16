@@ -5,6 +5,7 @@ array-addressor-probe (the `array_element` addressor of 0025, over the minimal l
 array_buffer_prelude.joyeer), at -O0 and -O2, then times the two interleaved and compares them with the paired
 bootstrap of benchmark_concurrency.py. The report treats the builtin array as the baseline and the library
 array as the candidate, so a ratio above 1 is a cost of the library array.
+Pass --candidate-compiler instead of --probe to compile the flat workload with the real library compiler.
 
     python tests/perf/benchmark_addressor.py --compiler <joyeer> --probe <array-addressor-probe> \
         --output-dir <new-directory> --report <report.json> [--debug none|lines|full] [--repetitions 15]

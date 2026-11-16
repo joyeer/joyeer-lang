@@ -554,7 +554,6 @@ private:
     // A memberwise initializer, an enum case and `append` store their arguments, so a linear value
     // passed to one is moved in, not borrowed.
     static bool storesItsArguments(const semantic::Symbol& target) {
-        if (target.kind == semantic::SymbolKind::builtinMember) return target.name == "append";
         return target.callable.has_value() &&
                 (target.callable->kind == semantic::CallableKind::structureInitializer ||
                  target.callable->kind == semantic::CallableKind::enumCase);

@@ -324,8 +324,6 @@ std::string TypeContext::displayName(TypeId id, bool disambiguateNominals) const
     switch (value->kind) {
         case TypeKind::error:
             return "<error>";
-        case TypeKind::array:
-            return "[" + displayName(value->arguments[0], disambiguateNominals) + "]";
         case TypeKind::dictionary:
             return "[" + displayName(value->arguments[0], disambiguateNominals) + ": " +
                     displayName(value->arguments[1], disambiguateNominals) + "]";
@@ -617,7 +615,6 @@ bool TypeCheckedModel::isLinear(
     visiting.push_back(id);
     bool linear = false;
     switch (type->kind) {
-        case TypeKind::array:
         case TypeKind::dictionary:
             for (const auto argument : type->arguments) {
                 if (isLinear(argument, visiting, clean)) { linear = true; break; }
@@ -722,7 +719,6 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
     const auto name = "'" + typeContext.displayName(id) + "'";
 
     switch (type->kind) {
-        case TypeKind::array:
         case TypeKind::dictionary:
             for (const auto argument : type->arguments) {
                 if (noncopyableReason(argument, visiting, clean).has_value()) {
@@ -1496,16 +1492,6 @@ private:
                 };
                 continue;
             }
-            if (symbol.name == "removeLast" && symbol.callable.has_value()) {
-                model->symbolTypes[symbol.id] = model->typeContext.anyType();
-                model->callables[symbol.id] = TypedCallableSignature {
-                    semantic::CallableKind::function,
-                    true,
-                    {},
-                    model->typeContext.anyType(),
-                };
-                continue;
-            }
             if ((symbol.name == "send" || symbol.name == "receive") && symbol.callable.has_value()) {
                 model->symbolTypes[symbol.id] = model->typeContext.anyType();
                 model->callables[symbol.id] = TypedCallableSignature {
@@ -1537,16 +1523,6 @@ private:
                 };
                 continue;
             }
-            if (symbol.name == "consumeEmpty" && symbol.callable.has_value()) {
-                model->symbolTypes[symbol.id] = model->typeContext.voidType();
-                model->callables[symbol.id] = TypedCallableSignature {
-                    semantic::CallableKind::function,
-                    true,
-                    {},
-                    model->typeContext.voidType(),
-                };
-                continue;
-            }
             if (symbol.name == "utf8" && symbol.callable.has_value()) {
                 model->symbolTypes[symbol.id] = model->typeContext.anyType();
                 model->callables[symbol.id] = TypedCallableSignature {
@@ -1560,14 +1536,6 @@ private:
             if (!symbol.declaredType.has_value()) continue;
             const auto type = model->typeContext.typeForSymbol(*symbol.declaredType);
             if (type.has_value()) model->symbolTypes[symbol.id] = *type;
-            if (symbol.name == "append" && symbol.callable.has_value()) {
-                model->callables[symbol.id] = TypedCallableSignature {
-                    semantic::CallableKind::function,
-                    true,
-                    { model->typeContext.anyType() },
-                    model->typeContext.voidType(),
-                };
-            }
         }
     }
 
@@ -2654,7 +2622,19 @@ private:
 
     void instantiate() {
         std::vector<std::pair<semantic::NodeId, const GenericCall*>> calls;
-        for (const auto& [node, call] : model->genericCalls) calls.emplace_back(node, &call);
+        for (const auto& [node, call] : model->genericCalls) {
+            const auto source = model->semanticModelValue->node(node);
+            // The arguments are checked, but a diverging argument prevents the call from reaching its instance.
+            if (source != nullptr && source->kind == syntax::Kind::callExpr &&
+                std::any_of(std::static_pointer_cast<syntax::CallExprSyntax>(source)->arguments.begin(),
+                            std::static_pointer_cast<syntax::CallExprSyntax>(source)->arguments.end(),
+                            [&](const auto& argument) {
+                                return model->typeOf(argument->value) == model->typeContext.neverType();
+                            })) {
+                continue;
+            }
+            calls.emplace_back(node, &call);
+        }
         std::sort(calls.begin(), calls.end(), [](const auto& left, const auto& right) {
             return left.second->span.sourceId != right.second->span.sourceId
                     ? left.second->span.sourceId < right.second->span.sourceId
@@ -4424,7 +4404,6 @@ private:
         if (model->isArrayRoleType(type)) return containsFunctionType(record->arguments[0]);
         switch (record->kind) {
             case TypeKind::function: return true;
-            case TypeKind::array:
             case TypeKind::dictionary:
                 return std::any_of(record->arguments.begin(), record->arguments.end(),
                         [this](TypeId argument) { return containsFunctionType(argument); });
@@ -4951,16 +4930,7 @@ private:
             const auto* baseType = base.has_value()
                     ? model->typeContext.type(*base)
                     : nullptr;
-            if (semanticTarget->name == "append" &&
-                baseType != nullptr && baseType->kind == TypeKind::array &&
-                baseType->arguments.size() == 1) {
-                receiverArgumentType = baseType->arguments[0];
-            } else if (semanticTarget->name == "removeLast" &&
-                       baseType != nullptr && baseType->kind == TypeKind::array &&
-                       baseType->arguments.size() == 1) {
-                const auto elementType = baseType->arguments[0];
-                receiverResultType = model->typeContext.optionalType(elementType);
-            } else if (semanticTarget->name == "utf8" &&
+            if (semanticTarget->name == "utf8" &&
                        baseType != nullptr && baseType->kind == TypeKind::string) {
                 receiverResultType = model->typeContext.arrayType(model->typeContext.uint8Type());
                 model->symbolTypes[semanticTarget->id] = *receiverResultType;
@@ -5981,7 +5951,6 @@ private:
     }
 
     static bool storesItsArguments(const semantic::Symbol& target) {
-        if (target.kind == semantic::SymbolKind::builtinMember) return target.name == "append";
         return target.callable.has_value() &&
                 (target.callable->kind == semantic::CallableKind::structureInitializer ||
                  target.callable->kind == semantic::CallableKind::enumCase);
@@ -6236,10 +6205,6 @@ private:
             case TypeKind::string:
                 indexType = model->typeContext.intType();
                 result = model->typeContext.uint8Type();
-                break;
-            case TypeKind::array:
-                indexType = model->typeContext.intType();
-                result = baseType->arguments[0];
                 break;
             case TypeKind::dictionary:
                 indexType = baseType->arguments[0];
@@ -6869,7 +6834,6 @@ const char* typeKindName(TypeKind kind) {
         case TypeKind::uint8: return "uint8";
         case TypeKind::structure: return "structure";
         case TypeKind::enumeration: return "enumeration";
-        case TypeKind::array: return "array";
         case TypeKind::dictionary: return "dictionary";
         case TypeKind::function: return "function";
         case TypeKind::typeParameter: return "type-parameter";

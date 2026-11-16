@@ -9,7 +9,7 @@ llvm::Value* Builder::helper(ir::TypeId id, bool clone) {
 
 void Builder::copy(ir::TypeId id, llvm::Value* destination, llvm::Value* sourceAddress) {
     if (destruction->requiresDestruction(id)) {
-        builder.CreateCall(clones.at(id), {destination, sourceAddress});
+        implicitCallLocation(builder.CreateCall(clones.at(id), {destination, sourceAddress}));
     } else if (!unit(id)) {
         builder.CreateStore(builder.CreateLoad(llvmType(id), sourceAddress, temporary()), destination);
     }
@@ -72,32 +72,35 @@ void Builder::emitOwnership() {
 // helper calls the `deinit` of a struct that declares one.
 void Builder::emitOwnershipBodies() {
     for (const auto& [id, function] : clones) {
-        // Like a destroy helper that calls a `deinit`: this helper has no debug scope, and the copier has one.
         if (const auto found = structures.find(id);
-            options.emitLineTables && found != structures.end() && found->second->copier.has_value()) {
-            function->addFnAttr(llvm::Attribute::NoInline);
+            found != structures.end() && found->second->copier.has_value() &&
+            sourceFunctions.at(*found->second->copier)->alwaysInline) {
+            function->addFnAttr(llvm::Attribute::AlwaysInline);
         }
         activeFunction = function;
         prologue = llvm::BasicBlock::Create(context(), "entry", function);
         builder.SetInsertPoint(prologue);
+        ownershipDebug(id);
         emitClone(id);
         builder.CreateRetVoid();
     }
     for (const auto& [id, function] : destroys) {
-        // A helper that calls a `deinit` carries no debug scope of its own, so inlining the
-        // `deinit` into it (and it into a caller) corrupts the inlined debug scopes.
         if (const auto found = structures.find(id);
-            options.emitLineTables && found != structures.end() && found->second->deinitializer.has_value()) {
-            function->addFnAttr(llvm::Attribute::NoInline);
+            found != structures.end() && found->second->deinitializer.has_value() &&
+            sourceFunctions.at(*found->second->deinitializer)->alwaysInline) {
+            function->addFnAttr(llvm::Attribute::AlwaysInline);
         }
         activeFunction = function;
         prologue = llvm::BasicBlock::Create(context(), "entry", function);
         builder.SetInsertPoint(prologue);
+        ownershipDebug(id);
         emitDestroy(id);
         builder.CreateRetVoid();
     }
     activeFunction = nullptr;
     prologue = nullptr;
+    subprogram = nullptr;
+    builder.SetCurrentDebugLocation(nullptr);
 }
 
 void Builder::emitClone(ir::TypeId id) {
@@ -106,11 +109,9 @@ void Builder::emitClone(ir::TypeId id) {
     destination->setName("destination");
     sourceAddress->setName("source");
     const auto kind = type(id).kind;
-    if (kind == typing::TypeKind::string || kind == typing::TypeKind::array ||
-            kind == typing::TypeKind::dictionary) {
+    if (kind == typing::TypeKind::string || kind == typing::TypeKind::dictionary) {
         const auto name = kind == typing::TypeKind::string ? "joyeer_string_clone_abi"
-
-                : kind == typing::TypeKind::array ? "joyeer_array_clone_abi" : "joyeer_dictionary_clone_abi";
+                : "joyeer_dictionary_clone_abi";
         auto* value = builder.CreateLoad(llvmType(id), sourceAddress, "value");
         call(name, builder.getVoidTy(), {destination,
                 builder.CreateExtractValue(value, 0, "data"), builder.CreateExtractValue(value, 1, "count")});
@@ -160,11 +161,9 @@ void Builder::emitDestroy(ir::TypeId id) {
     auto* address = activeFunction->getArg(0);
     address->setName("value");
     const auto kind = type(id).kind;
-    if (kind == typing::TypeKind::string || kind == typing::TypeKind::array ||
-            kind == typing::TypeKind::dictionary) {
+    if (kind == typing::TypeKind::string || kind == typing::TypeKind::dictionary) {
         const auto name = kind == typing::TypeKind::string ? "joyeer_string_destroy_abi"
-
-                : kind == typing::TypeKind::array ? "joyeer_array_destroy_abi" : "joyeer_dictionary_destroy_abi";
+                : "joyeer_dictionary_destroy_abi";
         call(name, builder.getVoidTy(), {address});
         return;
     }

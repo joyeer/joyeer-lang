@@ -98,12 +98,14 @@ existing API: `count` (read-only outside), `append(element:)`, `removeLast()`, `
   is the 0025 guard for a linear element (it traps `linear container dropped while not empty` and never destroys)
   and, for any other element, destroys the live elements last to first; clearing `count` first stops the runtime from
   destroying them again, so each element is destroyed once, `capacity` is untouched and the release size is right.
-  The runtime's destroy of the zero handle returns, so a second destroy is a no-op.
+  After the range guard/destruction, a zero-address handle returns without a redundant runtime call;
+  a second destroy remains a no-op.
 - `array_element` checks `index < 0` and `index >= count` with one comparison per `if` (`array index out of bounds`)
   and returns `slot_address<T>(base: data, index: index)`. A live array always has a header, so `data == 0` implies
   `count == 0` and the second check covers it.
 - `array_copy` calls `joyeer_array_clone_abi`; it exists only for a copyable `T`, so the header's clone callback is
-  always valid when it runs.
+  always valid when it runs. Its output, like the literal's, is a typed raw stack slot moved out as the return
+  value, without an extra owning zero-output local.
 - `container_end` (`consumeEmpty`) calls `joyeer_array_consume_empty_abi`, which traps `array not empty` before
   touching an element and leaves the handle zeroed; the compiler then destroys `self`, a no-op on `{0, 0, 0}`.
 - `append` and `removeLast` spill the element to `stack_slot<T>()` and call the runtime; `removeLast` returns
@@ -205,9 +207,10 @@ always-inliner. Its address is `joyeer_intrinsic_slot_address<T>(base: Int, inde
 index * size` with no overflow check, a plain GEP in the backend, because the library checks the index first. The
 addressor is written with one comparison per `if`: a `||` costs a stack slot and two branches at `-O0`. Both the
 attribute and the intrinsic are implemented in the measurement change (wire version 21) and have tests.
-The switch also marks closed owned-element argument wrappers `alwaysInline` in verified IR, independent of method
-names. This removes the additional `append` wrapper frame even at O0. Helpers keep `NoInline` when debug information
-is present, but not at `-g0`, where there are no debug scopes to corrupt. These changes optimize the existing
+The switch also marks closed owned-element, literal, copy and destruction wrappers `alwaysInline` in verified IR,
+independent of public method names. Generated ownership helpers inherit that policy. Debug-enabled helpers now
+carry artificial line-0 `DISubprogram`s, and implicit calls receive unknown-line locations, replacing the earlier
+`NoInline` workaround. Helper and source scopes are reset between functions. These changes optimize the existing
 mechanism; they do not amend any gate.
 
 **Method.** `tests/perf/benchmark_addressor.py` builds `array_index_flat` and `array_drop_flat` with the compiler
@@ -246,9 +249,9 @@ passed the LLVM verifier and printed the right checksum. Executables grow by 1 K
 `index` and 1 KiB at both for `drop`.
 
 **Reading.** At `-O2` the library array costs nothing measurable. At `-O0` it costs about 10%: the inlined addressor
-keeps its parameter allocas and loads, and a drop adds the `NoInline` destroy helper and the library `deinit`. The
-`NoInline` guards inlined debug scopes in helpers that have no `DISubprogram` and is not array-specific;
-the switch restricts it to builds with debug information. Giving the helpers a scope remains a possible later change.
+keeps its parameter allocas and loads, and a drop adds the prototype's destroy helper and library `deinit`.
+The prototype's `NoInline` guarded helpers lacking a `DISubprogram` and was not array-specific;
+the final switch gives helpers artificial subprograms, allowing the closed wrappers to inline with debug information.
 
 **Gates.** Revision 2 of this record proposed, before any measurement, a median ratio of at most 1.10 at `-O0` and
 1.03 at `-O2` for `array_index`, and a lower interval bound of at most 1 for each of the five `array_*` programs; 0025
@@ -288,8 +291,10 @@ role-marked addressor, a general mechanism. An array-specific inline check in th
   pinned, uniformly.
 - **Diagnostics and reports that do change** (listed, pinned, and regenerated with the project's tool): the
   members `address` and `capacity` of an array turn from unknown member into `inaccessible-declaration`;
-  `--report-instantiations` goldens gain `Array` instance lines (`tests/type-checking/generics_report.txt` and
-  `generic_types_report.txt`); the IR dump text changes; `extension Array<T>: P`, which is rejected today, is pinned
+  `--report-instantiations` prints role-array instance lines when a concrete array is needed
+  (`tests/type-checking/library_array_report.txt`). The two existing generic report goldens are regenerated;
+  neither needs an array instance and both remain unchanged. The IR dump text changes;
+  `extension Array<T>: P`, which is rejected today, is pinned
   before the switch and its outcome after it is stated (the role closes extensions in the prelude, and a user
   extension is rejected as for `Optional`).
 - **Recursive types.** `struct Tree { var kids: [Tree] }` and a non-indirect `enum Json { Array([Json]) }` work
@@ -297,9 +302,10 @@ role-marked addressor, a general mechanism. An array-specific inline check in th
   0025 sense, so every recursive-layout and recursive-ownership check must treat the role as indirect. The
   characterization suite includes these, mutual recursion `A { [B] }` / `B { [A] }`, and a user enum case named
   `Array`.
-- **Plan 0012 (Equatable).** Its todo gives the builtin array a conformance through an element compare and is built
-  on the type kind. Conditional conformance is deferred (§20.10). Which lands first, and how `[Int] == [Int]` behaves
-  before and after, is pinned first; the decision of 0012 is amended if it changes.
+- **Plan 0012 (Equatable).** The array switch lands first. Arrays now follow the ordinary struct rule and reject
+  `[Int] == [Int]` during type checking; the builtin had accepted it and failed LLVM verification. A characterization
+  test pins the new stage, and 0012 now names the role-bound library declaration rather than a removed type kind.
+  Conditional conformance and an actual equality implementation remain that plan's work.
 - **Runtime.** The `joyeer_array_*_abi` symbols and their C declarations stay: they are the public ABI and the
   library calls them. The runtime functions use no state beyond the allocator, the constant blocks are read-only,
   and a spawned array stays bitwise relocatable, so thread safety is unchanged.
@@ -355,13 +361,13 @@ so it is not one change. In order, each revertable:
 
 ## Open questions
 
-1. Whether giving the ownership helpers a `DISubprogram` (so `NoInline` can go) is worth doing; only if a `-O0` gate
-   needs it (Section 4).
-2. Whether instance discovery is narrowed to demanded instances, if the size gate of the five `array_*` programs
+1. Whether instance discovery is narrowed further to demanded instances, if the size gate of the five `array_*` programs
    fails.
-3. Whether `array_literal` is an initializer or a consuming method (a compiler detail, not a contract).
-4. Whether a later change reimplements the algorithms generically (Option A2) for inlining at `-O2`; out of scope
+2. Whether a later change reimplements the algorithms generically (Option A2) for inlining at `-O2`; out of scope
    here, and only if the benchmarks justify it.
+
+The implementation chose a private consuming literal method and artificial ownership-helper subprograms.
+These formerly open implementation choices are resolved without changing the source contract or the gates.
 
 ## Review
 

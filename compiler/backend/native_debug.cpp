@@ -153,6 +153,28 @@ void Builder::functionDebug(const ir::Function& function) {
     if (function.debugScope.has_value()) debugScopes.emplace(*function.debugScope, subprogram);
 }
 
+void Builder::ownershipDebug(ir::TypeId id) {
+    subprogram = nullptr;
+    builder.SetCurrentDebugLocation(nullptr);
+    if (!debug) return;
+    const auto span = type(id).declarationSpan.value_or(SourceSpan {});
+    std::vector<llvm::Metadata*> signature;
+    auto* signatureType = debug->createSubroutineType(debug->getOrCreateTypeArray(signature));
+    auto flags = llvm::DISubprogram::SPFlagDefinition | llvm::DISubprogram::SPFlagLocalToUnit;
+    if (options.optimizationLevel != OptimizationLevel::O0) flags |= llvm::DISubprogram::SPFlagOptimized;
+    subprogram = debug->createFunction(debugFiles.at(span.sourceId), activeFunction->getName(),
+            activeFunction->getName(), debugFiles.at(span.sourceId), 0, signatureType, 0,
+            llvm::DINode::FlagArtificial, flags);
+    activeFunction->setSubprogram(subprogram);
+    builder.SetCurrentDebugLocation(llvm::DILocation::get(context(), 0, 0, subprogram));
+}
+
+void Builder::implicitCallLocation(llvm::CallInst* call) {
+    if (debug && subprogram != nullptr && !call->getDebugLoc()) {
+        call->setDebugLoc(llvm::DILocation::get(context(), 0, 0, subprogram));
+    }
+}
+
 bool Builder::bindDebug(const ir::DebugVariableBinding& binding) {
     if (!fullDebug()) return true;
     const auto found = sourceDebugVariables.find(binding.variable);

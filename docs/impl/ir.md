@@ -199,10 +199,9 @@ The current instruction set covers:
 - struct construction, field address, and field extraction;
 - enum construction, payload extraction (`extract_payload`), and payload addresses
   (`payload_address`, which a moving `match` binding takes from);
-- mutating `array_append` with an addressable receiver and transferred element;
-- mutating `array_remove_last` with an addressable array receiver, giving `Optional<T>`;
-- `array_consume_empty` with an addressable array receiver and no result: traps unless the array is
-  empty, then frees its storage and zeroes the handle (`consume a.consumeEmpty()`);
+- ordinary source calls for library array methods ([0026](../decisions/0026-library-array.md)):
+  append owns its element, removal returns an owned optional, and ending consumes the receiver.
+  There is no array type kind or array-specific executable opcode;
 - ordinary source calls for task/channel APIs ([0023](../decisions/0023-library-concurrency.md)).
   Their concrete structs, `deinit` methods, result construction, raw typed moves and callback
   references use the same operations as other library code. There are no concurrency opcodes;
@@ -210,7 +209,7 @@ The current instruction set covers:
   transferred key/value;
 - `dictionary_get` with borrowed dictionary/key values and an owned
   `Optional<V>` result, verified against the concrete `K` and `V`;
-- `String`/collection count and value/address subscript operations, plus owned
+- `String`/`Dict` count and value/address subscript operations, plus owned
   `String.utf8()` byte-array extraction;
 - high-level recursive pattern switching.
 
@@ -220,8 +219,16 @@ The verifier admits user-function `stack_block` / `slot_address` / `integer_addr
 one matching factory call, equal element type and constant count, an inert-zero receiver, every bounded slot
 stored exactly once before transfer, and no other uses or intervening calls. A factory call without verified
 storage is rejected. This does not grant source-level runtime authorization.
-The wire also preserves the generic `alwaysInline` policy on closed owned-element wrappers; only
+The wire also preserves the generic `alwaysInline` policy on closed library wrappers; only
 authorized functions with bodies may carry it.
+Literal factories cannot be formed as function values, so indirect calls cannot evade the storage protocol.
+Proven literal blocks use the same protocol in runtime and ordinary functions; other runtime raw blocks
+retain their existing capability rules. Wire decoding checks full-width enum and unsigned values before narrowing.
+The removed array kind's slot 10 and executable opcode slots 35-38 stay reserved and are rejected.
+
+A call whose checked argument has type `Never` cannot commit and does not demand a generic callee instance.
+Source argument and constraint checks still run. Lowering uses its substituted typed parameter/effect
+descriptions to evaluate earlier operands and retain their cleanup, then stops at divergence without a phantom call.
 
 The `unit` instruction produces a value of the builtin `Void` type with no
 operands or resource ownership. Unit patterns lower to typed wildcard
@@ -300,8 +307,8 @@ dictionary projections lower through their existing address operations, then
 `take` zeroes the projected storage. Parent aggregate destruction remains safe,
 and a later assignment reinitializes the projection.
 
-`array_append` consumes its element operand. Lowering moves an owned temporary
-or clones a borrowed nontrivial value before the instruction, so runtime
+The library append call consumes its element operand. Lowering moves an owned temporary
+or clones a borrowed nontrivial value before the call, so runtime
 reallocation never aliases the caller's retained value and array destruction
 owns every appended element exactly once.
 
@@ -357,7 +364,7 @@ plus case symbol, including distinct builtin container instantiations.
   type relationships; opcode-specific Boolean constraints remain incomplete;
 - invalid `copy`, `take`, `destroy`, or `zero_init` operand categories/types;
 - a structure `deinit` that is not a function taking only the structure's address and returning
-  nothing, or a struct with one that does not end with the hidden live flag (an `inert_zero` struct must not
+  nothing, or a struct with one that does not end with the hidden live flag (an array-role struct must not
   have one, and must have a `deinit`); a `copier` that is not a function borrowing the struct and returning it;
   an element address that is converted, returned, stored as a value, or used outside its dominance; a
   collection opcode outside a runtime function, or `clone_at` on a noncopyable type;

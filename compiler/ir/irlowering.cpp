@@ -1117,6 +1117,18 @@ private:
         }
         function.resultType = substituted(signature->result);
         function.arrayLiteral = semanticModel.symbol(*symbol)->libraryRole == semantic::LibraryRole::arrayLiteral;
+        function.alwaysInline = function.arrayLiteral ||
+                semanticSymbol->libraryRole == semantic::LibraryRole::arrayCopy;
+        const auto* owner = semanticSymbol->containingSymbol.has_value()
+                ? semanticModel.symbol(*semanticSymbol->containingSymbol) : nullptr;
+        if (owner != nullptr && owner->libraryRole == semantic::LibraryRole::arrayType &&
+            owner->declaration.has_value()) {
+            const auto node = semanticModel.node(*owner->declaration);
+            if (node != nullptr && node->kind == syntax::Kind::structDecl &&
+                std::static_pointer_cast<syntax::StructDeclSyntax>(node)->deinitializer == declaration) {
+                function.alwaysInline = true;
+            }
+        }
         for (size_t parameter = 0; parameter < signature->parameters.size(); ++parameter) {
             function.alwaysInline |= model->isOwnedArgumentContext(*symbol, parameter);
         }
@@ -3156,24 +3168,9 @@ private:
                     *type, *target, expression->arguments, expression->span);
         }
         if (targetSymbol != nullptr &&
-            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
-            targetSymbol->name == "append") {
-            return lowerArrayAppend(expression);
-        }
-        if (targetSymbol != nullptr &&
-            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
-            targetSymbol->name == "removeLast") {
-            return lowerArrayRemoveLast(expression);
-        }
-        if (targetSymbol != nullptr &&
             targetSymbol->kind == semantic::SymbolKind::builtinFunction &&
             intrinsic::isLayoutIntrinsic(targetSymbol->name)) {
             return lowerLayoutIntrinsic(expression, targetSymbol->name);
-        }
-        if (targetSymbol != nullptr &&
-            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
-            targetSymbol->name == "consumeEmpty") {
-            return lowerArrayConsumeEmpty(expression);
         }
         if (targetSymbol != nullptr &&
             targetSymbol->kind == semantic::SymbolKind::builtinMember &&
@@ -3186,12 +3183,39 @@ private:
             return lowerStringUtf8(expression);
         }
         const auto calleeId = calledFunction(expression, *target, targetSymbol);
+        std::vector<ir::Parameter> divergingParameters;
         if (!calleeId.has_value()) {
-            report(
-                    DiagnosticId::missingSymbol,
-                    expression->span,
-                    "call target has no IR function declaration");
-            return std::nullopt;
+            // Evaluate the checked operands with normal ownership even when no call can be emitted.
+            const auto* generic = model->genericCall(expression);
+            const auto* declared = model->callable(*target);
+            const auto* parameters = generic == nullptr ? nullptr : model->genericParameters(generic->callee);
+            const bool diverges = std::any_of(expression->arguments.begin(), expression->arguments.end(),
+                    [&](const auto& argument) { return typeOf(argument->value) == model->types().neverType(); });
+            if (!diverges || targetSymbol == nullptr || !targetSymbol->callable.has_value() ||
+                declared == nullptr || parameters == nullptr || parameters->size() != generic->arguments.size() ||
+                declared->parameters.size() != targetSymbol->callable->parameters.size()) {
+                report(DiagnosticId::missingSymbol, expression->span, "call target has no IR function declaration");
+                return std::nullopt;
+            }
+            std::unordered_map<semantic::SymbolId, typing::TypeId> substitution;
+            for (size_t index = 0; index < parameters->size(); ++index) {
+                substitution.emplace((*parameters)[index], substituted(generic->arguments[index]));
+            }
+            const auto add = [&](typing::TypeId type, syntax::AccessEffect effect) {
+                ir::Parameter parameter;
+                parameter.value.type = model->types().substitute(type, substitution);
+                parameter.value.category = effect == syntax::AccessEffect::inout ||
+                        effect == syntax::AccessEffect::initializing
+                        ? ir::ValueCategory::address : ir::ValueCategory::value;
+                parameter.isConsuming = effect == syntax::AccessEffect::consuming;
+                divergingParameters.push_back(parameter);
+            };
+            if (declared->receiverType.has_value() && targetSymbol->callable->receiver.has_value()) {
+                add(*declared->receiverType, targetSymbol->callable->receiver->access);
+            }
+            for (size_t index = 0; index < declared->parameters.size(); ++index) {
+                add(declared->parameters[index], targetSymbol->callable->parameters[index].access);
+            }
         }
 
         // A method's receiver is the callee's first IR parameter, ahead of the
@@ -3219,11 +3243,11 @@ private:
 
         std::vector<ir::ValueId> arguments;
         std::vector<ir::Value> consumedArguments;
-        const auto& callee = module->functions[*calleeId];
+        const auto& parameters = calleeId.has_value() ? module->functions[*calleeId].parameters : divergingParameters;
         const size_t receivers = targetSymbol != nullptr && targetSymbol->kind == semantic::SymbolKind::method ? 1 : 0;
         for (size_t index = 0; index < operands.size(); ++index) {
             const auto& operand = operands[index];
-            const auto* parameter = index < callee.parameters.size() ? &callee.parameters[index] : nullptr;
+            const auto* parameter = index < parameters.size() ? &parameters[index] : nullptr;
             const auto value = lowerCallOperand(
                     operand.value,
                     operand.span,
@@ -3237,6 +3261,10 @@ private:
                             movesArgument(*expression->arguments[index - receivers]));
             if (!value.has_value()) return std::nullopt;
             arguments.push_back(value->id);
+        }
+        if (!calleeId.has_value()) {
+            report(DiagnosticId::unsupportedSyntax, expression->span, "a diverging call argument unexpectedly returned");
+            return std::nullopt;
         }
         auto instruction = makeInstruction(ir::Opcode::call, expression->span);
         instruction.callee = *calleeId;
@@ -3314,7 +3342,7 @@ private:
         } else {
             value = lowerExpression(operand);
         }
-        if (!value.has_value()) return std::nullopt;
+        if (!value.has_value() || currentBlockTerminated()) return std::nullopt;
         if (!expectsAddress && parameterType.has_value()) {
             value = coerce(*value, *parameterType, operand->span);
             if (!value.has_value()) return std::nullopt;
@@ -3389,33 +3417,6 @@ private:
                     : ValueOwnership::trivial);
         }
         if (type == model->types().voidType()) return emitUnit(expression->span);
-        return result;
-    }
-
-    std::optional<ir::Value> lowerArrayRemoveLast(
-            const syntax::CallExprSyntax::Ptr& expression) {
-        if (expression->callee->kind != syntax::Kind::memberExpr ||
-            !expression->arguments.empty()) {
-            report(
-                    DiagnosticId::unsupportedSyntax,
-                    expression->span,
-                    "Array.removeLast takes no arguments");
-            return std::nullopt;
-        }
-        const auto member =
-                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
-        const auto array = lowerAddress(member->base);
-        const auto resultType = typeOf(expression);
-        if (!array.has_value() || !resultType.has_value()) return std::nullopt;
-        auto instruction = makeInstruction(ir::Opcode::arrayRemoveLast, expression->span);
-        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
-        instruction.operands = { array->id };
-        const auto result = *instruction.result;
-        emit(std::move(instruction));
-        // The element moves out of the array into the result, which owns it.
-        recordValue(result, requiresDestroy(result.type)
-                ? ValueOwnership::owned
-                : ValueOwnership::trivial);
         return result;
     }
 
@@ -3628,28 +3629,6 @@ private:
         return emitUnit(expression->span);
     }
 
-    // `consume a.consumeEmpty()`: the runtime traps unless the array is empty, then frees its storage
-    // and zeroes the handle, which makes the binding's scope-end destroy a no-op.
-    std::optional<ir::Value> lowerArrayConsumeEmpty(
-            const syntax::CallExprSyntax::Ptr& expression) {
-        if (expression->callee->kind != syntax::Kind::memberExpr ||
-            !expression->arguments.empty()) {
-            report(
-                    DiagnosticId::unsupportedSyntax,
-                    expression->span,
-                    "Array.consumeEmpty takes no arguments");
-            return std::nullopt;
-        }
-        const auto member =
-                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
-        const auto array = lowerAddress(member->base);
-        if (!array.has_value()) return std::nullopt;
-        auto instruction = makeInstruction(ir::Opcode::arrayConsumeEmpty, expression->span);
-        instruction.operands = { array->id };
-        emit(std::move(instruction));
-        return emitUnit(expression->span);
-    }
-
     std::optional<ir::Value> lowerDictionaryGet(
             const syntax::CallExprSyntax::Ptr& expression) {
         if (expression->callee->kind != syntax::Kind::memberExpr ||
@@ -3725,53 +3704,6 @@ private:
         emit(std::move(instruction));
         recordValue(result, ValueOwnership::owned);
         return result;
-    }
-
-    std::optional<ir::Value> lowerArrayAppend(
-            const syntax::CallExprSyntax::Ptr& expression) {
-        if (expression->callee->kind != syntax::Kind::memberExpr ||
-            expression->arguments.size() != 1) {
-            report(
-                    DiagnosticId::unsupportedSyntax,
-                    expression->span,
-                    "Array.append requires one element argument");
-            return std::nullopt;
-        }
-        const auto member =
-                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
-        const auto array = lowerAddress(member->base);
-        const auto* arrayType = array.has_value()
-                ? model->types().type(array->type)
-                : nullptr;
-        if (!array.has_value() || arrayType == nullptr ||
-            arrayType->kind != typing::TypeKind::array ||
-            arrayType->arguments.size() != 1) {
-            report(
-                    DiagnosticId::missingType,
-                    expression->span,
-                    "Array.append receiver has no concrete element type");
-            return std::nullopt;
-        }
-
-        auto element = movesArgument(*expression->arguments[0]) &&
-                        isAddressable(expression->arguments[0]->value)
-                ? lowerTake(expression->arguments[0]->value)
-                : lowerExpression(expression->arguments[0]->value);
-        if (!element.has_value()) return std::nullopt;
-        element = coerce(
-                *element,
-                arrayType->arguments[0],
-                expression->arguments[0]->value->span);
-        if (!element.has_value()) return std::nullopt;
-        if (requiresDestroy(element->type)) {
-            element = acquireOwned(*element, expression->arguments[0]->value->span);
-            if (!element.has_value()) return std::nullopt;
-        }
-
-        auto instruction = makeInstruction(ir::Opcode::arrayAppend, expression->span);
-        instruction.operands = { array->id, element->id };
-        emit(std::move(instruction));
-        return emitUnit(expression->span);
     }
 
     std::optional<ir::Value> lowerStructConstruction(

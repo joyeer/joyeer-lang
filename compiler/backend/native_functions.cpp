@@ -168,7 +168,8 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
             }
             break;
         case Opcode::destroy:
-            builder.CreateCall(destroys.at(values.at(instruction.operands[0]).type), {argument(0)}); break;
+            implicitCallLocation(builder.CreateCall(destroys.at(values.at(instruction.operands[0]).type),
+                                                    {argument(0)})); break;
         case Opcode::add:
         case Opcode::subtract:
         case Opcode::multiply:

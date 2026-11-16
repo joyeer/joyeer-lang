@@ -107,29 +107,6 @@ bool Builder::emitCollection(const ir::Instruction& instruction, llvm::Value*& r
     const auto resultType = [&]() { return llvmType(instruction.result->type); };
     using Opcode = ir::Opcode;
     switch (instruction.opcode) {
-        case Opcode::constructArray: {
-            const auto elementId = type(instruction.result->type).arguments.at(0);
-            auto* elementType = llvmType(elementId);
-            llvm::Value* data = nullPointer();
-            const auto count = instruction.operands.size();
-            if (count != 0 && !unit(elementId)) {
-                auto* arrayType = llvm::ArrayType::get(elementType, count);
-                data = stack(arrayType);
-                for (size_t index = 0; index < count; ++index) {
-                    auto* address = builder.CreateInBoundsGEP(arrayType, data,
-                            {integer(0, 32), integer(index)}, temporary());
-                    builder.CreateStore(argument(index), address);
-                }
-            }
-            auto* address = stack(resultType());
-            // Runtime storage owns cloned elements, not the temporary array on
-            // our stack. Type-specific callbacks preserve nested value semantics.
-            call("joyeer_array_create_owned_abi", builder.getVoidTy(),
-                    {address, data, integer(count), integer(layout(elementId).size),
-                     helper(elementId, true), helper(elementId, false)});
-            result = builder.CreateLoad(resultType(), address);
-            return true;
-        }
         case Opcode::constantValue:
             result = constantArray(source.constants.at(static_cast<size_t>(instruction.integerValue)));
             return true;
@@ -140,45 +117,6 @@ bool Builder::emitCollection(const ir::Instruction& instruction, llvm::Value*& r
                     {builder.CreatePtrToInt(address, builder.getInt64Ty()),
                      builder.CreatePtrToInt(builder.CreateExtractValue(string, 0, temporary()), builder.getInt64Ty()),
                      builder.CreateExtractValue(string, 1, temporary()), integer(1), integer(0), integer(0)});
-            result = builder.CreateLoad(resultType(), address);
-            return true;
-        }
-        case Opcode::arrayAppend: {
-            const auto elementId = values.at(instruction.operands[1]).type;
-            call("joyeer_array_append_owned_abi", builder.getVoidTy(),
-                    {argument(0), unit(elementId) ? nullPointer() : spill(argument(1))});
-            return true;
-        }
-        case Opcode::arrayConsumeEmpty:
-            // Traps when the array is not empty; otherwise frees its storage and zeroes the handle,
-            // so the scope-end destroy of the moved-from binding does nothing.
-            call("joyeer_array_consume_empty_abi", builder.getVoidTy(), {argument(0)});
-            return true;
-        case Opcode::arrayRemoveLast: {
-            const auto id = instruction.result->type;
-            // The present and absent tags come from the optional role, never from case spellings.
-            const auto& definition = *enumerations.at(id);
-            if (definition.role != ir::EnumerationRole::optional) return false;
-            const size_t someTag = definition.firstRoleCase;
-            const size_t noneTag = definition.secondRoleCase;
-            if (someTag >= definition.cases.size() || noneTag >= definition.cases.size()) return false;
-            const auto arrayId = values.at(instruction.operands[0]).type;
-            const auto elementId = type(arrayId).arguments.at(0);
-            auto* address = stack(resultType());
-            builder.CreateStore(llvm::Constant::getNullValue(resultType()), address);
-            auto* tagAddress = field(resultType(), address, 0);
-            builder.CreateStore(integer(noneTag, 32), tagAddress);
-            // The runtime moves the element's bytes straight into the payload, so ownership
-            // passes to the `Some` without a clone; the tag says whether there was one.
-            auto* removed = call("joyeer_array_remove_last_abi", builder.getInt64Ty(),
-                    {argument(0), unit(elementId) ? nullPointer() : payload(resultType(), address)});
-            auto* some = llvm::BasicBlock::Create(context(), "array.remove.some." + temporary(), activeFunction);
-            auto* done = llvm::BasicBlock::Create(context(), "array.remove.done." + temporary(), activeFunction);
-            builder.CreateCondBr(builder.CreateICmpNE(removed, integer(0), temporary()), some, done);
-            builder.SetInsertPoint(some);
-            builder.CreateStore(integer(someTag, 32), tagAddress);
-            builder.CreateBr(done);
-            builder.SetInsertPoint(done);
             result = builder.CreateLoad(resultType(), address);
             return true;
         }
@@ -268,20 +206,7 @@ bool Builder::emitCollection(const ir::Instruction& instruction, llvm::Value*& r
             auto* data = builder.CreateExtractValue(base, 0, temporary());
             auto* count = builder.CreateExtractValue(base, 1, temporary());
             llvm::Value* address = nullptr;
-            if (baseType.kind == typing::TypeKind::array) {
-                auto* nullData = builder.CreateICmpEQ(data, nullPointer(), temporary());
-                auto* negative = builder.CreateICmpSLT(index, integer(0), temporary());
-                auto* pastEnd = builder.CreateICmpSGE(index, count, temporary());
-                trap(builder.CreateOr(nullData, builder.CreateOr(negative, pastEnd, temporary()), temporary()),
-                        "array index out of bounds");
-                if (!addressResult && unit(instruction.result->type)) {
-                    result = llvm::Constant::getNullValue(resultType());
-                    return true;
-                }
-                // Allocation/growth validates byte counts. A checked element
-                // index can use typed GEP without another runtime header lookup.
-                address = builder.CreateGEP(resultType(), data, index);
-            } else if (baseType.kind == typing::TypeKind::dictionary) {
+            if (baseType.kind == typing::TypeKind::dictionary) {
                 const auto keyId = baseType.arguments.at(0);
                 address = call("joyeer_dictionary_at_abi", pointer(),
                         {data, count, spill(index), integer(layout(keyId).size),

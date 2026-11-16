@@ -79,11 +79,8 @@ enum class Opcode {
 
     call,
     constructStruct,
-    constructArray,
-    arrayAppend,
-    arrayRemoveLast,
-    arrayConsumeEmpty,
-    constructDictionary,
+    // Wire slots 35-38 belonged to the removed builtin array operations.
+    constructDictionary = 39,
     dictionarySet,
     dictionaryGet,
     fieldAddress,

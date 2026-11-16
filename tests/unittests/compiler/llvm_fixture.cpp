@@ -42,13 +42,6 @@ int main(int argc, char** argv) {
             joyeer::typing::TypeKind::string,
         },
         joyeer::ir::TypeName {
-            5,
-            "[Int]",
-            joyeer::typing::TypeKind::array,
-            joyeer::semantic::invalidSymbolId,
-            { 1 },
-        },
-        joyeer::ir::TypeName {
             6,
             "[String: Int]",
             joyeer::typing::TypeKind::dictionary,
@@ -285,14 +278,9 @@ int main(int argc, char** argv) {
                     {}, {}, std::nullopt, std::nullopt, 2,
                 },
                 joyeer::ir::Instruction {
-                    joyeer::ir::Opcode::constructArray,
-                    joyeer::ir::Value { 2, 5, joyeer::ir::ValueCategory::value },
-                    { 0, 1 },
-                },
-                joyeer::ir::Instruction {
-                    joyeer::ir::Opcode::subscript,
+                    joyeer::ir::Opcode::add,
                     joyeer::ir::Value { 3, 1, joyeer::ir::ValueCategory::value },
-                    { 2, 0 },
+                    { 0, 1 },
                 },
                 joyeer::ir::Instruction {
                     joyeer::ir::Opcode::stringConstant,

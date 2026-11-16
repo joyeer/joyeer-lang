@@ -156,6 +156,8 @@ private:
     llvm::DILocalScope* locationScope(std::optional<ir::DebugScopeId> id, SourceSpan span);
     llvm::DILocation* location(const std::optional<ir::DebugLocation>& location);
     void functionDebug(const ir::Function& function);
+    void ownershipDebug(ir::TypeId type);
+    void implicitCallLocation(llvm::CallInst* call);
     bool bindDebug(const ir::DebugVariableBinding& binding);
 };
 
