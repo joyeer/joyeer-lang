@@ -143,8 +143,11 @@ remain separate gates.
 
 ### Phase 4: Dict
 
-- [ ] Record a decision for key constraints and hashing/equality before broadening accepted
-  key types or changing the existing linear-key/value prohibition.
+- [x] Record a decision for key constraints and hashing/equality before broadening accepted
+  key types or changing the existing linear-key/value prohibition. Evidence:
+  [0027](../decisions/0027-library-dict.md), accepted by the user 2026-11-16 for stages 1-4 after three
+  language-designer reviews: the accepted key set stays `Int`, `Bool`, `UInt8` and `String` (checked at the type),
+  the linear-key/value prohibition stays, and hashing and `Equatable` keys stay with plan 0012.
 - [ ] Benchmark construction, lookup, insertion/replacement, growth, and nested destruction.
 - [ ] Implement the existing dictionary API and buffer ownership in Joyeer, preserving the
   documented copy-on-lookup and value-semantics boundaries.
@@ -609,3 +612,5 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   `ctest` 1857/1857 in each (`ValidationScriptTests`, `Fern.Manifest`, `Fern.Workspace`, `Compression.Interoperability`
   passed only on rerun), `fern test` 7/7. Linux x86_64: Debug and Release `ctest` 1833/1833, `fern test` 7/7, no
   reruns. Phase 4 started: [0027](../decisions/0027-library-dict.md) drafted (proposed, not yet reviewed).
+- 2026-11-16: [0027](../decisions/0027-library-dict.md) (library `Dict`) accepted by the user for stages 1-4 at
+  revision 4. Next: stage 1, the characterization tests on the builtin dictionary.

@@ -1,6 +1,8 @@
 # 0027: `Dict<K, V>` as a library struct
 
-- Status: proposed (2026-11-16, revision 4 after three language-designer reviews, the last "accept with changes"; awaiting the user's acceptance, which covers stages 1-4 only: stages 5-7 are conditional on the measured gates)
+- Status: accepted for stages 1-4 (2026-11-16, revision 4, by the user, after three language-designer reviews, the
+  last "accept with changes"). Stages 5-7 are conditional on the measured gates (Acceptance condition below); the
+  three open questions of revision 2 were answered by the user the same day.
 - Spec: [§2.6](../../specs/02-types.md#26-generics) and §2.6.1 (lookup), §4.1.1 (copyability),
   [§20.5](../../specs/20-protocols.md) (key constraints), §20.12.5 (layout intrinsics and roles) and
   [§21.2.2](../../specs/21-concurrency.md) (task transfer) change with this record once it is accepted.
