@@ -1621,8 +1621,8 @@ private:
             }
             case syntax::Kind::arrayType: {
                 const auto array = std::static_pointer_cast<syntax::ArrayTypeSyntax>(syntaxType);
-                result = model->typeContext.arrayType(resolveType(array->element).value_or(
-                        model->typeContext.errorType()));
+                result = model->typeContext.arrayType(rejectNeverElement(
+                        resolveType(array->element).value_or(model->typeContext.errorType()), syntaxType->span));
                 break;
             }
             case syntax::Kind::dictionaryType: {
@@ -2448,9 +2448,7 @@ private:
                        "'consume handle.join()' (or another value that can be destroyed) instead of the handle");
                 continue;
             }
-            if (argument == model->typeContext.neverType() &&
-                role != semantic::LibraryRole::arrayType &&
-                !(owner != nullptr && owner->libraryRole == semantic::LibraryRole::arrayType)) {
+            if (argument == model->typeContext.neverType()) {
                 report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
                        "type parameter '" + parameter + "' of '" + targetSymbol.name + "' cannot be 'Never'",
                        "'Never' has no values, so a generic function cannot take or hold one (spec 2.9)");
@@ -6746,6 +6744,16 @@ private:
         return result;
     }
 
+    // `Never` has no values, so an array of it could only be empty and every operation on one would bind a value
+    // that cannot exist: it is rejected like `Never` in any other generic (decision 0026, revision 5).
+    TypeId rejectNeverElement(TypeId element, SourceSpan span) {
+        if (element != model->typeContext.neverType()) return element;
+        report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
+               "the element type of an array cannot be 'Never'",
+               "'Never' has no values, so an array of it could never hold one (spec 2.9)");
+        return model->typeContext.errorType();
+    }
+
     TypeId checkArray(
             const syntax::ArrayExprSyntax::Ptr& expression,
             std::optional<TypeId> expected) {
@@ -6755,6 +6763,10 @@ private:
             if (model->typeContext.isArray(expectedType)) {
                 elementType = expectedType->arguments[0];
             }
+        }
+        // The annotation was already rejected (for example `[Never]`): no follow-on error for its literal.
+        if (expression->elements.empty() && expected.has_value() && *expected == model->typeContext.errorType()) {
+            return model->typeContext.errorType();
         }
         if (expression->elements.empty() && !elementType.has_value()) {
             report(
@@ -6775,7 +6787,7 @@ private:
                 requireAssignable(actual, *elementType, element->span);
             }
         }
-        return model->typeContext.arrayType(*elementType);
+        return model->typeContext.arrayType(rejectNeverElement(*elementType, expression->span));
     }
 
     TypeId checkDictionary(

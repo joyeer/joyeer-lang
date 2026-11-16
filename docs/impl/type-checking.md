@@ -141,7 +141,8 @@ The current checker validates:
   same marker, storage and exclusivity rules as a call by name (`checkArgumentAccess`), and rejects
   labels (`labeled-function-value-call`), a non-parenthesized field, element or call callee
   (`not-callable`) and a `Never` parameter (`invalid-function-type`); a `Never` stored field of a
-  structure is `never-field-type`. Name resolution leaves a call of a
+  structure is `never-field-type`, and `Never` as an array element (`[Never]`, `Array<Never>`, an inferred
+  `[return]`) is `invalid-type-argument`. Name resolution leaves a call of a
   binding, parameter or field to the type checker;
 - Channels (decisions 0019/0023, spec 21.9): the ends are ordinary generic structures with `deinit`
   (noncopyable, not linear); creation and methods use their source signatures. A closed prelude

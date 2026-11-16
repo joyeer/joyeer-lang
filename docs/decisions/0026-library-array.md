@@ -2,7 +2,8 @@
 
 - Status: accepted (2026-11-15, revision 3, by the user "for now", including the `-O0` gate amendment of Section 4;
   revisited if the switch's measurement contradicts it). **Revision 4** (the implementation amendments A1 to A9 of the
-  section of that name, below) was **accepted by the user on 2026-11-16**, all nine items.
+  section of that name, below) was **accepted by the user on 2026-11-16**, all nine items; A10 (`Never` is not an array element) was added and accepted
+  the same day.
 - Spec: [§2.6](../../specs/02-types.md#26-generics), §2.6.2 and §2.6.4 (the members),
   [§3.1.1](../../specs/03-declarations.md#311-top-level-constants), [§4.3](../../specs/04-memory.md),
   [§19](../../specs/19-c-interop.md), [§20.12.5](../../specs/20-protocols.md) and
@@ -180,8 +181,8 @@ allocation counter, not the policy.
   The verifier permits the compiler's user-function packing sequence only as a closed graph: an inert-zero receiver,
   matching element type/count, one initialization of each bounded slot, and one matching factory call after packing.
   Raw addresses may not escape and the packing region contains no fallible operation. This is not authorization
-  to write layout intrinsics in user source. Empty `Array<Never>` keeps its zero-size representation; generic
-  representation queries use empty storage and a load of a `Never` value is unreachable.
+  to write layout intrinsics in user source. (Revision 5, A10: `Array<Never>` is no longer a type, so the
+  zero-size representation of an empty uninhabited array no longer arises.)
 
 ### 3. The collections prelude
 
@@ -390,10 +391,11 @@ recorded here so that the decision record matches the code. The user accepted al
 | A3 | Closed literal protocol and wire 23 | a `stack_block` opcode and the `array_literal` role | The verifier accepts the packing sequence only as a closed graph: an inert-zero receiver, matching element type and count, one initialization per bounded slot, then one matching factory call, no escaping raw address, and no fallible operation inside. Wire 23 carries the structure `role` enum, an `arrayLiteral` function flag and an `alwaysInline` function flag; type slot 10 and opcode slots 35-38 are reserved and rejected | None in source; hand-written IR and the wire change |
 | A4 | `alwaysInline` policy | the backend marks the `elementAddressor` | Verified IR marks closed owned-element, literal, copy and destruction wrappers `alwaysInline`, independent of public method names; generated ownership helpers inherit it. Runtime wrappers and helpers get internal linkage | None; widens residual-set item 6 |
 | A5 | Debug scopes of helpers | `NoInline` on helpers that lack a `DISubprogram` | Helpers carry artificial line-0 `DISubprogram`s, implicit calls get unknown-line locations, and helper and source scopes are reset between functions, so the closed wrappers inline with debug information | Debug stepping through a helper shows no source line |
-| A6 | Diverging-call rule | not addressed | A call with a statically `Never`-typed argument is fully type and constraint checked but does not demand a callee instance; lowering evaluates earlier operands with their normal ownership, then stops without a call. Needed because `[Never].append(element: return)` compiled with the builtin array. This is a general rule, not an array one | None for programs that compiled before |
+| A6 | Diverging-call rule | not addressed | A call with a statically `Never`-typed argument is fully type and constraint checked but does not demand a callee instance; lowering evaluates earlier operands with their normal ownership, then stops without a call. Needed because `[Never].append(element: return)` compiled with the builtin array (that array type is now rejected, see A10; the rule still serves generic calls such as `accept(value: return, sample: 1)`). This is a general rule, not an array one | None for programs that compiled before |
 | A7 | macOS linking | not addressed | `-force_load` of the runtime archive is removed; the archive loads lazily as on Linux. Two native callback probes conflicted with the test channel exports under `-force_load` | Programs on macOS stop importing unused thread and channel functions |
 | A8 | Diagnostics beyond the list under Consequences | `address` and `capacity` become `inaccessible-declaration`; the report goldens | Also `literal`, `element` and `duplicate` (with the whole `a.member` span and no help line); "it is a builtin method" is now "it is a method"; `&a.count = 5`, `a.count += 1` and passing `&a.count` inout carry an extra help line; `&a.append(element: &r)` reports `consuming argument requires 'consume' at the call site` with a fix-it; `consume a.count` is `partial-consume-of-deinit-type` (it was a pseudo-member); `&a.append(element: consume a[0])` on a noncopyable element is `type-checking.overlapping-access` (it was accepted until `a` was used again); the linear help names the handle's ending method, with the remove-then-`consumeEmpty` advice only for a bare array | The two rejections apply to programs the builtin accepted but could not run correctly; the rest are wording |
 | A9 | Cost measurements by platform | gates apply on Windows x64; Linux reported once its noise is known | Windows x64 passes (plan log, 2026-11-16). macOS/AArch64 reports flat drop at `-O2` at 1.019 to 1.021 with a lower bound above 1, and +16432 B on nested destruction at `-O2`, which is a 16 KiB Mach-O segment boundary. Linux performance is not measured | Proposal: executable bytes are gated on Windows x64 only, and a jump of exactly one segment page on Mach-O is reported, not gated |
+| A10 | `Never` is not an array element (revision 5, accepted 2026-11-16) | `[Never]` is accepted and pinned for compatibility; its zero-size representation is kept | `[Never]`, `Array<Never>` and an inferred element type `Never` (`[return]`) are rejected with `type-checking.invalid-type-argument`, like `Never` in any other generic; `[Never?]` stays valid. The checker had exempted the array role from the rule that applies to every other generic | A program that wrote `[Never]` stops compiling. The compiler crashes on iterating or indexing a `[Never]` (present before the switch) are removed by construction |
 
 **Residual set (extends the list under "What done means here").** In addition to items 1 to 6: (7) the verifier's
 closed literal protocol and the `stack_block` and `place_address` lowering, keyed on the `arrayLiteral` mark of a
@@ -411,8 +413,8 @@ retained by the measurer, summarized in the plan log.
 a debug-scope corruption introduced by inlining at `-O1` or above would not be caught at compile time; the proposed
 follow-up is an e2e array fixture at `-O1` and `-O2` with `-gfull` and a post-pipeline verification in a test build.
 (b) The spec text for A6 (§20.4.1 inference, §20.6 call checking) is not written. (c) The verifier's mutation tests
-assert failure, not which rule fired, and about ten verifier rules lack a malformed-IR test. (d) The compiler still
-crashes on iterating a `[Never]` and on untyped indexing of one, as it did before the switch.
+assert failure, not which rule fired, and about ten verifier rules lack a malformed-IR test. (d) ~~The compiler still
+crashes on iterating a `[Never]` and on untyped indexing of one~~: closed by A10, which rejects `[Never]`.
 
 The known gaps (a) to (d) are accepted as open follow-ups, not as waived requirements.
 

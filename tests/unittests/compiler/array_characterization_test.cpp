@@ -164,6 +164,9 @@ TEST(ArrayCharacterization, NeverIsNotAnArrayElement) {
         EXPECT_TRUE(contains(text, "type-checking.invalid-type-argument")) << source << "\n" << text;
         EXPECT_TRUE(contains(text, "'Never'")) << source << "\n" << text;
     }
+    // The rejected annotation poisons the binding: its empty literal adds no follow-on error.
+    const auto cascade = diagnose("func main() { let n: [Never] = [] }\n");
+    EXPECT_FALSE(contains(cascade, "missing-contextual-type")) << cascade;
     // `Never` inside an optional is a type with a value (`.None`), so it stays an ordinary element.
     EXPECT_EQ(diagnose("func f(a: [Never?]) {}\nfunc main() {}\n"), "");
 }

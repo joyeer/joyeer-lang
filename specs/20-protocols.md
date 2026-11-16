@@ -666,9 +666,8 @@ stack block and transfers it to the private literal method on an inert-zero rece
 sequence may occur in ordinary functions only when its complete raw-address use graph is verified:
 matching element type and constant count, one in-range initialization per non-unit slot, no fallible
 operation while packing, and one matching literal call. No address escapes this sequence.
-Empty and `Void` literals use no element storage. `Array<Never>` may only be empty: generic representation
-queries use empty storage, and obtaining a `Never` value is unreachable; this does not authorize an explicit
-source layout intrinsic with `Never`.
+Empty and `Void` literals use no element storage. `Never` is not an array element (§2.9), so no array of it
+exists; this does not authorize an explicit source layout intrinsic with `Never`.
 
 Seven further layout intrinsics, authorized units only (the bundled prelude and `--runtime-module` units),
 with explicit type arguments:

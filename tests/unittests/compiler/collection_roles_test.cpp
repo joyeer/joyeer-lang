@@ -1817,8 +1817,14 @@ TEST_F(CollectionRoleTest, AThousandElementLiteralLowersAndEmitsInBothProfiles) 
     }
 }
 
-TEST_F(CollectionRoleTest, UnitAndUninhabitedElementSignaturesKeepTheirLayout) {
-    load("func bottom(items: Buffer<Never>) {}\nfunc unit(items: Buffer<Void>) {}\n");
+TEST_F(CollectionRoleTest, NeverIsNotAnElementOfTheRoleType) {
+    load("func bottom(items: Buffer<Never>) {}\n");
+    EXPECT_FALSE(checks());
+    EXPECT_NE(diagnostics().find("invalid-type-argument"), std::string::npos) << diagnostics();
+}
+
+TEST_F(CollectionRoleTest, UnitElementSignaturesKeepTheirLayout) {
+    load("func unit(items: Buffer<Void>) {}\n");
     const auto module = lower();
     ASSERT_NE(module, nullptr);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded()) << verifierMessages(*module);

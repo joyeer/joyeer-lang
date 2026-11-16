@@ -380,6 +380,13 @@ parameter is rejected (`type-checking.invalid-type-argument`).
 `Never` is not the type of a stored field of a structure, because no value of
 that structure could be constructed (`type-checking.never-field-type`).
 
+`Never` is not the element type of an array, written `[Never]` or `Array<Never>`
+or inferred from a literal such as `[return]`: such an array could never hold an
+element, and iterating or indexing it would bind a value that cannot exist. It is
+rejected with `type-checking.invalid-type-argument`, like `Never` in any other
+generic. `Never` inside an optional element (`[Never?]`) is an ordinary element,
+because `.None` is a value.
+
 `Never` may appear in a signature as an explicit "this function never returns"
 marker:
 
