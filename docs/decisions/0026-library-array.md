@@ -1,7 +1,9 @@
 # 0026: `Array<T>` as a library struct
 
 - Status: accepted (2026-11-15, revision 3, by the user "for now", including the `-O0` gate amendment of Section 4;
-  revisited if the switch's measurement contradicts it)
+  revisited if the switch's measurement contradicts it). **Revision 4** (the implementation amendments of the
+  section of that name, below) is **proposed 2026-11-16 and not yet accepted**: until it is, those items are
+  implementation facts, not accepted decisions.
 - Spec: [§2.6](../../specs/02-types.md#26-generics), §2.6.2 and §2.6.4 (the members),
   [§3.1.1](../../specs/03-declarations.md#311-top-level-constants), [§4.3](../../specs/04-memory.md),
   [§19](../../specs/19-c-interop.md), [§20.12.5](../../specs/20-protocols.md) and
@@ -140,7 +142,8 @@ allocation counter, not the policy.
   implementation without changing the contract) that wraps `joyeer_array_create_owned_abi`. It is unique, has
   exactly those labels and types, is private and returns the owning struct; a duplicate, a missing one or a bad
   shape is `invalid-prelude` like the other three. It inherits private-field access, the linear policy, the
-  must-transfer rules and instance discovery (0025 lists it with the addressor, the copy method and `deinit`).
+  must-transfer rules and instance discovery, as 0025 gives the addressor, the copy method and `deinit`.
+  *As implemented* (amendment A1): a private consuming method called on an inert zero value, not an `init`.
 - **Literal lowering.** All elements are evaluated first, left to right, and become owned temporaries; only then
   are they moved into one contiguous stack block, with no fallible operation between, and the `array_literal`
   method is called. A failed element (`?`, a trap, a `return`) drops the earlier ones exactly as the arguments of
@@ -361,13 +364,56 @@ so it is not one change. In order, each revertable:
 
 ## Open questions
 
-1. Whether instance discovery is narrowed further to demanded instances, if the size gate of the five `array_*` programs
-   fails.
+1. ~~Whether instance discovery is narrowed further to demanded instances, if the size gate of the five `array_*`
+   programs fails.~~ Closed 2026-11-16: the Windows x64 size gate passes without narrowing (largest growth +3584 B
+   at `-O0` and +1536 B at `-O2`, `hello` unchanged), so discovery is not narrowed.
 2. Whether a later change reimplements the algorithms generically (Option A2) for inlining at `-O2`; out of scope
    here, and only if the benchmarks justify it.
 
-The implementation chose a private consuming literal method and artificial ownership-helper subprograms.
-These formerly open implementation choices are resolved without changing the source contract or the gates.
+The implementation chose a private consuming literal method and artificial ownership-helper subprograms
+(amendments A1 and A5 below). They are proposed, not accepted.
+
+## Revision 4: implementation amendments (proposed 2026-11-16, not accepted)
+
+The stage 4 and 5 implementation (commits 1ad202b, 4477d9b, 656ac2e, validated on Windows x64, Linux x86_64 and
+macOS/AArch64) departs from or adds to revision 3 in the places below. None adds source syntax, and none changes a
+gate: the Windows x64 measurements of the plan 0011 log (2026-11-16) meet every Section 4 limit as written. They are
+recorded here so that the decision record matches the code. **Each item is accepted or rejected separately by the
+user**; a rejected item means the code changes, not the record.
+
+| # | Amendment | Revision 3 said | Implemented | Visible effect |
+|---|---|---|---|---|
+| A1 | Literal method form | "a private `init(address:count:)` (or a consuming method of a zero value, decided in the implementation)" | `@compiler_role(array_literal) private consuming func literal(address: Int, count: Int): Array<T>`, called on an inert zero value; its `self` is exempt from `linear-not-consumed`, as the `container_end` method's is | None in accepted programs; `a.literal(...)` reports `inaccessible-declaration` |
+| A2 | Owned element argument rule | `append` "spills the element"; nothing on argument classification | A consuming parameter declared with exactly the role's owned type parameter is an owned argument context, classified before substitution: an owned temporary or an unmarked independent copy of a copyable place is accepted, and `consume` moves. Checker, semantic analysis and lowering share the classification | See A8: two programs the builtin accepted and then failed later are now rejected at the offending call |
+| A3 | Closed literal protocol and wire 23 | a `stack_block` opcode and the `array_literal` role | The verifier accepts the packing sequence only as a closed graph: an inert-zero receiver, matching element type and count, one initialization per bounded slot, then one matching factory call, no escaping raw address, and no fallible operation inside. Wire 23 carries the structure `role` enum, an `arrayLiteral` function flag and an `alwaysInline` function flag; type slot 10 and opcode slots 35-38 are reserved and rejected | None in source; hand-written IR and the wire change |
+| A4 | `alwaysInline` policy | the backend marks the `elementAddressor` | Verified IR marks closed owned-element, literal, copy and destruction wrappers `alwaysInline`, independent of public method names; generated ownership helpers inherit it. Runtime wrappers and helpers get internal linkage | None; widens residual-set item 6 |
+| A5 | Debug scopes of helpers | `NoInline` on helpers that lack a `DISubprogram` | Helpers carry artificial line-0 `DISubprogram`s, implicit calls get unknown-line locations, and helper and source scopes are reset between functions, so the closed wrappers inline with debug information | Debug stepping through a helper shows no source line |
+| A6 | Diverging-call rule | not addressed | A call with a statically `Never`-typed argument is fully type and constraint checked but does not demand a callee instance; lowering evaluates earlier operands with their normal ownership, then stops without a call. Needed because `[Never].append(element: return)` compiled with the builtin array. This is a general rule, not an array one | None for programs that compiled before |
+| A7 | macOS linking | not addressed | `-force_load` of the runtime archive is removed; the archive loads lazily as on Linux. Two native callback probes conflicted with the test channel exports under `-force_load` | Programs on macOS stop importing unused thread and channel functions |
+| A8 | Diagnostics beyond the list under Consequences | `address` and `capacity` become `inaccessible-declaration`; the report goldens | Also `literal`, `element` and `duplicate` (with the whole `a.member` span and no help line); "it is a builtin method" is now "it is a method"; `&a.count = 5`, `a.count += 1` and passing `&a.count` inout carry an extra help line; `&a.append(element: &r)` reports `consuming argument requires 'consume' at the call site` with a fix-it; `consume a.count` is `partial-consume-of-deinit-type` (it was a pseudo-member); `&a.append(element: consume a[0])` on a noncopyable element is `type-checking.overlapping-access` (it was accepted until `a` was used again); the linear help names the handle's ending method, with the remove-then-`consumeEmpty` advice only for a bare array | The two rejections apply to programs the builtin accepted but could not run correctly; the rest are wording |
+| A9 | Cost measurements by platform | gates apply on Windows x64; Linux reported once its noise is known | Windows x64 passes (plan log, 2026-11-16). macOS/AArch64 reports flat drop at `-O2` at 1.019 to 1.021 with a lower bound above 1, and +16432 B on nested destruction at `-O2`, which is a 16 KiB Mach-O segment boundary. Linux performance is not measured | Proposal: executable bytes are gated on Windows x64 only, and a jump of exactly one segment page on Mach-O is reported, not gated |
+
+**Residual set (extends the list under "What done means here").** In addition to items 1 to 6: (7) the verifier's
+closed literal protocol and the `stack_block` and `place_address` lowering, keyed on the `arrayLiteral` mark of a
+validated role method and never on a name; (8) the owned-argument classification, keyed on the role's declared owned
+type parameter; (9) the diverging-call rule, which is general. Items 7 and 8 are array-aware only through the role.
+
+**Evidence for each item.** A1, A3: `CompilerCollectionRoleTests` (shape, packing, malformed forms) and the IR
+verifier tests. A2: checker and lowering tests plus about 110 differential programs against the builtin baseline, all
+identical except the A8 changes. A4, A5: native `-gfull` execution and DWARF checks, and 33 differential runs at `-O0`
+to `-O3`. A6: tests observed failing first (destruction order, skipped later arguments, generic callers). A7: the two
+native probes, and no change on Windows, where `/WHOLEARCHIVE` stays for the C-startup link. A9: the raw reports
+retained by the measurer, summarized in the plan log.
+
+**Known gaps, stated rather than waived.** (a) Nothing verifies LLVM debug info after the optimization pipeline, so
+a debug-scope corruption introduced by inlining at `-O1` or above would not be caught at compile time; the proposed
+follow-up is an e2e array fixture at `-O1` and `-O2` with `-gfull` and a post-pipeline verification in a test build.
+(b) The spec text for A6 (§20.4.1 inference, §20.6 call checking) is not written. (c) The verifier's mutation tests
+assert failure, not which rule fired, and about ten verifier rules lack a malformed-IR test. (d) The compiler still
+crashes on iterating a `[Never]` and on untyped indexing of one, as it did before the switch.
+
+**To accept.** Reply per item (A1 to A9). Accepted items move into the sections they amend and the Status line is
+updated; a rejected item is listed as a change request against the code.
 
 ## Review
 
