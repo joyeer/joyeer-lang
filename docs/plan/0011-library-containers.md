@@ -570,3 +570,26 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   The macOS drop/noise and nested executable-size comparisons above are recorded failures against those
   numerical limits, not claimed passes or a gate amendment. No push or PR is authorized until the required
   post-commit personal testing/understanding/full-diff review confirmation; LLM use must be disclosed.
+- 2026-11-16: Review and validation of the pushed switch (656ac2e) on Windows x64 and Linux x86_64.
+  `scripts/validate.py` passes on both. Windows: Debug and Release build, `ctest` 1852/1852 in each (flaky
+  `Fern.Workspace`, `Fern.Manifest`, `Compression.Interoperability` passed on rerun), `fern test` 7/7. Linux:
+  `ctest` 1828/1828 in each configuration, `fern test` 7/7. Independent IR/backend and type-system reviews found
+  no soundness or ABI issue (33 and about 110 differential programs against the builtin baseline, identical
+  output). Two low findings were fixed with the failing tests committed first (6dcfbee, a4419d3): a literal as a
+  member base resolved `Array` by spelling, and the linear help named `consumeEmpty` for nested or wrapped arrays.
+- 2026-11-16: Windows x64 gated measurements (section 4 of 0026). Idle machine, LLVM 22.1.8, baseline = Release
+  compiler built from 7a1d748 (the builtin array), candidate = Release compiler built from d1cf2ca, both
+  compiling every program to `-O0`/`-O2` with `-g0` unless a debug mode is named; 25 interleaved pairs per
+  configuration, paired median ratio with a 95% bootstrap interval (raw reports under `out/perf-gate`, not kept
+  in the repository). Five `array_*` programs, O0 ratios: append 1.024, index 1.145 [1.116, 1.160], removal
+  1.002, nested destruction 0.998, linear drain 0.989; O2: 1.010, 0.997, 1.015, 1.019, 1.006, every lower bound
+  at most 1. Flat pairs, none/lines/full: index O0 1.093/1.098/1.086, O2 0.982/0.982/1.022; drop O0
+  1.063/1.061/1.044. Flat drop O2 first run missed in two modes (none 1.034 [0.939, 1.061], full 1.034
+  [1.006, 1.092]); the one allowed 50-pair rerun passes (none 1.022 [0.998, 1.051], full 1.005 [0.982, 1.038]),
+  and lines was 1.016 [0.951, 1.036]. Executable growth: at most +3584 B at O0 (nested destruction) and
+  +1536 B at O2 (nested destruction); `hello` O2 43008 B against 43008 B. Hello `--emit-llvm` front end, 60
+  interleaved pairs, both compilers copied to equivalent directories: 1.001 [0.975, 1.019] (an earlier run with
+  the compilers in different directories was dominated by a location effect, 154 ms against 47 ms, and is not
+  used). Result: the Windows numerical gates pass; the macOS drop and nested-size misses did not reproduce.
+  The index O0 median is within 0.005 of its 1.15 limit. Linux performance is not measured. Acceptance of the
+  amendments to 0026 and the final go-ahead remain the user's.
