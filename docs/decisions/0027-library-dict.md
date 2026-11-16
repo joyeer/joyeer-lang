@@ -1,6 +1,6 @@
 # 0027: `Dict<K, V>` as a library struct
 
-- Status: proposed (2026-11-16, revision 3 after two language-designer reviews; not yet accepted)
+- Status: proposed (2026-11-16, revision 4 after three language-designer reviews, the last "accept with changes"; awaiting the user's acceptance, which covers stages 1-4 only: stages 5-7 are conditional on the measured gates)
 - Spec: [§2.6](../../specs/02-types.md#26-generics) and §2.6.1 (lookup), §4.1.1 (copyability),
   [§20.5](../../specs/20-protocols.md) (key constraints), §20.12.5 (layout intrinsics and roles) and
   [§21.2.2](../../specs/21-concurrency.md) (task transfer) change with this record once it is accepted.
@@ -93,31 +93,58 @@ Option **A**. Rules, subject to review:
      (and projection bases such as `&d[k].f()` and `&d[k][i] = v`: a missing key traps and never inserts), as 0025
      specified. The synthesized call passes the key operand raw; an owned key temporary (`d[makeKey()]`) is destroyed
      exactly once and not before the returned address is used (a test).
-   - `dict_set`: `private mutating func name(key: consuming K, value: consuming V): Void`, insert-or-replace. This
+   - `dict_set`: `private mutating func name(key: consuming K, value: consuming V): Void`, insert-or-replace; the library
+     `move_in`s the owned key and value into `stack_slot`s (as `append` does) and passes their addresses, never
+     `borrow_address`, because the runtime adopts the bytes. This
      **amends 0025**, which proposed an "inserting addressor for the final target of a plain `=`": a method taking the
      owned key and value matches `joyeer_dictionary_set_owned_abi`, needs no uninitialized slot and keeps "an RHS trap
      before the insert inserts nothing". `&d[k] += 1` still does not insert (it is rejected today, and stays so).
-   - `dict_get`: `private borrowing func name(key: K): Optional<V>`, copyable `V` only, with the
-     `copy-of-noncopyable` diagnostic kept and checked **before** any instance demand, so a noncopyable `V` never
-     reaches `clone_at`; `dict_get` is not in the discovery set. This lets `dictionaryGet` and its lowering go.
-   - `array_copy`'s shape and `container_end`'s shape are reused for the dictionary copy method rather than adding
-     parallel roles; `dict_literal` is a consuming method on an inert zero value (0026 A1). No `container_end` for
+   - `dict_get`: **`public borrowing func get(key: K): Optional<V>`**, the one public dictionary method role, so
+     `d.get(key: k)` is an ordinary call and no compiler rewrite by name is needed. The role adds only the call-site
+     `copy-of-noncopyable` check, keyed on the resolved callee's role (today it is keyed on `name == "get"` at
+     `typechecking.cpp:4946`, `irlowering.cpp:3175`), reported before any instance is demanded, so a noncopyable `V`
+     never reaches `clone_at` (the verifier rejects it). `dict_get` is demanded only by user calls, not by instance
+     discovery. This lets `dictionaryGet` and its lowering go. All other dictionary method roles are private.
+   - `dict_copy` has the shape of `array_copy` and `dict_literal` the shape of `array_literal` (a consuming method on
+     an inert zero value, 0026 A1): every role is per owner, one naming scheme, so an author never writes
+     `@compiler_role(array_copy)` on a dictionary. The checks of `array_copy` and `container_end` that hard-code
+     `owner->libraryRole == arrayType` and one owner parameter are generalized in stage 2a. No `container_end` for
      the dictionary itself: it is affine-only.
    - **The literal's storage (the dictionary literal design).** The runtime wants interleaved entries (key at offset
      0, value at `valueOffset = alignTo(keySize, valueAlign)`, `entrySize` rounded up to the larger alignment). The
      prelude declares a private `DictEntry<K, V>` struct (a role, `dict_entry`, closed shape: exactly the fields `key:
      K` then `value: V`, no `deinit`), whose ordinary struct layout *is* that layout. The literal packs into
-     `stack_block<DictEntry<K, V>>(count: N)`; the closed packing protocol of 0026 A3 is extended from "one
-     initialization per slot" to "one initialization of the key field and one of the value field per entry slot",
-     matching count, no fallible operation inside, no escaping address. The library passes `size_of<DictEntry<K, V>>()`
+     `stack_block<DictEntry<K, V>>(count: N)`. The closed packing protocol of 0026 A3 (`ir.cpp:1479-1608`) is extended
+     by these rules, assigned to stage 5, with malformed-IR tests asserting which rule fired:
+     1. The factory is a `dict_literal` role method; its receiver has role `dict` and its result two arguments (K, V).
+     2. The block's element type E is an IR structure with role `dictEntry`: exactly two fields, of types K then V.
+     3. Each slot is `slot_address(block, i)` then one `integer_address` of type E, as today. The place's only uses are
+        `field_addr` operations of distinct field symbols (0 and 1), in the same block, between the storage and the
+        transfer; `field_addr` joins the allowed opcodes of the packing window.
+     4. Each `field_addr` result has exactly one use, a `store` of exactly the field's type, evaluated before the
+        storage (the existing `evaluatedFirst` rule).
+     5. Coverage: the key field is stored once for every `0 <= i < N`; the value field is stored once for every `i`
+        unless V is `Void`, for which no value-field `field_addr` or store is allowed. `N == 0` means no slots.
+     6. No loads, no escaping address, no fallible operation inside the window, one factory call after packing.
+     The `literalFactories` shape (`ir.cpp:810-840`), the element rule (`ir.cpp:1516-1517`) and the per-place rule
+     (`ir.cpp:1550-1593`) are generalized from "array, one argument" to this. The wire serializes `StructureRole::dict`,
+     `dictEntry` and the literal-factory flag. The library passes `size_of<DictEntry<K, V>>()`
      as `entrySize`, `size_of<K>()` and `size_of<V>()`, and computes `valueOffset` with the same formula; a test pins
      that formula against the compiler's layout of `DictEntry` for every admitted key and a spread of values (`Void`,
-     `UInt8`, `Int`, `String`, structs, enums). The backend no longer computes the layout. Rejected: changing
-     `joyeer_dictionary_create_owned_abi` to take key and value runs (a public ABI change, against Option A) and
-     lowering the literal to N `dict_set` calls (changes capacity, growth, duplicate-key destroy order and the
-     allocation counter).
+     `UInt8`, `Int`, `String`, structs, enums). The backend no longer computes the layout. The checker **interns `DictEntry<K, V>` for every concrete `Dict<K, V>`** (`requireDeinitInstances` skips structs
+     without a `deinit`, so it would not otherwise); the entry type and its two field symbols are stored in the role
+     record and lowering takes them from it. The role validator needs a per-role visibility rule: `dict_entry` is
+     `private`, `array_type` is `public`. The entry is never a value: only addresses, `field_addr` and raw stores reach
+     it, so nothing clones or destroys it implicitly (but `emitOwnership` creates internal helpers for it that count
+     in the size gate). A backend invariant at type definition asserts, for every `dictEntry` structure, that LLVM's
+     offset of field 1 equals `alignTo(layout(K).size, layout(V).alignment)` and its alloc size equals
+     `layout().size`, so the library formula and the placement agree by construction. Rejected: changing
+     `joyeer_dictionary_create_owned_abi` to take key and value runs, or two parallel blocks (a public ABI change, or a
+     heap-allocated entry buffer with a different allocation counter), and lowering the literal to N `dict_set` calls
+     (changes capacity, growth, duplicate-key destroy order and the allocation counter).
    - **A read-only borrowed-address intrinsic**, `joyeer_intrinsic_borrow_address<T>(value: place): Int`, in
-     authorized units only, accepted only as a direct argument of a call. It yields the address of the local storage
+     in the bundled preludes and `--runtime-module` units only (rejected as `unauthorized-intrinsic` in user files, like
+     the other layout intrinsics, §20.12.5), accepted only as a direct argument of a call. It yields the address of the local storage
      holding the value of a named readable place (a local, any parameter, or a field path of those). For a
      `borrowing` parameter that storage is a callee-local copy aliasing the caller's (as the backend's `spill(key)`
      does today: not an allocation); for a `String` key it is the handle's address, so `keySize` is `size_of<String>`.
@@ -142,8 +169,8 @@ Option **A**. Rules, subject to review:
    type-parameter case already gives (§20.5), at all three sites, re-keyed to the role: an annotation `[K: V]`
    (the key's span), a nominal `Dict<K, V>` (the first argument's span) and a literal (the first entry's key, or the
    whole literal when empty). The rule skips function-type, type-parameter and `Never` keys, which already have their
-   own diagnostics, so each mistake reports once. It does not apply inside the `dict_type` declaration itself, whose
-   bodies write `Dict<K, V>`; user generics over `[K: V]` stay rejected (§20.5). A program that merely mentions
+   own diagnostics, so each mistake reports once. Both this kind rule and the existing type-parameter-key rejection do not apply inside the `dict_type` declaration
+   (prelude source only), whose bodies write `Dict<K, V>`; user generics over `[K: V]` stay rejected (§20.5). A program that merely mentions
    `[Point: Int]` and previously compiled now fails; one that used it failed in the backend before. The
    characterization PR pins today's behavior first.
 5. **Generalizing the role table (accepted by the user 2026-11-16).** The array role is hard-wired to one parameter
@@ -153,8 +180,9 @@ Option **A**. Rules, subject to review:
    by a role record (owned type parameters, the addressor's key type, the method-role set), with the array tests green
    first. It keeps `for-in`, native marshalling, constants, `String.utf8` and `consume-of-linear-element` **array-only**:
    a generalized predicate must not make `for x in dict` subscript with an index.
-6. **Wire.** Wire 24 at the switch stage adds `StructureRole::dict`, the new method roles and function flags. The
-   removed slots (opcodes 39-41, type slot 11) are rejected at the cleanup stage with wire 25, as 0026 held them.
+6. **Wire.** Wire 24 is bumped by the first PR that serializes the new roles, stage 5 (`StructureRole::dict` and
+   `dictEntry`, the method roles, the literal-factory flag). The removed slots (opcodes 39-41, type slot 11) are
+   rejected at the cleanup stage with wire 25, as 0026 held them.
 7. **Seam.** The `dict_type` role is required only when a program mentions a dictionary (`invalid-prelude` at first
    use). The role tests that mention one (`collection_roles_test.cpp`, the `Buffer<[String: Int]>` test) either
    declare a `Dict` in their replaced prelude or are rewritten in the same stage; the other replaced-prelude users
@@ -189,9 +217,13 @@ calls and are removed only at cleanup.
 ### Process (the lessons of 0026)
 
 - **Gates are stated now, as first proposed**, so they cannot be loosened after seeing the library result (0026's
-  revision-2 failure). At `-O2`: median ratio at most 1.03 and the lower bound of the 95% interval at most 1. At
+  revision-2 failure). They apply to every `dict_*` program and every flat pair, in every debug mode, on Windows x64;
+  Linux is measured and reported, and a jump of one segment page on Mach-O is reported, not gated (0026 A9). At `-O2`: median ratio at most 1.03 and the lower bound of the 95% interval at most 1. At
   `-O0`: median at most **1.10**; 1.15 is a ceiling reachable only by the user's explicit acceptance naming 1.10 as
-  the first proposal. Size: at most +4 KiB at `-O0` and +2 KiB at `-O2` per `dict_*` program, `hello` no growth at
+  the first proposal. **This record amends 0025's `-O0` cost gate ("no regression outside noise") for dictionaries
+  only, on the ground of 0026 Section 4 and the preamble (§0.1.2).** The array addressor reached 1.11 to 1.12 at `-O0`
+  after every optimization, and the dictionary wrapper does more, so a miss at 1.10 is likely and a user decision
+  will probably be needed; that is stated now. Size: at most +4 KiB at `-O0` and +2 KiB at `-O2` per `dict_*` program, `hello` no growth at
   `-O2`. `hello` front-end time at most +15% (the collections prelude grows). A rerun rule and a missed-gate rule as
   in 0026 Section 4. The `-O0` risk is real on tiny dictionaries (sizes 1 and 4): the wrapper adds a key alloca, the
   24-byte receiver by value and the `Optional` construction in `dict_get`.
@@ -200,13 +232,17 @@ calls and are removed only at cleanup.
   across 4 and 8; replacement; a literal with duplicates; nested destruction. A builtin-against-builtin run records the
   noise. The prototype measures lookup, `get`, growth and drop through explicit method calls; `dict_set` and the
   literal arrive in the switch stage, which reruns every row (0026's lesson: a prototype that is not like for like
-  misleads).
+  misleads). Its lookup row is not like for like with `d[k]` (no role, no raw load in user code), so **the measurement
+  PR gives a go or no-go verdict only and the gates bind at the switch**; it requires a margin at `-O0` (1.05) so the
+  like-for-like rerun has headroom.
 - **Cost mechanism.** The existing always-inline policy extended to the dictionary wrappers by role; measured, not
   assumed.
 - **Instance discovery.** `requireDeinitInstances` demands deinit, the addressor, the copy method (if copyable), the
-  literal method and `dict_set` for every concrete mentioned `Dict<K, V>`; `dict_get` is not demanded.
-- **Debug scopes.** Closing 0026's known gap (a) is a **prerequisite of the switch PR**: a dictionary e2e at `-O1` and
-  `-O2` with `-gfull` and a native execution check.
+  literal method and `dict_set` for every concrete mentioned `Dict<K, V>`; `dict_get` is demanded only by user calls. If the size gate fails, narrowing discovery to
+  demanded instances is the trigger carried over from 0026.
+- **Debug scopes.** Closing 0026's known gap (a) is a **prerequisite of the switch PR**, both parts: a dictionary e2e
+  at `-O1` and `-O2` with `-gfull` and a native execution check, and debug-info verification after the optimization
+  pipeline in a test build.
 - **Differential testing** against the builtin baseline compiler at `-O0` to `-O3`, with allocation-counter equality
   (no key clone on lookup).
 
@@ -220,17 +256,23 @@ calls and are removed only at cleanup.
    optionals, `Void` values and a noncopyable `V`; `&d[k].append(element: x)`, `&d[d[1].id].bump()`,
    `d.get(key: d.keyField)`; `[String: [Int]]` copy independence; `Dict` in `Array` and the reverse; recursive types
    through a dictionary; a user `Dict`; `extension Dict`; `[Point: Int]`, `[Double: Int]` and a function that takes
-   `[Point: Int]`; `unit_dictionary_missing`; a dictionary as task input and result; `for` over a dictionary; a native
+   `[Point: Int]`; `unit_dictionary_missing`, a non-empty `[K: Void]` literal with a duplicate key and an insert; `[String: Any]` and
+   `[Any: Int]`; a dictionary as task input and result; `for` over a dictionary; a native
    dictionary parameter; `==`; the linear and `Never` rejections; destruction order of a `[K: Resource]`; the
    zero-handle destroy.
 2. **Infrastructure PR, part 2a:** the role-table refactor only, no behavior change, the array differential and
    characterization suites green.
 3. **Infrastructure PR, part 2b:** `borrow_address` and `key_kind` with their tests (direct call argument only,
-   `-O2` ordering, unauthorized in user and runtime-module files, rvalues rejected, `overlapping-access`, per-type
-   constants, the non-admitted lowering error), and `DictEntry` with its layout pin.
+   `-O2` ordering, `unauthorized-intrinsic` in user files, rvalues rejected, `overlapping-access`, per-type
+   constants, the non-admitted lowering error), and the entry layout pin with an ordinary struct in a test prelude.
 4. **Measurement PR:** the prototype, the benchmarks and the noise run, against the gates above.
-5. **Infrastructure PR, part 3:** the dictionary roles, shape validation (duplicate or missing roles, `dict_set` labels
-   `key`/`value`, extension, a nested `Dict<K, V>` in the prelude), the seam; `Dict` untouched.
+5. **Infrastructure PR, part 3:** the dictionary roles and `dict_entry`, their shape validation (duplicate or missing
+   roles, `dict_entry` with a `deinit`, a third field, wrong order or `public`, a `private` `dict_get`, `dict_set`
+   labels `key`/`value`, extension, a nested `Dict<K, V>` in the prelude), the closed literal-protocol extension with
+   its malformed-IR tests (missing or duplicate key or value store, wrong type, swapped fields, a load, an escaping
+   field address, a non-entry element, wrong count, a wrong `Void` rule, a fallible operation in the window, a
+   non-inert receiver, two transfers, a cross-block store, a hand-written `field_addr` outside the window), the
+   backend layout invariant, wire 24, the seam; `Dict` untouched.
 6. **Switch PR:** bind `[K: V]`, the real `Dict`, the literal, `get`, key admission, wire 24, sendability fixture;
    differential runs; the debug-scope prerequisite.
 7. **Cleanup PR:** delete `TypeKind::dictionary`, the three opcodes, the backend cases and the allow-list entries;
@@ -244,13 +286,19 @@ calls and are removed only at cleanup.
   non-admitted key types are rejected at the type (Decision 4); `--report-instantiations` may list dictionary
   instances.
 - **Spec.** §2.6 (drop "only `Dict` remains compiler-defined", add the role paragraph and the admitted-key sentence), §2.6.1 (the library `get`),
-  §4.1.1, §20.5, §20.12.5 (roles, the capability table row, the two intrinsics), §21.2.2 and line 112 (a dictionary
-  as a task input), and the §20 text on `Dict.get` witnessing a requirement. No grammar change.
+  §4.1.1, §20.5, §20.12.5 (roles, the capability table row, the two intrinsics), §21.2.2 (`21-concurrency.md` lines 78-80: a dictionary as a task input; the linear-ban bullet at line
+  112 stays true), and the §20 text on `Dict.get` witnessing a requirement. No grammar change.
 - **Docs.** `supported-features.md` (containers, key rows, lookup), `docs/impl/{ir, backend, runtime,
   name-resolution, type-checking}.md`, and the plan's wording ("implement their existing operations in Joyeer" is
   already true of `dictionaries.joyeer`; the deliverable is the library type and the removal of compiler paths).
 - **Amendment of 0025.** `dict_set` replaces the "inserting addressor"; 0025's Phase 4 questions on the insert path
   are closed by it.
+
+## Acceptance condition
+
+As 0026 did: this record is accepted for stages 1-4 (characterization, the role-table refactor, the intrinsics and the
+measurement). Stages 5-7 are conditional on the measurement meeting the gates above or on the user's explicit decision
+about a missed gate; a missed gate is not renegotiated in a pull request.
 
 ## Open questions
 
@@ -278,7 +326,13 @@ for non-admitted types); `dict_set` ordering and its visible change; key admissi
 exemption, single diagnostics, normative admitted list); staging split (2a, 2b, 3) and wire timing (24 at the switch,
 25 at cleanup); first-proposed gates stated now; the discovery set; the debug-scope prerequisite chosen; residual
 items corrected (no owned-argument classification, no compiler sendability code). The user answered revision 2's
-three open questions on 2026-11-16 (Decisions 3, 4 and 5). Revision 3 has not been reviewed.
+three open questions on 2026-11-16 (Decisions 3, 4 and 5). Revision 3 was reviewed 2026-11-16: accept with changes. Folded into revision 4: the verifier's literal-protocol
+extension specified rule by rule and assigned to stage 5; the interned `DictEntry` and its per-role visibility; `dict_get`
+made public (`get`), keyed on the callee's role; the exemption of the type-parameter-key rule inside the declaration;
+the explicit amendment of 0025's `-O0` gate and the gate scope; the prototype as a go or no-go verdict; the full
+debug-scope prerequisite; wire timing; one per-owner role naming scheme; the consumed-key note for `dict_set`;
+authorization wording; characterization additions; the backend layout invariant; the acceptance condition.
+Revision 4 has not been reviewed.
 
 ## Evidence
 
