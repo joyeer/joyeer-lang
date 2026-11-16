@@ -105,9 +105,10 @@ remain separate gates.
 - [x] Implement the minimum runtime-only capability and verification needed by safe library
   collection wrappers; reject unauthorized and malformed uses. Evidence: the log entry of 2026-11-15
   (implementation); `CompilerCollectionRoleTests` 33 of 33; Windows x64 Debug `ctest` passes.
-- [ ] Review the type/ownership and IR/ABI changes separately from their author. First round done (log);
-  final type-system, IR/backend and adversarial follow-ups are recorded below. The integrated candidate passes
-  macOS Debug/Release validation; final Windows/Linux validation and the gated measurements remain open.
+- [x] Review the type/ownership and IR/ABI changes separately from their author. First round done (log);
+  final type-system, IR/backend and adversarial follow-ups are recorded below. Evidence: macOS Debug/Release
+  validation, Windows x64 and Linux x86_64 `scripts/validate.py` on 656ac2e, and the independent IR/backend and
+  type-system reviews of that head (log entry of 2026-11-16, "Review and validation of the pushed switch").
 
 ### Phase 3: Array
 
@@ -120,16 +121,20 @@ remain separate gates.
   after three language-designer reviews, including the `-O0` amendment of 0025's gate.
 - [x] 0026 stage 1, characterization: tests on the builtin array that the switch must keep passing. Evidence: merged
   in #28 (eight e2e fixtures, `CompilerArrayCharacterizationTests`), `validate.py` on Windows and Linux (log).
-- [ ] 0026 stage 2, measurement: the cost of a library array's element access and drop against the builtin, the fixes
-  it requires (`alwaysinline` on the addressor, the `slot_address` intrinsic), and the gate numbers. Evidence so far:
-  the log entries of 2026-11-15; open until the measurement change is reviewed and merged.
+- [x] 0026 stage 2, measurement: the cost of a library array's element access and drop against the builtin, the fixes
+  it requires (`alwaysinline` on the addressor, the `slot_address` intrinsic), and the gate numbers. Evidence: the
+  log entries of 2026-11-15 and the Windows x64 gated measurements of 2026-11-16, which pass every section 4 limit
+  of 0026 (one rerun used for flat drop at -O2).
 - [x] 0026 stage 3, infrastructure: collections prelude/seam/source IDs, `place_address`, `stack_block`,
   `array_literal` and internal linkage. Evidence: commit 7a1d748's Windows/Linux validation and the integrated
   candidate's macOS validator, including 65 collection-role tests.
 - [ ] 0026 stage 4, the switch: the existing array API in Joyeer (constant-array clone boundaries, exact
   allocation/free sizes, `consumeEmpty` and its trap) as the bundled `Array`, with subscript, storage-path and
   exclusivity behavior, diagnostics and the characterization fixtures preserved; the cost gate of 0026 Section 4.
-  Implementation is green on macOS Debug/Release (1823/1823); the item stays open for the final cost/platform gates.
+  Green on macOS Debug/Release (1823/1823), Windows x64 and Linux x86_64 (`validate.py`), and the Windows x64 cost gate
+  passes (log, 2026-11-16). The item stays open until the user accepts the implementation amendments to 0026
+  (owned-element argument rule, closed literal protocol, wire flags, artificial `DISubprogram`s, diverging-call rule)
+  and the review fixes are validated.
 - [x] 0026 stage 5, cleanup: no `TypeKind::array` or array-specific executable opcode implementation remains.
   Type slot 10 and opcode slots 35-38 are reserved and rejected by the verifier; the wire is 23.
   Evidence: observed-failing removed-slot test, focused reviews and macOS Debug/Release validator 1823/1823.
