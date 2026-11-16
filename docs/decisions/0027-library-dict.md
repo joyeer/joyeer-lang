@@ -202,12 +202,16 @@ today and differs afterwards, that is listed as a change.
 
 ## Open questions
 
-1. Is the borrowed-address intrinsic acceptable as specified (read-only, call-scoped, direct call argument,
-   `borrowing` places allowed), or should the library receive the key already as an address from a role?
-2. Should non-admitted keys be rejected at the type (Decision 4), accepting that a program which only mentions such a
-   dictionary stops compiling, or should the late behavior be preserved by a type-level check that fires only on use?
-3. Role table: one generalized record (Decision 5) or a second parallel dictionary path? The record proposes the
-   former.
+Revision 1's three questions were answered by the user on 2026-11-16 (the recommendations of revision 2), and are
+now rules above:
+
+1. The borrowed-address intrinsic is acceptable as specified: read-only, call-scoped, a direct call argument only,
+   `borrowing` places allowed (Decision 3).
+2. Non-admitted key types are rejected at the type in the checker, accepting that a program which only mentions
+   `[Point: Int]` stops compiling (Decision 4).
+3. The role table is generalized into one role record; no parallel dictionary path (Decision 5).
+
+None remains open. Revision 2's review may raise more.
 
 ## Review
 
@@ -215,7 +219,7 @@ Revision 1 was reviewed 2026-11-16 by the language designer: revise. Folded into
 address capability added; the false key-admission claim corrected; the assignment form fixed to `&d[key] = value`;
 the contradiction with 0025 made an explicit amendment; the role table generalization, the seam, `dict_set` ordering,
 the wire version, the residual list, the process lessons and the visible changes stated; "constants if any" and
-`container_end` removed. Revision 2 has not been reviewed.
+`container_end` removed. Revision 2 has not been reviewed; the user answered its three open questions on 2026-11-16 (rules above).
 
 ## Evidence
 
