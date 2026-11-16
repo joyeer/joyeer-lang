@@ -620,8 +620,8 @@ claim this metadata. The body is still checked once. Structures with an implicit
 field of such a parameter remain subject to the ordinary linear/deinit restrictions.
 
 In the compiler-owned prelude only, size, alignment, stack slots, `move_in`, `move_out`, and the collection
-intrinsics below except `clone_at` (`destroy_range`, the two callback queries and `slot_address`) may operate on
-linear/must-transfer types. `destroy_at` and `needs_destroy` never accept one, and `clone_at` needs a copyable
+intrinsics below except `clone_at` (`destroy_range`, the two callback queries, `slot_address`, `stack_block` and
+`place_address`) may operate on linear/must-transfer types. `destroy_at` and `needs_destroy` never accept one, and `clone_at` needs a copyable
 type. The private affine task-block
 owner traps on abandonment rather than attempting to destroy a raw linear task input or result.
 `@compiler_role(...)` is a closed compatibility role for prelude declarations: it selects the

@@ -31,11 +31,12 @@ The model covers:
 - user `struct` and `enum` nominal types;
 - function types with exact parameter access effects, and one distinct
   `TypeKind::typeParameter` per generic parameter or protocol `Self`;
-- `[T]`, `[K: V]`, `T?`, and `Result<T, E>`;
+- `[K: V]`; and the role-bound library structures `[T]` (the `array_type` role, sugar for the library
+  `Array<T>`), `T?`, and `Result<T, E>`;
 - a dedicated error type that suppresses cascading diagnostics.
 
-Built-in generic containers are compiler-known type constructors with fixed
-arity; user-defined generic types remain deferred. An application such as
+`[K: V]` is a compiler-known type constructor with fixed arity; `[T]`, `T?` and `Result<T, E>` are ordinary
+generic structures and enums of the bundled prelude, found through their `@compiler_role` and never by spelling. An application such as
 `Result<[Int], Error>` retains both nested concrete arguments; it is not
 collapsed to the name resolver's coarse `Result` symbol.
 

@@ -990,8 +990,8 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "e2e;llvm-backend;runtime;ownership;consuming;deinit"
     )
 
-    # The destroy helper that runs a `deinit` has no debug scope of its own; at -O1 and above
-    # with full debug info the optimizer crashed until the helper was kept out of line.
+    # The destroy helper that runs a `deinit` carries an artificial debug scope of its own (it was once kept
+    # out of line instead); at -O1 and above with full debug info this must not crash the optimizer.
     foreach(level 0 1 2)
         add_test(NAME E2EExecutableDeinitFullDebugO${level}
                 COMMAND ${CMAKE_COMMAND}

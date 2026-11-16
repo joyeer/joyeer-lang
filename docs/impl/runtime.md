@@ -28,10 +28,11 @@ string storage and operations, arrays and dictionaries, scalar and string
 printing, panic and bounds traps, and the process entry and allocation-balance
 check. File, filesystem, process and standard-stream operations are in the
 `System` module instead (see Host operations below).
-Generated Joyeer arithmetic and typed array accesses use inline LLVM checks;
-the runtime has no checked-arithmetic or array-indexing entry points of its own
-(the former ones were removed in runtime plan stage 0). String and dictionary accesses use runtime
-operations. The LLVM emitter generates `joyeer_main` and implements
+Generated Joyeer arithmetic uses inline LLVM checks, and array element access is a bounds-checked method of the
+library `Array<T>` (`lib/Runtime/collections.joyeer`); the runtime has no checked-arithmetic or
+array-indexing entry points of its own (the former ones were removed in runtime plan stage 0). The runtime does
+provide the array ownership ABI (`joyeer_array_*_abi`) that the library type calls. String and dictionary
+accesses use runtime operations. The LLVM emitter generates `joyeer_main` and implements
 `String.utf8()` using the runtime's owned-array creation API; neither is a
 dedicated C runtime operation.
 
@@ -62,8 +63,8 @@ thread, 64 for a mutex or condition, all zeroed), so the functions never allocat
 shape, with an explicit 8 MiB stack on every platform, and at most 256 threads may be unjoined at
 once (`JOYEER_THREAD_LIMIT` beyond that). The rest of the runtime is thread safe from P4 on (next section).
 
-On Linux and on the Windows own-entry link the object is linked only into a program that
-references it. The Windows C-startup link (`/WHOLEARCHIVE`) and macOS (`-force_load`) load every
+On Linux, macOS and the Windows own-entry link the object is linked only into a program that
+references it. The Windows C-startup link (`/WHOLEARCHIVE`) loads every
 member, so those programs also import the thread functions. The tests are
 `tests/unittests/runtime/thread_test.cpp` (start and join, many threads, visibility after join,
 mutual exclusion, wait and wake, the thread limit, null arguments, and `static_assert`s that the
