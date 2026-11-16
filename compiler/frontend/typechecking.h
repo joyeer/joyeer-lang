@@ -424,6 +424,8 @@ public:
     [[nodiscard]] bool isArrayRoleType(TypeId type) const;
     // The method of the `array_type` struct of `type` that has `role`, or empty (decision 0025).
     [[nodiscard]] std::optional<semantic::SymbolId> arrayRoleMethod(TypeId type, semantic::LibraryRole role) const;
+    // The method of `role` of the role-bound collection `type` is an instance of, if any.
+    [[nodiscard]] std::optional<semantic::SymbolId> collectionRoleMethod(TypeId type, semantic::LibraryRole role) const;
     // Consuming parameters declared with exactly the role's owned type parameter accept owned arguments.
     [[nodiscard]] bool isOwnedArgumentContext(semantic::SymbolId function, size_t parameter) const;
     // The consuming method that ends a linear value of `type`. With `leaf`, arrays are looked through and the
@@ -479,8 +481,14 @@ private:
     std::unordered_map<semantic::SymbolId, std::vector<semantic::SymbolId>> constraintLists;
     std::unordered_map<semantic::NodeId, GenericCall> genericCalls;
     std::unordered_map<semantic::NodeId, TypeId> layoutIntrinsicTypes;
-    // For each `array_type` struct: its `array_element`, `array_copy` and `container_end` methods.
-    std::unordered_map<semantic::SymbolId, std::array<semantic::SymbolId, 4>> arrayRoleMethods;
+    // A validated role-bound collection declaration (decisions 0025, 0026, 0027): its structure role, the type
+    // parameters it owns elements of, in declaration order, and the method of each method role the compiler calls.
+    struct CollectionRole {
+        semantic::LibraryRole kind = semantic::LibraryRole::none;
+        std::vector<semantic::SymbolId> ownedParameters;
+        std::unordered_map<semantic::LibraryRole, semantic::SymbolId> methods;
+    };
+    std::unordered_map<semantic::SymbolId, CollectionRole> collectionRoles;
     std::vector<Conformance> conformanceList;
     std::vector<Instance> instanceList;
     std::map<std::pair<semantic::SymbolId, std::vector<TypeId>>, size_t> instanceIndices;

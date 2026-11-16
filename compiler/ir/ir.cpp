@@ -454,9 +454,10 @@ VerificationResult Verifier::verify(const Module& module) const {
         }
         for (const auto& field : structure.fields) copyDependents[field.type].push_back(structure.type);
         const auto type = types.find(structure.type);
-        if (structure.role == StructureRole::array && type != types.end() &&
-            type->second->arguments.size() == 1) {
-            copyDependents[type->second->arguments[0]].push_back(structure.type);
+        if (structure.role != StructureRole::none && type != types.end() &&
+            collectionElementArgument(structure.role) < type->second->arguments.size()) {
+            copyDependents[type->second->arguments[collectionElementArgument(structure.role)]]
+                    .push_back(structure.type);
         }
     }
     for (const auto& enumeration : module.enumerations) {
@@ -2137,7 +2138,12 @@ VerificationResult Verifier::verify(const Module& module) const {
                             if (fromAddressor && !callee->second->parameters.empty() &&
                                 types.contains(callee->second->parameters[0].value.type)) {
                                 const auto& receiver = *types.at(callee->second->parameters[0].value.type);
-                                if (!receiver.arguments.empty()) addressedElement = receiver.arguments[0];
+                                const auto collection = structures.find(receiver.id);
+                                const auto element = collection != structures.end()
+                                        ? collectionElementArgument(collection->second->role) : 0;
+                                if (element < receiver.arguments.size()) {
+                                    addressedElement = receiver.arguments[element];
+                                }
                             }
                         }
                         if (fromAddressor && instruction.result.has_value() &&

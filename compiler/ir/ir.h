@@ -292,6 +292,16 @@ enum class StructureRole : uint8_t {
     array,
 };
 
+// The type argument of a role-bound collection that is the element an addressor returns and whose copy the
+// collection's copy depends on (decisions 0026, 0027): the only argument of an array.
+inline size_t collectionElementArgument(StructureRole role) {
+    switch (role) {
+        case StructureRole::array: return 0;
+        case StructureRole::none: break;
+    }
+    return 0;
+}
+
 struct StructureDefinition {
     semantic::SymbolId symbol = semantic::invalidSymbolId;
     TypeId type = typing::invalidTypeId;

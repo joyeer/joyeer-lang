@@ -626,3 +626,16 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   `lib/Runtime/core/dictionaries.joyeer` before running; all 40 matching tests pass on Windows x64 Debug. Not yet
   pinned: the backend-only failure of a used non-admitted key (`llvm.unsupported-type`, no span) and the allocation
   counter.
+- 2026-11-17: `scripts/validate.py` on 8aed3ea (0027 stage 1) passes: Windows AMD64 Debug and Release `ctest` 1897/1897
+  (`Fern.Workspace`, `Fern.Manifest`, `Compression.Interoperability` passed only on rerun), `fern test` 7/7; Linux
+  x86_64 1873/1873 and 7/7, no reruns. The validated Release compiler is preserved as the builtin-dictionary baseline in
+  `out/baseline-builtin-dict` (not in the repository).
+- 2026-11-17: 0027 stage 2a (role-table refactor, no behavior change). The checker's four-slot `arrayRoleMethods`
+  table becomes a `CollectionRole` record (structure role, owned type parameters, method-role map); method-role
+  registration and the owner check are table-driven (`collectionOwnerRole`, `requiredCollectionMethodRoles`); the
+  owned-argument rule reads the record's owned parameters; the IR verifier and the copy-dependency graph take the
+  element type argument from the structure role (`collectionElementArgument`). Evidence: 482 matching tests pass on
+  Windows x64 Debug, and the LLVM IR of 24 array, dictionary, task and hello fixtures at O0 and O2 is byte-identical
+  to the baseline compiler's (48 of 48). Deliberately left for stage 5, where the dictionary roles give them a second
+  case and tests: the per-role shape checks and messages, the `index`-typed addressor shape, the literal-factory and
+  packing verifier, the single-array-symbol checks in `ir.cpp`.

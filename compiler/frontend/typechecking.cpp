@@ -18,6 +18,29 @@ namespace joyeer::typing {
 
 namespace {
 
+// The collection structure role that owns a method role (decisions 0025-0027), or `none`.
+semantic::LibraryRole collectionOwnerRole(semantic::LibraryRole method) {
+    switch (method) {
+        case semantic::LibraryRole::arrayElement:
+        case semantic::LibraryRole::arrayCopy:
+        case semantic::LibraryRole::containerEnd:
+        case semantic::LibraryRole::arrayLiteral:
+            return semantic::LibraryRole::arrayType;
+        default:
+            return semantic::LibraryRole::none;
+    }
+}
+
+// The method roles a collection structure role requires exactly once, with their annotation names.
+std::vector<std::pair<semantic::LibraryRole, const char*>> requiredCollectionMethodRoles(
+        semantic::LibraryRole collection) {
+    if (collection != semantic::LibraryRole::arrayType) return {};
+    return { { semantic::LibraryRole::arrayElement, "array_element" },
+             { semantic::LibraryRole::arrayCopy, "array_copy" },
+             { semantic::LibraryRole::containerEnd, "container_end" },
+             { semantic::LibraryRole::arrayLiteral, "array_literal" } };
+}
+
 void combineHash(size_t& seed, size_t value) {
     seed ^= value + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
 }
@@ -513,31 +536,38 @@ bool TypeCheckedModel::isOwnedArgumentContext(semantic::SymbolId function, size_
     const auto* owner = method != nullptr && method->containingSymbol.has_value()
             ? semanticModelValue->symbol(*method->containingSymbol) : nullptr;
     const auto* signature = callable(function);
+    const auto record = owner != nullptr ? collectionRoles.find(owner->id) : collectionRoles.end();
     if (method == nullptr || method->kind != semantic::SymbolKind::method ||
         owner == nullptr || owner->libraryRole != semantic::LibraryRole::arrayType ||
-        !arrayRoleMethods.contains(owner->id) || owner->typeParameters.size() != 1 ||
+        record == collectionRoles.end() ||
         !method->callable.has_value() || parameter >= method->callable->parameters.size() ||
         method->callable->parameters[parameter].access != syntax::AccessEffect::consuming ||
         signature == nullptr || parameter >= signature->parameters.size()) {
         return false;
     }
+    // An owned argument context is a consuming parameter declared with exactly one of the type parameters the
+    // collection owns elements of (decision 0026 A2).
     const auto* declared = typeContext.type(signature->parameters[parameter]);
     return declared != nullptr && declared->kind == TypeKind::typeParameter &&
-            declared->symbol == owner->typeParameters[0];
+            std::find(record->second.ownedParameters.begin(), record->second.ownedParameters.end(),
+                      declared->symbol) != record->second.ownedParameters.end();
 }
 
 std::optional<semantic::SymbolId> TypeCheckedModel::arrayRoleMethod(
         TypeId type, semantic::LibraryRole role) const {
     if (!isArrayRoleType(type)) return std::nullopt;
-    const auto found = arrayRoleMethods.find(typeContext.type(type)->symbol);
-    if (found == arrayRoleMethods.end()) return std::nullopt;
-    switch (role) {
-        case semantic::LibraryRole::arrayElement: return found->second[0];
-        case semantic::LibraryRole::arrayCopy: return found->second[1];
-        case semantic::LibraryRole::containerEnd: return found->second[2];
-        case semantic::LibraryRole::arrayLiteral: return found->second[3];
-        default: return std::nullopt;
-    }
+    return collectionRoleMethod(type, role);
+}
+
+std::optional<semantic::SymbolId> TypeCheckedModel::collectionRoleMethod(
+        TypeId type, semantic::LibraryRole role) const {
+    const auto* record = typeContext.type(type);
+    if (record == nullptr || record->kind != TypeKind::structure) return std::nullopt;
+    const auto found = collectionRoles.find(record->symbol);
+    if (found == collectionRoles.end()) return std::nullopt;
+    const auto method = found->second.methods.find(role);
+    if (method == found->second.methods.end()) return std::nullopt;
+    return method->second;
 }
 
 bool TypeCheckedModel::isDeclaredLinear(TypeId type) const {
@@ -1250,23 +1280,20 @@ private:
                                 "capacity, in that order";
                         break;
                     }
+                    // Every method role the collection requires, each exactly once (decision 0026's four for an
+                    // array); the record keeps them for lowering and instance discovery.
                     std::unordered_map<semantic::LibraryRole, int> methodRoles;
-                    std::array<semantic::SymbolId, 4> roleMethods { semantic::invalidSymbolId,
-                            semantic::invalidSymbolId, semantic::invalidSymbolId, semantic::invalidSymbolId };
+                    TypeCheckedModel::CollectionRole record;
+                    record.kind = symbol.libraryRole;
+                    record.ownedParameters = *parameters;
                     for (const auto& member : model->semanticModelValue->symbols()) {
-                        if (member.kind == semantic::SymbolKind::method && member.containingSymbol == symbol.id) {
+                        if (member.kind == semantic::SymbolKind::method && member.containingSymbol == symbol.id &&
+                            collectionOwnerRole(member.libraryRole) == symbol.libraryRole) {
                             ++methodRoles[member.libraryRole];
-                            if (member.libraryRole == semantic::LibraryRole::arrayElement) roleMethods[0] = member.id;
-                            if (member.libraryRole == semantic::LibraryRole::arrayCopy) roleMethods[1] = member.id;
-                            if (member.libraryRole == semantic::LibraryRole::containerEnd) roleMethods[2] = member.id;
-                            if (member.libraryRole == semantic::LibraryRole::arrayLiteral) roleMethods[3] = member.id;
+                            record.methods[member.libraryRole] = member.id;
                         }
                     }
-                    for (const auto& [role, roleName] : std::array<std::pair<semantic::LibraryRole, const char*>, 4> {{
-                             { semantic::LibraryRole::arrayElement, "array_element" },
-                             { semantic::LibraryRole::arrayCopy, "array_copy" },
-                             { semantic::LibraryRole::containerEnd, "container_end" },
-                             { semantic::LibraryRole::arrayLiteral, "array_literal" } }}) {
+                    for (const auto& [role, roleName] : requiredCollectionMethodRoles(symbol.libraryRole)) {
                         if (methodRoles[role] != 1) {
                             roleFailure = std::string("the array_type role requires exactly one method with the role ") +
                                     roleName;
@@ -1274,7 +1301,7 @@ private:
                         }
                     }
                     matches = roleFailure.empty();
-                    if (matches) model->arrayRoleMethods[symbol.id] = roleMethods;
+                    if (matches) model->collectionRoles[symbol.id] = std::move(record);
                     break;
                 }
                 case semantic::LibraryRole::arrayElement:
@@ -1289,7 +1316,7 @@ private:
                     const auto* owner = symbol.containingSymbol.has_value() ? symbolOf(*symbol.containingSymbol)
                                                                             : nullptr;
                     if (symbol.kind != semantic::SymbolKind::method || owner == nullptr ||
-                        owner->libraryRole != semantic::LibraryRole::arrayType || !symbol.callable.has_value() ||
+                        owner->libraryRole != collectionOwnerRole(symbol.libraryRole) || !symbol.callable.has_value() ||
                         !symbol.callable->receiver.has_value() || signature == nullptr) {
                         roleFailure = "the " + roleName + " role requires a method of an array_type struct";
                         break;
