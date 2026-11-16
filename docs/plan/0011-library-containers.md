@@ -604,3 +604,8 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   in each, `fern test` 7/7, no reruns. Open follow-ups accepted with revision 4: debug-info verification after the
   optimization pipeline and an array fixture at `-O1`/`-O2` with `-gfull`, the spec text of the diverging-call rule,
   stricter verifier mutation tests, and the `[Never]` compiler crashes (closed by 0026 amendments A10, arrays, and A11, dictionary keys and values).
+- 2026-11-16: `scripts/validate.py` on e1a4951 (the switch plus review fixes and 0026 amendments A10 and A11, which
+  reject `Never` as an array element and as a dictionary key or value) passes. Windows AMD64: Debug and Release
+  `ctest` 1857/1857 in each (`ValidationScriptTests`, `Fern.Manifest`, `Fern.Workspace`, `Compression.Interoperability`
+  passed only on rerun), `fern test` 7/7. Linux x86_64: Debug and Release `ctest` 1833/1833, `fern test` 7/7, no
+  reruns. Phase 4 started: [0027](../decisions/0027-library-dict.md) drafted (proposed, not yet reviewed).
