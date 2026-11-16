@@ -4687,8 +4687,13 @@ private:
             const syntax::CallExprSyntax::Ptr& expression,
             ReceiverMarker receiverMarker = ReceiverMarker::none,
             std::optional<TypeId> expectedResult = std::nullopt) {
-        // A `place_address` call is accepted only as a direct argument of another call (decision 0026).
+        // A `place_address` call is accepted only as a direct argument of another call (decision 0026), and not of
+        // an initializer or enum case, which would store the address beyond the call (stage 2b review).
+        const auto outerTarget = model->callTarget(expression);
+        const auto* outerSymbol = outerTarget.has_value() ? model->semanticModelValue->symbol(*outerTarget) : nullptr;
+        const bool outerStores = outerSymbol != nullptr && storesItsArguments(*outerSymbol);
         for (const auto& argument : expression->arguments) {
+            if (outerStores) break;
             auto direct = argument->value;
             while (direct != nullptr && direct->kind == syntax::Kind::parenthesizedExpr) {
                 direct = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(direct)->expression;
@@ -5185,7 +5190,9 @@ private:
         if (name == "joyeer_intrinsic_needs_destroy") return model->typeContext.boolType();
         if (name == "joyeer_intrinsic_key_kind") {
             // Only the four admitted key types have a key kind; a generic one is checked per instance in lowering.
-            if (type != error && !model->typeContext.mentionsTypeParameter(type) && !admittedKeyKind(type)) {
+            const auto* written = model->typeContext.type(type);
+            const bool parameter = written != nullptr && written->kind == TypeKind::typeParameter;
+            if (type != error && type != model->typeContext.neverType() && !parameter && !admittedKeyKind(type)) {
                 report(TypeCheckingDiagnosticId::invalidTypeArgument, expression->typeArguments[0]->span,
                        "'" + name + "' needs a dictionary key type, but '" + model->typeContext.displayName(type) +
                                "' is not one",
@@ -5214,7 +5221,8 @@ private:
             const auto actual = checkExpression(placeArgument->value,
                     type == error ? std::nullopt : std::optional<TypeId>(type));
             if (actual.has_value() && type != error) requireAssignable(*actual, type, placeArgument->value->span);
-            if (!storagePath(placeArgument->value).has_value()) {
+            requireExactPlaceType(actual, type, name, placeArgument->value->span);
+            if (!isNamedLocalPlace(placeArgument->value)) {
                 report(TypeCheckingDiagnosticId::invalidCallArguments, placeArgument->value->span,
                        "'" + name + "' needs a named place: a local, a parameter or a field path of those",
                        "bind the value to a local first");
@@ -5236,6 +5244,7 @@ private:
             const auto actual = checkExpression(placeArgument->value,
                     type == error ? std::nullopt : std::optional<TypeId>(type));
             if (actual.has_value() && type != error) requireAssignable(*actual, type, placeArgument->value->span);
+            requireExactPlaceType(actual, type, name, placeArgument->value->span);
             checkCallArgumentAccess(target, 0, *placeArgument);
             return model->typeContext.intType();
         }
@@ -6819,6 +6828,48 @@ private:
             }
         }
         return result;
+    }
+
+    // A place `borrow_address` may take (decision 0027): a local binding, a parameter (including `self`) or a field path
+    // of those; never a subscript, a computed member, a top-level constant or an enum case.
+    bool isNamedLocalPlace(const syntax::ExprPtr& expression) const {
+        if (expression == nullptr) return false;
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return isNamedLocalPlace(std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+        }
+        if (expression->kind == syntax::Kind::nameExpr) {
+            const auto symbol = model->referencedSymbol(expression);
+            const auto* declared = symbol.has_value() ? model->semanticModelValue->symbol(*symbol) : nullptr;
+            if (declared == nullptr) return false;
+            if (declared->kind == semantic::SymbolKind::parameter ||
+                declared->kind == semantic::SymbolKind::patternBinding) {
+                return true;
+            }
+            const auto* scope = model->semanticModelValue->scope(declared->ownerScope);
+            return declared->kind == semantic::SymbolKind::binding && scope != nullptr &&
+                    scope->kind != semantic::ScopeKind::file && scope->kind != semantic::ScopeKind::module &&
+                    scope->kind != semantic::ScopeKind::prelude;
+        }
+        if (expression->kind == syntax::Kind::memberExpr) {
+            const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression);
+            const auto symbol = model->referencedSymbol(member);
+            const auto* declared = symbol.has_value() ? model->semanticModelValue->symbol(*symbol) : nullptr;
+            return declared != nullptr && declared->kind == semantic::SymbolKind::structureField &&
+                    isNamedLocalPlace(member->base);
+        }
+        return false;
+    }
+
+    // The place of `borrow_address` or `place_address` has exactly the type the intrinsic names: assignability would
+    // let an `Int` place stand for an `Int?` layout (stage 2b review).
+    void requireExactPlaceType(std::optional<TypeId> actual, TypeId type, const std::string& name, SourceSpan span) {
+        const auto error = model->typeContext.errorType();
+        if (!actual.has_value() || *actual == type || *actual == error || type == error) return;
+        if (!model->typeContext.isAssignable(*actual, type)) return;  // already reported as a type mismatch
+        report(TypeCheckingDiagnosticId::typeMismatch, span,
+               "the place of '" + name + "' has type '" + model->typeContext.displayName(*actual) +
+                       "', not exactly '" + model->typeContext.displayName(type) + "'",
+               "name the place's own type as the type argument");
     }
 
     // The four dictionary key types the runtime compares by kind (decision 0027, spec 20.5).
