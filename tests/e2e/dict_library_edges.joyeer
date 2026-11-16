@@ -1,0 +1,44 @@
+// Characterization (plan 0011 phase 4, decision 0027): `Void` values (duplicate literal keys, repeated inserts, get),
+// a dictionary inside an array, a recursive type through a dictionary, and a dictionary moved into a task.
+struct Node {
+    var name: String
+    var kids: [String: Node]
+}
+
+func work(input: consuming [String: Int]): Int {
+    return input.count
+}
+
+func main() {
+    let units: [Int: Void] = [1: (), 2: (), 1: ()]
+    print(value: units.count)
+    var marks: [String: Void] = [:]
+    &marks["x"] = ()
+    &marks["x"] = ()
+    &marks["y"] = ()
+    print(value: marks.count)
+    match marks.get(key: "x") {
+        .Some(()) => print(value: "some"),
+        .None => print(value: "none"),
+    }
+    match marks.get(key: "z") {
+        .Some(()) => print(value: "some"),
+        .None => print(value: "none"),
+    }
+
+    var list: [[String: Int]] = [["a": 1]]
+    &list[0]["b"] = 2
+    let snapshot = list
+    &list[0]["c"] = 3
+    print(value: list[0].count * 10 + snapshot[0].count)
+
+    var root = Node(name: "r", kids: [:])
+    &root.kids["a"] = Node(name: "a", kids: ["b": Node(name: "b", kids: [:])])
+    print(value: root.kids["a"].kids["b"].name)
+    print(value: root.kids.count)
+
+    let table: [String: Int] = ["a": 1, "b": 2]
+    let handle = spawn(function: work, input: consume table)
+    let size = consume handle.join()
+    print(value: size)
+}

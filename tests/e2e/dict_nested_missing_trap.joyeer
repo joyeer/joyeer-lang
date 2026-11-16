@@ -1,0 +1,12 @@
+// Characterization (plan 0011 phase 4, decision 0027). CHANGES WITH 0027: today the base of a nested assignment is
+// addressed before the right-hand side, so a missing outer key traps before `rhs` prints; after the switch the value
+// is evaluated first (spec 4.4.3) and `rhs` prints before the trap.
+func f(): Int {
+    print(value: "rhs")
+    return 1
+}
+
+func main() {
+    var outer: [String: [String: Int]] = ["a": ["b": 1]]
+    &outer["missing"]["b"] = f()
+}

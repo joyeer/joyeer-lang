@@ -614,3 +614,15 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   reruns. Phase 4 started: [0027](../decisions/0027-library-dict.md) drafted (proposed, not yet reviewed).
 - 2026-11-16: [0027](../decisions/0027-library-dict.md) (library `Dict`) accepted by the user for stages 1-4 at
   revision 4. Next: stage 1, the characterization tests on the builtin dictionary.
+- 2026-11-16: 0027 stage 1 (characterization), tests only, on the builtin dictionary.
+  `CompilerDictCharacterizationTests` (15 tests) pins the diagnostics, three marked `CHANGES WITH 0027`
+  (non-admitted keys pass the checker; `d.address` is an unknown member; a user `Dict` captures `[K: V]` member
+  lookup) plus `==` type-checking (checker only: compiling it asserts in a Debug LLVM build). Five e2e fixtures at
+  O0-O3: `dict_ownership_order` (replacement, duplicate-key literal, destruction order), `dict_set_order` (key then
+  value, `?` inserts nothing, growth from the right-hand side, a key read from the same dictionary, nested
+  assignment, a value moved from another entry), `dict_library_edges` (`Void` values, a dictionary in an array, a
+  recursive type, a task input), and two traps, `dict_trap_order` and `dict_nested_missing_trap` (`CHANGES WITH
+  0027`: the trap precedes the right-hand side today). Expected outputs were derived from
+  `lib/Runtime/core/dictionaries.joyeer` before running; all 40 matching tests pass on Windows x64 Debug. Not yet
+  pinned: the backend-only failure of a used non-admitted key (`llvm.unsupported-type`, no span) and the allocation
+  counter.

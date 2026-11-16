@@ -115,6 +115,12 @@ joyeer_discover_tests(CompilerArrayCharacterizationTests
         PROPERTIES LABELS array-characterization
 )
 
+add_executable(CompilerDictCharacterizationTests dict_characterization_test.cpp)
+target_link_libraries(CompilerDictCharacterizationTests PRIVATE GTest::gtest_main JoyeerCompilerCore)
+joyeer_discover_tests(CompilerDictCharacterizationTests
+        PROPERTIES LABELS dict-characterization
+)
+
 add_executable(CompilerPlatformTests platform_test.cpp)
 target_link_libraries(CompilerPlatformTests PRIVATE GTest::gtest_main JoyeerCompilerCore)
 joyeer_discover_tests(CompilerPlatformTests
@@ -1077,6 +1083,20 @@ if(JOYEER_CLANG_EXECUTABLE)
             E2EArrayLibraryEdges array_library_edges
             "4\n1\n3\n"
             0 1 2 3)
+    # Dictionary characterization (plan 0011 phase 4, decision 0027 stage 1); outputs derived from the runtime
+    # source (lib/Runtime/core/dictionaries.joyeer), not taken from the compiler.
+    add_joyeer_native_regression(
+            E2EDictOwnershipOrder dict_ownership_order
+            "10\n1\n11\n4\n2\n12\n5\n6\n2\n3\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EDictSetOrder dict_set_order
+            "first\n2\nlate\nnone\n0\n2\n3\n7\n1\n11\n11\n1\n0\n2\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EDictLibraryEdges dict_library_edges
+            "2\n2\nsome\nnone\n32\nb\n1\n2\n"
+            0 1 2 3)
     add_joyeer_native_regression(
             E2EArrayDivergingArgument array_diverging_argument
             "7\n10\n10\n11\n12\n42\n"
@@ -1444,6 +1464,11 @@ abcdabcd
             E2EChannelDeadlock channel_deadlock "channel deadlock")
     add_joyeer_native_checked_trap(
             E2EUnitDictionaryMissing unit_dictionary_missing "dictionary key not found")
+    add_joyeer_native_checked_trap(
+            E2EDictTrapOrder dict_trap_order "^x[^0-9a-zA-Z]+Joyeer runtime error: dictionary key not found")
+    # CHANGES WITH 0027: after the switch `rhs` prints before the trap.
+    add_joyeer_native_checked_trap(
+            E2EDictNestedMissingTrap dict_nested_missing_trap "^Joyeer runtime error: dictionary key not found")
 
     # Runtime-loaded operands keep these checks from folding to unconditional
     # panic calls; E2EOptimizedOverflowTrap still covers constant overflow.
