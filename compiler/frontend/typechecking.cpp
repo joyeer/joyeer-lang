@@ -1637,10 +1637,10 @@ private:
             case syntax::Kind::dictionaryType: {
                 const auto dictionary =
                         std::static_pointer_cast<syntax::DictionaryTypeSyntax>(syntaxType);
-                const auto key = resolveType(dictionary->key).value_or(
-                        model->typeContext.errorType());
-                const auto value = resolveType(dictionary->value).value_or(
-                        model->typeContext.errorType());
+                const auto key = rejectNeverDictionaryPart(resolveType(dictionary->key).value_or(
+                        model->typeContext.errorType()), dictionary->key->span, "key");
+                const auto value = rejectNeverDictionaryPart(resolveType(dictionary->value).value_or(
+                        model->typeContext.errorType()), dictionary->value->span, "value");
                 rejectInvalidDictionaryKey(key, dictionary->key->span);
                 result = model->typeContext.dictionaryType(key, value);
                 break;
@@ -6765,6 +6765,17 @@ private:
         return model->typeContext.errorType();
     }
 
+    // The same rule for a dictionary's key or value type (decision 0026, A11).
+    TypeId rejectNeverDictionaryPart(TypeId type, SourceSpan span, const char* part, bool literal = false) {
+        if (type != model->typeContext.neverType()) return type;
+        report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
+               std::string("the ") + part + " type of a dictionary cannot be 'Never'",
+               literal ? "'Never' has no values (spec 2.9); give the literal a contextual type, or put an entry "
+                         "that has a value first"
+                       : "'Never' has no values, so a dictionary of it could never hold an entry (spec 2.9)");
+        return model->typeContext.errorType();
+    }
+
     TypeId checkArray(
             const syntax::ArrayExprSyntax::Ptr& expression,
             std::optional<TypeId> expected) {
@@ -6821,6 +6832,9 @@ private:
                 valueType = expectedType->arguments[1];
             }
         }
+        // The annotation was already rejected (for example `[String: Never]`): no follow-on error for its literal.
+        const bool annotationRejected = expected.has_value() && *expected == model->typeContext.errorType();
+        if (expression->entries.empty() && annotationRejected) return model->typeContext.errorType();
         if (expression->entries.empty() && (!keyType.has_value() || !valueType.has_value())) {
             report(
                     TypeCheckingDiagnosticId::missingContextualType,
@@ -6829,6 +6843,7 @@ private:
             return model->typeContext.errorType();
         }
 
+        const auto diagnosticsBefore = diagnostics.size();
         for (const auto& entry : expression->entries) {
             permitMove(entry->value);
             const auto actualKey = checkExpression(entry->key, keyType).value_or(
@@ -6842,9 +6857,16 @@ private:
             if (!valueType.has_value()) valueType = actualValue;
             else requireAssignable(actualValue, *valueType, entry->value->span);
         }
-        rejectInvalidDictionaryKey(*keyType, expression->entries.empty()
+        // `Never` is reported once: not again when the annotation was rejected or an entry already had an error.
+        if ((*keyType == model->typeContext.neverType() || *valueType == model->typeContext.neverType()) &&
+            (annotationRejected || diagnostics.size() != diagnosticsBefore)) {
+            return model->typeContext.errorType();
+        }
+        const auto key = rejectNeverDictionaryPart(*keyType, expression->span, "key", true);
+        const auto value = rejectNeverDictionaryPart(*valueType, expression->span, "value", true);
+        rejectInvalidDictionaryKey(key, expression->entries.empty()
                 ? expression->span : expression->entries.front()->key->span);
-        return model->typeContext.dictionaryType(*keyType, *valueType);
+        return model->typeContext.dictionaryType(key, value);
     }
 };
 

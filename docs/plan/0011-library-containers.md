@@ -603,5 +603,4 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   `Fern.Workspace` passed only on rerun), `fern test` 7/7. Linux x86_64: Debug and Release build, `ctest` 1830/1830
   in each, `fern test` 7/7, no reruns. Open follow-ups accepted with revision 4: debug-info verification after the
   optimization pipeline and an array fixture at `-O1`/`-O2` with `-gfull`, the spec text of the diverging-call rule,
-  stricter verifier mutation tests, and the `[Never]` compiler crashes (closed for arrays by 0026 amendment A10;
-  the dictionary-value case `[String: Never]` is still open).
+  stricter verifier mutation tests, and the `[Never]` compiler crashes (closed by 0026 amendments A10, arrays, and A11, dictionary keys and values).

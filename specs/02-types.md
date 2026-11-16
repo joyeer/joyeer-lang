@@ -385,7 +385,9 @@ or inferred from a literal such as `[return]`: such an array could never hold an
 element, and iterating or indexing it would bind a value that cannot exist. It is
 rejected with `type-checking.invalid-type-argument`, like `Never` in any other
 generic. `Never` inside an optional element (`[Never?]`) is an ordinary element,
-because `.None` is a value.
+because `.None` is a value. The same holds for a dictionary: `Never` is neither a key
+nor a value type (`[String: Never]`, `[Never: Int]`, or inferred from a literal such as
+`["a": return]`).
 
 `Never` may appear in a signature as an explicit "this function never returns"
 marker:

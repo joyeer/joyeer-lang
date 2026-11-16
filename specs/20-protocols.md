@@ -426,7 +426,7 @@ Diagnostics follow the stable-ID and source-span rules of
 | `type-checking.cannot-infer-type-parameter` | No argument determines a type parameter |
 | `type-checking.conflicting-type-argument` | Arguments imply different types for one parameter |
 | `type-checking.linear-type-argument` | A linear type inferred as a type argument |
-| `type-checking.invalid-type-argument` | `Never` inferred as a type argument or written as an array element; a type parameter as a `Dict` key |
+| `type-checking.invalid-type-argument` | `Never` inferred as a type argument or written as an array element or dictionary key or value; a type parameter as a `Dict` key |
 | `type-checking.unknown-member-on-type-parameter` | A member not provided by the constraint |
 | `type-checking.generic-native-binding` | Generics on a C binding (§19) |
 | `type-checking.expanding-generic-recursion` | A cycle of generic calls whose type arguments grow |

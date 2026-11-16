@@ -217,6 +217,26 @@ TEST(ArrayCharacterization, NeverIsNotAnArrayElement) {
     EXPECT_EQ(diagnose("func f(a: [Never?]) {}\nfunc main() {}\n"), "");
 }
 
+// The same rule as for arrays (0026, A10/A11): a dictionary of `Never` keys or values could hold no entry, and
+// `d["a"]` on one binds a value that cannot exist (the compiler used to segfault on it).
+TEST(ArrayCharacterization, NeverIsNotADictionaryKeyOrValue) {
+    for (const auto* source : {
+                 "func f(d: [String: Never]) {}\nfunc main() {}\n",
+                 "func main() { let d: [String: Never] = [:]\n let x = d[\"a\"] }\n",
+                 "func f(d: [Never: Int]) {}\nfunc main() {}\n",
+                 "func f(): [String: [String: Never]] { return [:] }\nfunc main() {}\n",
+                 "func main() { let d = [\"a\": return] }\n",
+         }) {
+        const auto text = diagnose(source);
+        EXPECT_TRUE(contains(text, "type-checking.invalid-type-argument")) << source << "\n" << text;
+        EXPECT_TRUE(contains(text, "of a dictionary cannot be 'Never'")) << source << "\n" << text;
+        EXPECT_FALSE(contains(text, "missing-contextual-type")) << source << "\n" << text;
+    }
+    // A `Never?` value is an ordinary value, and a dictionary with a real value type may start with a diverging one.
+    EXPECT_EQ(diagnose("func f(d: [String: Never?]) {}\nfunc main() {}\n"), "");
+    EXPECT_FALSE(contains(diagnose("func main() { let d: [String: Int] = [\"a\": return] }\n"), "of a dictionary cannot"));
+}
+
 TEST(ArrayCharacterization, AnyIsNotSyntax) {
     const auto any = diagnose("func g(a: [Any]) {}\nfunc main() {}\n");
     EXPECT_TRUE(contains(any, "Syntax 'Any' is not supported")) << any;
