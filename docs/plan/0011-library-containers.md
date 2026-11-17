@@ -759,3 +759,6 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   reported by each method role; the array protocol does not require single-use stored values (pre-existing; the
   source lowering never reuses one). Evidence: dictionary-role tests 26/26, collection-role tests 70/70, Windows x64
   Debug `ctest` 1932/1932.
+- 2026-11-17: `scripts/validate.py` on a4cff1b (stage 5 with its review fixes) passes: Windows AMD64 Debug and Release
+  `ctest` 1932/1932 (`Fern.Workspace` in Release passed only on rerun), `fern test` 7/7; Linux x86_64 (fresh WSL
+  clone) 1908/1908 and 7/7, no reruns.
