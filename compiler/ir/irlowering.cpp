@@ -1116,8 +1116,8 @@ private:
             };
         }
         function.resultType = substituted(signature->result);
-        function.arrayLiteral = semanticModel.symbol(*symbol)->libraryRole == semantic::LibraryRole::arrayLiteral;
-        function.alwaysInline = function.arrayLiteral ||
+        function.literalFactory = semanticModel.symbol(*symbol)->libraryRole == semantic::LibraryRole::arrayLiteral;
+        function.alwaysInline = function.literalFactory ||
                 semanticSymbol->libraryRole == semantic::LibraryRole::arrayCopy;
         const auto* owner = semanticSymbol->containingSymbol.has_value()
                 ? semanticModel.symbol(*semanticSymbol->containingSymbol) : nullptr;

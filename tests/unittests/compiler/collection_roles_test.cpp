@@ -1839,7 +1839,7 @@ TEST_F(CollectionRoleTest, LiteralStorageIsAClosedBoundedInitializeAndTransferPr
                 break;
             }
             case 8:
-                copy.functions[*first(Opcode::call).callee].arrayLiteral = false;
+                copy.functions[*first(Opcode::call).callee].literalFactory = false;
                 break;
         }
         EXPECT_FALSE(joyeer::ir::Verifier().verify(copy).succeeded());
@@ -1937,7 +1937,7 @@ TEST_F(CollectionRoleTest, TheVerifierRejectsForgedArrayRolesAndLiteralFactories
         });
         ASSERT_NE(structure, copy.structures.end());
         auto factory = std::find_if(copy.functions.begin(), copy.functions.end(), [](const auto& value) {
-            return value.arrayLiteral;
+            return value.literalFactory;
         });
         ASSERT_NE(factory, copy.functions.end());
         switch (mutation) {

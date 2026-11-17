@@ -472,7 +472,7 @@ protected:
                 for (auto& instruction : block.instructions) {
                     if (instruction.opcode != opcode) continue;
                     if (opcode == joyeer::ir::Opcode::call && instruction.callee.has_value() &&
-                        module.functions[*instruction.callee].arrayLiteral) continue;
+                        module.functions[*instruction.callee].literalFactory) continue;
                     mutate(instruction, module);
                     return !joyeer::ir::Verifier().verify(module).succeeded();
                 }

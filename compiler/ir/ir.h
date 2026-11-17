@@ -251,7 +251,9 @@ struct Function {
     // The `array_element` addressor of a library array instance (decision 0025): the one kind of
     // function whose result a non-runtime function may turn into an element address.
     bool elementAddressor = false;
-    bool arrayLiteral = false;
+    // The literal method of a role-bound collection (decisions 0026, 0027): called once, on an inert zero value,
+    // with the literal's packed storage.
+    bool literalFactory = false;
     // Closed runtime wrappers whose extra call frame is not part of the unoptimized library cost.
     bool alwaysInline = false;
     bool isExternal = false;

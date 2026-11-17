@@ -811,7 +811,7 @@ VerificationResult Verifier::verify(const Module& module) const {
     std::unordered_set<FunctionId> literalFactories;
     std::unordered_set<TypeId> literalFactoryTypes;
     for (const auto& function : module.functions) {
-        if (!function.arrayLiteral) continue;
+        if (!function.literalFactory) continue;
         const auto receiver = function.parameters.empty() ? structures.end()
                 : structures.find(function.parameters[0].value.type);
         const bool shaped = function.runtimeContext && !function.isExternal && function.returnsValue &&
@@ -2502,7 +2502,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                             break;
                         }
                         const auto& callee = *functions.at(*instruction.callee);
-                        if (!function.runtimeContext && callee.arrayLiteral &&
+                        if (!function.runtimeContext && callee.literalFactory &&
                             (instruction.operands.size() != 3 ||
                              !literalBlocks.contains(instruction.operands[1]))) {
                             report(VerificationErrorId::callMismatch, functionId, block.id, location,
@@ -2641,7 +2641,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                                         types.contains(instruction.result->type)
                                 ? types.at(instruction.result->type)
                                 : nullptr;
-                        if (callee.arrayLiteral) {
+                        if (callee.literalFactory) {
                             report(VerificationErrorId::callMismatch, functionId, block.id, location,
                                    "array literal factories cannot be formed as function values");
                         }
@@ -3354,7 +3354,7 @@ std::string dump(const Module& module) {
         if (function.debugScope.has_value()) out << " debug_scope#" << *function.debugScope;
         if (!function.isRootModule) out << " dependency";
         if (function.elementAddressor) out << " element_addressor";
-        if (function.arrayLiteral) out << " array_literal";
+        if (function.literalFactory) out << " literal_factory";
         if (function.alwaysInline) out << " always_inline";
         out << " {\n";
         for (const auto& binding : function.entryDebugVariableBindings) {

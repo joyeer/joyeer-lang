@@ -59,7 +59,7 @@ template<class Archive> void fields(Archive& archive, NativeBinding& value) {
 }
 template<class Archive> void fields(Archive& archive, ir::Function& value) {
     archive(value.id, value.symbol, value.name, value.parameters, value.resultType,
-            value.returnsValue, value.elementAddressor, value.arrayLiteral, value.alwaysInline,
+            value.returnsValue, value.elementAddressor, value.literalFactory, value.alwaysInline,
             value.isExternal, value.entry, value.blocks,
             value.debugLocation, value.debugScope, value.entryDebugVariableBindings,
             value.isRootModule, value.runtimeContext, value.coreContext, value.nativeBinding);

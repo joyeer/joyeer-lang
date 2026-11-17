@@ -214,7 +214,7 @@ The current instruction set covers:
 - high-level recursive pattern switching.
 
 An array literal prepares all owned elements first, then moves them into one `stack_block` and calls the
-private role method marked `arrayLiteral` on a zero receiver. No element operation can fail during packing.
+private role method marked `literalFactory` on a zero receiver. No element operation can fail during packing.
 The verifier admits user-function `stack_block` / `slot_address` / `integer_address` only for this closed graph:
 one matching factory call, equal element type and constant count, an inert-zero receiver, every bounded slot
 stored exactly once before transfer, and no other uses or intervening calls. A factory call without verified
