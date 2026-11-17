@@ -1519,6 +1519,164 @@ VerificationResult Verifier::verify(const Module& module) const {
         std::unordered_map<ValueId, TypeId> literalBlocks;
         std::unordered_map<ValueId, TypeId> literalSlots;
         std::unordered_map<ValueId, TypeId> literalPlaces;
+        // The key and value field addresses of a verified dictionary literal: the only field addresses of an entry.
+        std::unordered_set<ValueId> literalEntryFields;
+        // A value stored into a literal slot is evaluated before the storage: earlier in its block, in a block that
+        // dominates it, or a parameter.
+        const auto evaluatedBefore = [&](ValueId value, BlockId blockId, size_t storageIndex) {
+            const auto definition = valueDefinitions.find(value);
+            return definition == valueDefinitions.end() ||
+                    (definition->second.first == blockId && definition->second.second < storageIndex) ||
+                    (definition->second.first != blockId && dominators[blockId].contains(definition->second.first));
+        };
+        // The closed packing protocol of a dictionary literal (decision 0027, Decision 3, rules 1-6), checked rule by
+        // rule; returns the first rule that fails, or nothing, and admits the storage, slots, places and field
+        // addresses of a valid literal.
+        const auto dictionaryLiteralFailure = [&](const BasicBlock& block, size_t index, const LiteralUse& transfer,
+                                                  const std::vector<LiteralUse>& slots, size_t transfers,
+                                                  bool foreignUse) -> std::string {
+            const auto& storage = block.instructions[index];
+            const auto element = static_cast<TypeId>(storage.integerValue);
+            const auto& call = *transfer.instruction;
+            const auto* factory = functions.at(*call.callee);
+            const auto result = types.find(factory->resultType);
+            const auto entry = structures.find(element);
+            const auto entryType = types.find(element);
+            // Rule 2: the element is the entry struct over the dictionary's key and value.
+            if (entry == structures.end() || entry->second->role != StructureRole::dictEntry ||
+                entryType == types.end() || result == types.end() || entry->second->fields.size() != 2 ||
+                entryType->second->arguments != result->second->arguments) {
+                return "rule 2: the block's element must be the dictionary's entry struct over its key and value";
+            }
+            // Rule 6, first: the block is transferred exactly once and otherwise used only by its slots.
+            if (transfers != 1 || foreignUse) {
+                return "rule 6: the block must be transferred exactly once, to the literal method, and otherwise "
+                       "used only by its slots";
+            }
+            // Rule 1: the literal method receives the zero receiver, the block and its count.
+            if (call.operands.size() != 3 || call.operands[1] != storage.result->id ||
+                call.operands[2] != storage.operands[0]) {
+                return "rule 1: the literal method must receive a receiver, the block and its count";
+            }
+            const auto* count = definingInstruction(storage.operands[0]);
+            if (count == nullptr || count->opcode != Opcode::integerConstant || count->integerValue < 0) {
+                return "rule 5: the entry count must be a non-negative constant";
+            }
+            const auto& keyField = entry->second->fields[0];
+            const auto& valueField = entry->second->fields[1];
+            const bool unitValue = types.contains(valueField.type) &&
+                    types.at(valueField.type)->kind == typing::TypeKind::voidType;
+            const bool sameBlockTransfer = transfer.block == block.id;
+            std::unordered_set<int64_t> keys;
+            std::unordered_set<int64_t> storedValues;
+            std::vector<ValueId> admittedSlots;
+            std::vector<ValueId> admittedPlaces;
+            std::vector<ValueId> admittedFields;
+            for (const auto& use : slots) {
+                // Rule 3: a bounded constant slot of the block, with exactly one entry place.
+                const auto& slot = *use.instruction;
+                const auto* offset = slot.operands.size() == 2 ? definingInstruction(slot.operands[1]) : nullptr;
+                const bool inRange = offset != nullptr && offset->opcode == Opcode::integerConstant &&
+                        offset->integerValue >= 0 && offset->integerValue < count->integerValue;
+                if (!slot.result.has_value() || slot.integerValue != storage.integerValue || use.block != block.id ||
+                    use.index <= index || !inRange || literalUses[slot.result->id].size() != 1) {
+                    return "rule 3: each slot must be a bounded constant slot of the block with one entry place";
+                }
+                const auto address = literalUses[slot.result->id].front();
+                const auto& place = *address.instruction;
+                if (address.operand != 0 || place.opcode != Opcode::integerAddress || place.operands.size() != 1 ||
+                    !place.result.has_value() || place.result->type != element ||
+                    place.result->category != ValueCategory::address || address.block != block.id ||
+                    address.index <= use.index) {
+                    return "rule 3: each slot must be a bounded constant slot of the block with one entry place";
+                }
+                std::unordered_set<semantic::SymbolId> projected;
+                for (const auto& projection : literalUses[place.result->id]) {
+                    const auto& field = *projection.instruction;
+                    const bool isKey = field.symbol == keyField.symbol;
+                    const bool isValue = field.symbol == valueField.symbol;
+                    // Rule 3: the place is only projected, once to each of the key and the value, in the window.
+                    if (projection.operand != 0 || field.opcode != Opcode::fieldAddress || !field.result.has_value() ||
+                        !field.symbol.has_value() || (!isKey && !isValue) || !projected.insert(*field.symbol).second ||
+                        projection.block != block.id || projection.index <= address.index ||
+                        (sameBlockTransfer && projection.index >= transfer.index)) {
+                        return "rule 3: an entry place may only be projected once to each of its key and value "
+                               "fields, in the packing window";
+                    }
+                    // Rule 5: a Void value has no storage, so it is neither projected nor stored.
+                    if (isValue && unitValue) return "rule 5: a Void value is neither projected nor stored";
+                    // Rule 4: one store, of a value of exactly the field's type evaluated before the storage.
+                    const auto fieldType = isKey ? keyField.type : valueField.type;
+                    const auto& stores = literalUses[field.result->id];
+                    bool stored = stores.size() == 1 && field.result->type == fieldType &&
+                            field.result->category == ValueCategory::address;
+                    for (const auto& store : stores) {
+                        const auto& instruction = *store.instruction;
+                        const auto value = instruction.operands.size() == 2 ? values.find(instruction.operands[0])
+                                                                            : values.end();
+                        stored = stored && store.operand == 1 && instruction.opcode == Opcode::store &&
+                                value != values.end() && value->second.type == fieldType &&
+                                value->second.category == ValueCategory::value && store.block == block.id &&
+                                store.index > projection.index && sameBlockTransfer && store.index < transfer.index &&
+                                evaluatedBefore(value->first, block.id, index);
+                    }
+                    if (!stored) {
+                        return "rule 4: each field address must have exactly one use, a store in its block before "
+                               "the transfer of a value of the field's type evaluated before the storage";
+                    }
+                    (isKey ? keys : storedValues).insert(offset->integerValue);
+                    admittedFields.push_back(field.result->id);
+                }
+                admittedSlots.push_back(slot.result->id);
+                admittedPlaces.push_back(place.result->id);
+            }
+            // Rule 5: every entry has its key and, unless the value is Void, its value.
+            const auto entries = static_cast<size_t>(count->integerValue);
+            if (slots.size() != entries || keys.size() != entries || storedValues.size() != (unitValue ? 0 : entries)) {
+                return "rule 5: the key must be stored once for every entry, and the value too unless it is Void";
+            }
+            // Rule 6: the transfer follows the packing in the block, on an inert zero receiver, and the window holds
+            // only packing operations: no load, no escaping address, nothing fallible.
+            const auto* receiver = definingInstruction(call.operands[0]);
+            const auto* zeroPlace = receiver != nullptr && receiver->opcode == Opcode::load &&
+                    receiver->operands.size() == 1 ? definingInstruction(receiver->operands[0]) : nullptr;
+            bool inert = sameBlockTransfer && transfer.index > index && zeroPlace != nullptr &&
+                    zeroPlace->opcode == Opcode::stackAllocate && zeroPlace->result.has_value() &&
+                    zeroPlace->result->type == factory->resultType;
+            bool zeroed = false;
+            if (inert) {
+                for (const auto& use : literalUses[zeroPlace->result->id]) {
+                    if (use.instruction->opcode == Opcode::zeroInitialize && use.operand == 0 &&
+                        use.block == block.id && use.index < index && !zeroed) {
+                        zeroed = true;
+                    } else if (use.instruction != receiver || use.operand != 0 || use.block != block.id ||
+                               use.index >= index || !zeroed) {
+                        inert = false;
+                    }
+                }
+            }
+            if (!inert || !zeroed) {
+                return "rule 6: the literal method must follow the packing in its block, on an inert zero receiver";
+            }
+            for (size_t packed = index + 1; packed < transfer.index; ++packed) {
+                switch (block.instructions[packed].opcode) {
+                    case Opcode::integerConstant:
+                    case Opcode::slotAddress:
+                    case Opcode::integerAddress:
+                    case Opcode::fieldAddress:
+                    case Opcode::store:
+                        break;
+                    default:
+                        return "rule 6: the packing window holds only constants, slots, entry places, field "
+                               "addresses and stores";
+                }
+            }
+            literalBlocks.emplace(storage.result->id, element);
+            for (const auto slot : admittedSlots) literalSlots.emplace(slot, element);
+            for (const auto place : admittedPlaces) literalPlaces.emplace(place, element);
+            literalEntryFields.insert(admittedFields.begin(), admittedFields.end());
+            return {};
+        };
         // User functions may only form raw slots through this closed, straight-line initialize-and-transfer
         // protocol. Ordinary source uses of the layout intrinsics still need runtime authorization.
         for (const auto& block : function.blocks) {
@@ -1540,16 +1698,30 @@ VerificationResult Verifier::verify(const Module& module) const {
                         count->integerValue >= 0 && types.contains(element);
                 const LiteralUse* transfer = nullptr;
                 std::vector<LiteralUse> slots;
+                size_t transfers = 0;
+                bool foreignUse = false;
                 for (const auto& use : literalUses[storage.result->id]) {
                     if (use.instruction->opcode == Opcode::call && use.operand == 1 &&
                         use.instruction->callee.has_value() && literalFactories.contains(*use.instruction->callee)) {
                         if (transfer != nullptr) valid = false;
                         transfer = &use;
+                        ++transfers;
                     } else if (use.instruction->opcode == Opcode::slotAddress && use.operand == 0) {
                         slots.push_back(use);
                     } else {
                         valid = false;
+                        foreignUse = true;
                     }
+                }
+                const auto* factory = transfer != nullptr ? functions.at(*transfer->instruction->callee) : nullptr;
+                const auto handle = factory != nullptr ? structures.find(factory->resultType) : structures.end();
+                if (handle != structures.end() && handle->second->role == StructureRole::dict) {
+                    const auto failure = dictionaryLiteralFailure(block, index, *transfer, slots, transfers, foreignUse);
+                    if (!failure.empty()) {
+                        report(VerificationErrorId::invalidInstruction, functionId, block.id, index,
+                               "dictionary literal " + failure);
+                    }
+                    continue;
                 }
                 valid = valid && transfer != nullptr;
                 if (transfer != nullptr) {
@@ -2550,7 +2722,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                             (instruction.operands.size() != 3 ||
                              !literalBlocks.contains(instruction.operands[1]))) {
                             report(VerificationErrorId::callMismatch, functionId, block.id, location,
-                                   "an array literal factory requires verified literal storage");
+                                   "a literal factory requires verified literal storage");
                         }
                         if (callee.nativeBinding.has_value() && !function.runtimeContext) {
                             report(VerificationErrorId::callMismatch, functionId, block.id, location,
@@ -2830,6 +3002,15 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 block.id,
                                 location,
                                 "field projection does not match its structure definition");
+                        }
+                        // A dictionary entry is never a value (decision 0027): its fields are addressed only by
+                        // the packing of a verified dictionary literal.
+                        if (structure != nullptr && structure->role == StructureRole::dictEntry &&
+                            (instruction.opcode != Opcode::fieldAddress || !instruction.result.has_value() ||
+                             !literalEntryFields.contains(instruction.result->id))) {
+                            report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
+                                   "a dictionary entry field is addressed only by verified dictionary literal "
+                                   "storage");
                         }
                         break;
                         }
