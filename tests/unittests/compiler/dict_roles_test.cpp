@@ -1095,6 +1095,11 @@ TEST_F(DictRoleTest, AStoredValueUsedOnAPathThroughThePackingIsRejected) {
         { "a join after the packing", {
               join(before, { condition(), choose(1, 2) }), join(packing, { branch(3) }), { branch(3) },
               join(useKey(), { stop }) } },
+        // A use on one arm of a diamond between the definition and the packing: neither dominates the other, but
+        // the packing is reached after it (only the backward walk sees this one).
+        { "a branch before the packing", {
+              join(before, { condition(), choose(1, 2) }), join(useKey(), { branch(3) }), { branch(3) },
+              join(packing, ret) } },
         // The packing in a loop whose value was evaluated before the loop: the second iteration transfers it again.
         { "a packing in a loop", {
               join(before, { condition(), branch(1) }), { choose(2, 3) }, join(packing, { branch(1) }), { stop } } },
