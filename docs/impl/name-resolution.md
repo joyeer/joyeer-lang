@@ -112,6 +112,10 @@ The current prelude declares:
   `lib/Runtime/collections.joyeer` declares the real `Array<T>` with these roles
   ([0026](../decisions/0026-library-array.md)); the type checker validates the shape and the second field
   (`count`) of an `array_type` struct is marked readable from any file, while writing it elsewhere is rejected;
+- the dictionary roles `dict_type`, `dict_element`, `dict_set`, `dict_get`, `dict_copy`, `dict_literal` and
+  `dict_entry` ([0027](../decisions/0027-library-dict.md)), accepted only in a bundled prelude. The resolver records
+  the `dict_type` struct and its entry when the collections prelude declares them, and marks `count` readable as for
+  the array; until the switch stage `[K: V]` stays builtin, so a prelude without them is valid;
 - the builtin `IOError`, `FileSystemError`, `FileKind`, `ProcessStatus`, and
   `ProcessError` cases;
 - builtin functions: `print(value:)`, `byteToInt(value:)`, and

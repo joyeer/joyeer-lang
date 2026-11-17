@@ -661,6 +661,19 @@ temporary, an unmarked copyable place, or an explicitly consumed owning place; e
 consuming parameter and every consuming receiver still requires its marker.
 The library body's must-transfer rules remain unchanged.
 
+**Dictionary capabilities** ([0027](../docs/decisions/0027-library-dict.md), provisional; until that record's switch
+stage `[K: V]` stays builtin and the bundled prelude declares no `dict_type`): the role `dict_type` marks a `public
+struct` with exactly two unconstrained type parameters, the key and the value, and the same three `private` `Int`
+fields and `deinit` as `array_type`. Its capabilities are those of the table above with both parameters owned, except
+the linear policy: neither may be linear. Five method roles, shape-checked and unique per declaration: `dict_element`
+(`private borrowing func ...(key: K): Int`, the address of the stored value, trapping on a missing key), `dict_set`
+(`private mutating func ...(key: consuming K, value: consuming V): Void`, insert or replace), `dict_get` (`public
+borrowing func get(key: K): Optional<V>`, the one public method role), `dict_copy` (`private borrowing func ...():
+Self`) and `dict_literal` (`private consuming func ...(address: Int, count: Int): Self`). The role `dict_entry` marks
+one `private struct` with exactly the fields `key: K` then `value: V` and no methods or `deinit`; a dictionary literal
+packs its entries as that struct, whose layout is the runtime's entry layout, and an entry is never a value. An
+`extension` of either struct is `invalid-prelude`.
+
 Literal lowering first evaluates every owned element left to right, then initializes one contiguous
 stack block and transfers it to the private literal method on an inert-zero receiver. The compiler-generated
 sequence may occur in ordinary functions only when its complete raw-address use graph is verified:

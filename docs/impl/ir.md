@@ -41,7 +41,11 @@ The module owns:
   function that runs it plus a hidden trailing `$live` Bool field (below), except a struct bound to the library
   array role ([0025](../decisions/0025-library-collection-capabilities.md)), which carries `StructureRole::array`
   (dumped as `role=array`), has no
-  live flag, and records its `copier` function when the instance is copyable;
+  live flag, and records its `copier` function when the instance is copyable. A struct bound to the dictionary
+  role ([0027](../decisions/0027-library-dict.md)) carries `StructureRole::dict` (`role=dict`) with the same
+  inert-zero rules over two owned type arguments, its key and value; the entry a dictionary literal packs carries
+  `StructureRole::dictEntry` (`role=dict_entry`): exactly the fields `key` and `value` of its two type arguments, no
+  `deinit` and no copier, and it is never a value (its fields are addressed only by verified literal storage);
 - user enum and instantiated generic enum case definitions, including the `Optional<T>` / `Result<T,E>`
   instances, whose `EnumerationDefinition` carries the role (`optional` or `result`) and the indices of
   its present/absent or success/failure cases ([0024](../decisions/0024-library-optional-and-result.md)).
@@ -219,6 +223,16 @@ The verifier admits user-function `stack_block` / `slot_address` / `integer_addr
 one matching factory call, equal element type and constant count, an inert-zero receiver, every bounded slot
 stored exactly once before transfer, and no other uses or intervening calls. A factory call without verified
 storage is rejected. This does not grant source-level runtime authorization.
+
+A dictionary literal ([0027](../decisions/0027-library-dict.md), Decision 3) packs into a block of the dictionary's
+`dict_entry` instance, whose ordinary layout is the runtime's entry layout. The verifier checks its closed protocol
+rule by rule and names the first rule that fails: (1) the literal method gets the receiver, the block and its count;
+(2) the element is the entry over the dictionary's key and value; (3) each bounded constant slot has one entry place,
+projected once to each of the `key` and `value` fields inside the packing window; (4) each field address has exactly
+one use, a store before the transfer of a value of the field's type evaluated before the storage; (5) the count is a
+constant and every key is stored, and every value unless `V` is `Void`, when no value field is projected; (6) one
+transfer on an inert zero receiver, and only constants, slots, entry places, field addresses and stores in the
+window. Until the switch stage no lowering emits this form; the verifier tests build it by hand.
 The wire also preserves the generic `alwaysInline` policy on closed library wrappers; only
 authorized functions with bodies may carry it.
 Literal factories cannot be formed as function values, so indirect calls cannot evade the storage protocol.
