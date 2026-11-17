@@ -726,3 +726,6 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   debug-location tests count one more `br i1`, the helper's, which carries `!dbg`. IR/backend review: accept, no
   high or medium findings; its low findings applied (the invariant's wording, the fixture's true moves, the branch
   shape); the count tests stay module-wide.
+- 2026-11-17: `scripts/validate.py` on b738906 (the String destroy guard) passes: Windows AMD64 Debug and Release
+  `ctest` 1906/1906 (`Fern.Workspace` in Debug and `Fern.Manifest` in Release passed only on rerun), `fern test` 7/7;
+  Linux x86_64 1882/1882 and 7/7, no reruns.
