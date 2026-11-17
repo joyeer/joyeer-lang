@@ -1316,6 +1316,37 @@ if(JOYEER_CLANG_EXECUTABLE)
     set_tests_properties(E2EDictionaryGetFullDebug PROPERTIES
             LABELS "e2e;llvm-backend;runtime;ownership;debug-info"
             TIMEOUT 60)
+    # The debug-scope prerequisite of the dictionary switch (decision 0027): every dictionary operation inlined at
+    # -O1 and -O2 with full debug info, which a test build verifies again after the optimization pipeline.
+    foreach(level IN ITEMS 1 2)
+        add_test(NAME E2EDictDebugScopesO${level}
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/dict_debug_scopes.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/dict-debug-scopes-O${level}${CMAKE_EXECUTABLE_SUFFIX}
+                        "-DCOMPILER_ARGS=-O${level};-gfull"
+                        "-DEXPECTED_OUTPUT=6\nagain\n2\none\nchanged\nv\nnone\n29\n3\n"
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+        )
+        set_tests_properties(E2EDictDebugScopesO${level} PROPERTIES
+                LABELS "e2e;llvm-backend;runtime;debug-info;optimization"
+                TIMEOUT 60)
+    endforeach()
+    # The verification runs: a debug location corrupted after optimization (a test-build fault injection) fails the
+    # compile instead of reaching the object file.
+    add_test(NAME E2EOptimizedDebugInfoIsVerified
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/dict_debug_scopes.joyeer
+                    "-DEXTRA_ARGS=-O2;-gfull;-o;${CMAKE_CURRENT_BINARY_DIR}/dict-debug-corrupted${CMAKE_EXECUTABLE_SUFFIX}"
+                    -DOUTPUT_TO_REMOVE=${CMAKE_CURRENT_BINARY_DIR}/dict-debug-corrupted${CMAKE_EXECUTABLE_SUFFIX}
+                    "-DEXPECTED_PATTERN=after optimization"
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+    )
+    set_tests_properties(E2EOptimizedDebugInfoIsVerified PROPERTIES
+            ENVIRONMENT "JOYEER_BACKEND_TEST_CORRUPT_DEBUG_INFO=1"
+            LABELS "e2e;llvm-backend;debug-info;optimization"
+            TIMEOUT 60)
     add_test(NAME E2EUnitValuesFullDebug
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
