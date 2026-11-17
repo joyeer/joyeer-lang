@@ -91,6 +91,8 @@ private:
     Layout layout(ir::TypeId id);
     std::vector<size_t> payloadOffsets(const ir::EnumCaseDefinition& definition);
     void defineTypes();
+    void checkDictionaryEntryLayout(const ir::StructureDefinition& definition, llvm::StructType* aggregate,
+                                    const llvm::DataLayout& target);
     // The LLVM type of a Joyeer function: the one place its convention comes from, shared by function
     // definitions and calls through a function value (decision 0020). `inout` and `initializing`
     // parameters are pointers; a unit or `Never` result is void. No attributes are added.

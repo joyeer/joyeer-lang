@@ -197,7 +197,7 @@ DestructionAnalysis::DestructionAnalysis(const Module& module) {
             case typing::TypeKind::structure: {
                 const auto structure = structures.find(id);
                 if (structure != structures.end()) {
-                    result = structure->second->role == StructureRole::array ||
+                    result = isInertZero(structure->second->role) ||
                             structure->second->deinitializer.has_value() ||
                             std::any_of(
                             structure->second->fields.begin(),
@@ -448,16 +448,18 @@ VerificationResult Verifier::verify(const Module& module) const {
     }
     for (const auto& structure : module.structures) {
         if (structure.deinitializer.has_value() &&
-            !(structure.role == StructureRole::array && structure.copier.has_value()) &&
+            !(isInertZero(structure.role) && structure.copier.has_value()) &&
             noncopyableTypes.insert(structure.type).second) {
             pendingNoncopyable.push_back(structure.type);
         }
         for (const auto& field : structure.fields) copyDependents[field.type].push_back(structure.type);
         const auto type = types.find(structure.type);
-        if (structure.role != StructureRole::none && type != types.end() &&
-            collectionElementArgument(structure.role) < type->second->arguments.size()) {
-            copyDependents[type->second->arguments[collectionElementArgument(structure.role)]]
-                    .push_back(structure.type);
+        // A collection's copy depends on every type argument it owns: the element, or the key and the value.
+        if (type != types.end()) {
+            const auto owned = std::min(collectionOwnedArguments(structure.role), type->second->arguments.size());
+            for (size_t index = 0; index < owned; ++index) {
+                copyDependents[type->second->arguments[index]].push_back(structure.type);
+            }
         }
     }
     for (const auto& enumeration : module.enumerations) {
@@ -502,6 +504,8 @@ VerificationResult Verifier::verify(const Module& module) const {
 
     std::unordered_map<TypeId, const StructureDefinition*> structures;
     std::optional<semantic::SymbolId> arrayRoleSymbol;
+    std::optional<semantic::SymbolId> dictRoleSymbol;
+    std::optional<semantic::SymbolId> dictEntryRoleSymbol;
     // A field symbol repeats across the instances of a generic type (spec 20.12), so it is unique per structure.
     std::map<std::pair<TypeId, semantic::SymbolId>, const FieldDefinition*> fields;
     for (const auto& structure : module.structures) {
@@ -523,14 +527,18 @@ VerificationResult Verifier::verify(const Module& module) const {
                     "duplicate structure definition for type " +
                             std::to_string(structure.type));
         }
-        if (structure.role != StructureRole::none && structure.role != StructureRole::array) {
+        if (structure.role != StructureRole::none && structure.role != StructureRole::array &&
+            structure.role != StructureRole::dict && structure.role != StructureRole::dictEntry) {
             report(VerificationErrorId::invalidReference, std::nullopt, std::nullopt, std::nullopt,
                    "structure '" + structure.name + "' has an unknown structure role");
         }
-        if (structure.role == StructureRole::array) {
+        if (isInertZero(structure.role)) {
+            // An array or dictionary handle (decisions 0025, 0027): its owned type arguments and three Int words.
+            const bool isDict = structure.role == StructureRole::dict;
             const auto found = types.find(structure.type);
             bool shaped = found != types.end() && found->second->kind == typing::TypeKind::structure &&
-                    found->second->symbol == structure.symbol && found->second->arguments.size() == 1 &&
+                    found->second->symbol == structure.symbol &&
+                    found->second->arguments.size() == collectionOwnedArguments(structure.role) &&
                     structure.fields.size() == 3;
             static constexpr const char* names[] = { "address", "count", "capacity" };
             for (size_t index = 0; shaped && index < 3; ++index) {
@@ -540,14 +548,43 @@ VerificationResult Verifier::verify(const Module& module) const {
             }
             if (!shaped) {
                 report(VerificationErrorId::typeMismatch, std::nullopt, std::nullopt, std::nullopt,
-                       "array role structure '" + structure.name +
-                               "' needs one type argument and the Int fields address, count, capacity");
+                       std::string(isDict ? "dictionary" : "array") + " role structure '" + structure.name +
+                               "' needs " + (isDict ? "two type arguments" : "one type argument") +
+                               " and the Int fields address, count, capacity");
             }
-            if (arrayRoleSymbol.has_value() && *arrayRoleSymbol != structure.symbol) {
+            auto& roleSymbol = isDict ? dictRoleSymbol : arrayRoleSymbol;
+            if (roleSymbol.has_value() && *roleSymbol != structure.symbol) {
                 report(VerificationErrorId::invalidReference, std::nullopt, std::nullopt, std::nullopt,
-                       "different declarations cannot carry the array structure role");
+                       std::string("different declarations cannot carry the ") + (isDict ? "dictionary" : "array") +
+                               " structure role");
             }
-            arrayRoleSymbol = structure.symbol;
+            roleSymbol = structure.symbol;
+        }
+        if (structure.role == StructureRole::dictEntry) {
+            // The entry a dictionary literal packs: exactly `key: K` then `value: V` of its two type arguments, so
+            // its ordinary layout is the runtime's entry layout; never a value, so nothing to run or copy.
+            const auto found = types.find(structure.type);
+            bool shaped = found != types.end() && found->second->kind == typing::TypeKind::structure &&
+                    found->second->symbol == structure.symbol && found->second->arguments.size() == 2 &&
+                    structure.fields.size() == 2 && !structure.deinitializer.has_value() &&
+                    !structure.copier.has_value();
+            static constexpr const char* entryNames[] = { "key", "value" };
+            for (size_t index = 0; shaped && index < 2; ++index) {
+                shaped = structure.fields[index].name == entryNames[index] &&
+                        structure.fields[index].type == found->second->arguments[index] &&
+                        structure.fields[index].symbol != semantic::invalidSymbolId;
+            }
+            if (!shaped) {
+                report(VerificationErrorId::typeMismatch, std::nullopt, std::nullopt, std::nullopt,
+                       "dictionary entry structure '" + structure.name +
+                               "' needs two type arguments, exactly the fields key and value of those types, "
+                               "and no deinit or copier");
+            }
+            if (dictEntryRoleSymbol.has_value() && *dictEntryRoleSymbol != structure.symbol) {
+                report(VerificationErrorId::invalidReference, std::nullopt, std::nullopt, std::nullopt,
+                       "different declarations cannot carry the dictionary entry structure role");
+            }
+            dictEntryRoleSymbol = structure.symbol;
         }
         for (const auto& field : structure.fields) {
             verifyConcreteType(field.type, std::nullopt, std::nullopt, std::nullopt,
@@ -745,8 +782,8 @@ VerificationResult Verifier::verify(const Module& module) const {
                 structure.fields.back().symbol == semantic::invalidSymbolId &&
                 types.contains(structure.fields.back().type) &&
                 types.at(structure.fields.back().type)->kind == typing::TypeKind::boolean;
-        if (structure.role == StructureRole::array) {
-            // No live flag: the zero value must itself be destroyable (decision 0025).
+        if (isInertZero(structure.role)) {
+            // No live flag: the zero value must itself be destroyable (decisions 0025, 0027).
             if (liveFlagIsLast) {
                 report(VerificationErrorId::invalidReference, std::nullopt, std::nullopt, std::nullopt,
                        "structure '" + structure.name + "' is inert-zero and must not carry a hidden live flag");
@@ -764,35 +801,38 @@ VerificationResult Verifier::verify(const Module& module) const {
 
     for (const auto& function : module.functions) {
         if (!function.elementAddressor) continue;
+        // An array's addressor takes an Int index, a dictionary's a key of its first type argument.
+        const auto receiver = function.parameters.empty() ? structures.end()
+                : structures.find(function.parameters[0].value.type);
+        const auto* receiverType = receiver == structures.end() || !types.contains(receiver->first)
+                ? nullptr : types.at(receiver->first);
         const bool shaped = function.runtimeContext && !function.isExternal && function.returnsValue &&
                 function.parameters.size() == 2 && types.contains(function.resultType) &&
                 types.at(function.resultType)->kind == typing::TypeKind::integer &&
                 function.parameters[0].value.category == ValueCategory::value && !function.parameters[0].isConsuming &&
-                types.contains(function.parameters[0].value.type) &&
-                types.at(function.parameters[0].value.type)->kind == typing::TypeKind::structure &&
-                types.at(function.parameters[0].value.type)->arguments.size() == 1 &&
+                receiverType != nullptr && isInertZero(receiver->second->role) &&
+                receiverType->arguments.size() == collectionOwnedArguments(receiver->second->role) &&
                 function.parameters[1].value.category == ValueCategory::value && !function.parameters[1].isConsuming &&
                 types.contains(function.parameters[1].value.type) &&
-                types.at(function.parameters[1].value.type)->kind == typing::TypeKind::integer &&
-                [&] {
-                    const auto structure = structures.find(function.parameters[0].value.type);
-                    return structure != structures.end() && structure->second->role == StructureRole::array;
-                }();
+                (receiver->second->role == StructureRole::dict
+                         ? function.parameters[1].value.type == receiverType->arguments[0]
+                         : types.at(function.parameters[1].value.type)->kind == typing::TypeKind::integer);
         if (!shaped) {
             report(VerificationErrorId::invalidInstruction, function.id, std::nullopt, std::nullopt,
                    "element addressor '" + function.name +
-                           "' must be a runtime function borrowing an inert-zero struct and an Int and returning an Int");
+                           "' must be a runtime function borrowing an inert-zero struct and an Int index or a key, "
+                           "and returning an Int");
         }
     }
 
     for (const auto& structure : module.structures) {
-        if (structure.role == StructureRole::array && !structure.deinitializer.has_value()) {
+        if (isInertZero(structure.role) && !structure.deinitializer.has_value()) {
             report(VerificationErrorId::invalidReference, std::nullopt, std::nullopt, std::nullopt,
                    "inert-zero structure '" + structure.name + "' needs a deinit");
         }
         if (!structure.copier.has_value()) continue;
         const auto copier = functions.find(*structure.copier);
-        const bool matches = structure.role == StructureRole::array && copier != functions.end() &&
+        const bool matches = isInertZero(structure.role) && copier != functions.end() &&
                 copier->second->parameters.size() == 1 &&
                 copier->second->parameters[0].value.type == structure.type &&
                 copier->second->parameters[0].value.category == ValueCategory::value &&
@@ -814,13 +854,16 @@ VerificationResult Verifier::verify(const Module& module) const {
         if (!function.literalFactory) continue;
         const auto receiver = function.parameters.empty() ? structures.end()
                 : structures.find(function.parameters[0].value.type);
+        // Rule 1 of the closed literal protocol (decisions 0026, 0027): the receiver is an array or dictionary
+        // handle, and the result the same instance with its one or two owned type arguments.
         const bool shaped = function.runtimeContext && !function.isExternal && function.returnsValue &&
                 function.parameters.size() == 3 && receiver != structures.end() &&
-                receiver->second->role == StructureRole::array &&
+                isInertZero(receiver->second->role) &&
                 function.parameters[0].value.category == ValueCategory::value &&
                 function.parameters[0].isConsuming &&
                 function.resultType == function.parameters[0].value.type &&
-                types.contains(function.resultType) && types.at(function.resultType)->arguments.size() == 1 &&
+                types.contains(function.resultType) &&
+                types.at(function.resultType)->arguments.size() == collectionOwnedArguments(receiver->second->role) &&
                 [&] {
                     for (size_t index = 1; index < 3; ++index) {
                         const auto& parameter = function.parameters[index];
@@ -833,8 +876,9 @@ VerificationResult Verifier::verify(const Module& module) const {
                 }();
         if (!shaped || !literalFactoryTypes.insert(function.resultType).second) {
             report(VerificationErrorId::invalidInstruction, function.id, std::nullopt, std::nullopt,
-                   "array literal factory '" + function.name +
-                           "' must uniquely consume an array role struct, borrow two Ints, and return that struct");
+                   "literal factory '" + function.name +
+                           "' must uniquely consume an array or dictionary role struct, borrow two Ints, and return "
+                           "that struct");
         } else {
             literalFactories.insert(function.id);
         }
@@ -3258,6 +3302,8 @@ std::string dump(const Module& module) {
         out << (structure->fields.empty() ? "}" : " }");
         if (structure->deinitializer.has_value()) out << " deinit=@" << *structure->deinitializer;
         if (structure->role == StructureRole::array) out << " role=array";
+        if (structure->role == StructureRole::dict) out << " role=dict";
+        if (structure->role == StructureRole::dictEntry) out << " role=dict_entry";
         if (structure->copier.has_value()) out << " copier=@" << *structure->copier;
         out << '\n';
     }

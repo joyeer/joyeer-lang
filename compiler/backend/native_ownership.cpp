@@ -182,7 +182,7 @@ void Builder::emitDestroy(ir::TypeId id) {
     if (kind == typing::TypeKind::structure) {
         const auto& definition = *structures.at(id);
         const auto& fields = definition.fields;
-        if (definition.deinitializer.has_value() && definition.role == ir::StructureRole::array) {
+        if (definition.deinitializer.has_value() && ir::isInertZero(definition.role)) {
             // No live flag: the `deinit` runs on the zero value too and does nothing there, and the
             // zero-fill at the end of this helper makes a second destroy harmless (decision 0025).
             builder.CreateCall(functions.at(*definition.deinitializer), {address});

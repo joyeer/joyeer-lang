@@ -618,11 +618,14 @@ private:
                 semanticField != nullptr && semanticField->isMutable,
             });
         }
-        // The library array role has no live flag: its zero value is destroyable (decision 0025).
+        // The library array and dictionary roles have no live flag: their zero value is destroyable (decisions
+        // 0025, 0027). The dictionary entry is never a value and declares no `deinit`.
         const auto* structureSymbol = semanticModel.symbol(*symbol);
-        structure.role = structureSymbol != nullptr &&
-                structureSymbol->libraryRole == semantic::LibraryRole::arrayType
-                ? ir::StructureRole::array : ir::StructureRole::none;
+        const auto libraryRole = structureSymbol != nullptr ? structureSymbol->libraryRole : semantic::LibraryRole::none;
+        structure.role = libraryRole == semantic::LibraryRole::arrayType ? ir::StructureRole::array
+                : libraryRole == semantic::LibraryRole::dictType ? ir::StructureRole::dict
+                : libraryRole == semantic::LibraryRole::dictEntry ? ir::StructureRole::dictEntry
+                                                                  : ir::StructureRole::none;
         if (declaration->deinitializer != nullptr && structure.role == ir::StructureRole::none) {
             // See ir::StructureDefinition::deinitializer: the live flag is always last.
             structure.fields.push_back(ir::FieldDefinition {
@@ -818,8 +821,10 @@ private:
                         continue;
                     }
                     instance.deinitializer = instanceFunctions[*index];
-                    if (instance.role == ir::StructureRole::array) {
-                        const auto element = model->arrayRoleMethod(instance.type, semantic::LibraryRole::arrayElement);
+                    const bool isDict = instance.role == ir::StructureRole::dict;
+                    if (ir::isInertZero(instance.role)) {
+                        const auto element = model->collectionRoleMethod(instance.type,
+                                isDict ? semantic::LibraryRole::dictElement : semantic::LibraryRole::arrayElement);
                         const auto elementIndex = element.has_value()
                                 ? model->instanceIndex(*element, record->arguments) : std::nullopt;
                         if (elementIndex.has_value() && *elementIndex < instanceFunctions.size() &&
@@ -827,9 +832,10 @@ private:
                             module->functions[instanceFunctions[*elementIndex]].elementAddressor = true;
                         }
                     }
-                    if (instance.role != ir::StructureRole::array || !model->isCopyable(instance.type)) continue;
-                    // A copyable library array is copied by its `array_copy` method.
-                    const auto copySymbol = model->arrayRoleMethod(instance.type, semantic::LibraryRole::arrayCopy);
+                    if (!ir::isInertZero(instance.role) || !model->isCopyable(instance.type)) continue;
+                    // A copyable library array or dictionary is copied by its `array_copy` or `dict_copy` method.
+                    const auto copySymbol = model->collectionRoleMethod(instance.type,
+                            isDict ? semantic::LibraryRole::dictCopy : semantic::LibraryRole::arrayCopy);
                     const auto copyIndex = copySymbol.has_value()
                             ? model->instanceIndex(*copySymbol, record->arguments) : std::nullopt;
                     if (!copyIndex.has_value() || *copyIndex >= instanceFunctions.size() ||
@@ -1116,12 +1122,17 @@ private:
             };
         }
         function.resultType = substituted(signature->result);
-        function.literalFactory = semanticModel.symbol(*symbol)->libraryRole == semantic::LibraryRole::arrayLiteral;
-        function.alwaysInline = function.literalFactory ||
-                semanticSymbol->libraryRole == semantic::LibraryRole::arrayCopy;
+        const auto role = semanticSymbol->libraryRole;
+        function.literalFactory = role == semantic::LibraryRole::arrayLiteral ||
+                role == semantic::LibraryRole::dictLiteral;
+        // The closed role wrappers (0026 A4, extended to the dictionary by role in 0027); `dict_set` is an owned
+        // argument context below, and an addressor is always inlined by the backend.
+        function.alwaysInline = function.literalFactory || role == semantic::LibraryRole::arrayCopy ||
+                role == semantic::LibraryRole::dictCopy || role == semantic::LibraryRole::dictGet;
         const auto* owner = semanticSymbol->containingSymbol.has_value()
                 ? semanticModel.symbol(*semanticSymbol->containingSymbol) : nullptr;
-        if (owner != nullptr && owner->libraryRole == semantic::LibraryRole::arrayType &&
+        if (owner != nullptr && (owner->libraryRole == semantic::LibraryRole::arrayType ||
+                                 owner->libraryRole == semantic::LibraryRole::dictType) &&
             owner->declaration.has_value()) {
             const auto node = semanticModel.node(*owner->declaration);
             if (node != nullptr && node->kind == syntax::Kind::structDecl &&

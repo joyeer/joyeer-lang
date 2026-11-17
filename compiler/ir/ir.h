@@ -292,16 +292,40 @@ struct FieldDefinition {
 enum class StructureRole : uint8_t {
     none,
     array,
+    // The library dictionary handle (decision 0027): inert-zero like the array, owning a key and a value.
+    dict,
+    // The entry a dictionary literal packs: exactly `key: K` then `value: V`, never a value (decision 0027).
+    dictEntry,
 };
 
-// The type argument of a role-bound collection that is the element an addressor returns and whose copy the
-// collection's copy depends on (decisions 0026, 0027): the only argument of an array.
+// The type argument of a role-bound collection that is the element an addressor returns (decisions 0026, 0027):
+// the only argument of an array, the value of a dictionary.
 inline size_t collectionElementArgument(StructureRole role) {
     switch (role) {
         case StructureRole::array: return 0;
-        case StructureRole::none: break;
+        case StructureRole::dict: return 1;
+        case StructureRole::none:
+        case StructureRole::dictEntry: break;
     }
     return 0;
+}
+
+// How many type arguments a role-bound collection owns, each of which its copy depends on: the element of an
+// array, the key and the value of a dictionary; 0 for any other structure.
+inline size_t collectionOwnedArguments(StructureRole role) {
+    switch (role) {
+        case StructureRole::array: return 1;
+        case StructureRole::dict: return 2;
+        case StructureRole::none:
+        case StructureRole::dictEntry: break;
+    }
+    return 0;
+}
+
+// A role-bound collection handle: no hidden live flag, because its all-zero value is destroyable (decisions 0025,
+// 0027).
+inline bool isInertZero(StructureRole role) {
+    return role == StructureRole::array || role == StructureRole::dict;
 }
 
 struct StructureDefinition {

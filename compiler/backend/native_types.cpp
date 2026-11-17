@@ -2,6 +2,7 @@
 #include "compiler/frontend/intrinsics.h"
 
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
@@ -244,6 +245,33 @@ std::vector<size_t> Builder::payloadOffsets(const ir::EnumCaseDefinition& defini
     return offsets;
 }
 
+// A dictionary literal places each value with `field_addr` on the entry struct, and the runtime finds it at the
+// library's `valueOffset = alignTo(size_of<K>, align_of<V>)` within `entrySize = size_of<Entry<K, V>>` (decision
+// 0027). Both are the target's layout, so assert here that they agree, including the runtime's entry-size formula,
+// rather than let a disagreement corrupt entries at run time.
+void Builder::checkDictionaryEntryLayout(const ir::StructureDefinition& definition, llvm::StructType* aggregate,
+                                         const llvm::DataLayout& target) {
+    // `Void` has no storage and needs no alignment (spec 20.12.5), as `size_of` and `align_of` answer.
+    const auto size = [&](ir::TypeId id) -> uint64_t {
+        return unit(id) ? 0 : target.getTypeAllocSize(llvmType(id)).getFixedValue();
+    };
+    const auto alignment = [&](ir::TypeId id) -> uint64_t {
+        return unit(id) ? 1 : target.getABITypeAlign(llvmType(id)).value();
+    };
+    const auto key = definition.fields[0].type;
+    const auto value = definition.fields[1].type;
+    const auto valueOffset = alignTo(size(key), alignment(value));
+    const auto entrySize = alignTo(valueOffset + size(value), std::max(alignment(key), alignment(value)));
+    const auto* placed = target.getStructLayout(aggregate);
+    if (placed->getElementOffset(1) != valueOffset || placed->getSizeInBytes() != entrySize) {
+        report(DiagnosticId::invalidModule, {}, "dictionary entry '" + definition.name +
+                "' is laid out at value offset " + std::to_string(placed->getElementOffset(1)) + ", size " +
+                std::to_string(placed->getSizeInBytes()) + ", but the runtime's entry formula gives " +
+                std::to_string(valueOffset) + " and " + std::to_string(entrySize));
+        throw std::runtime_error("dictionary entry layout");
+    }
+}
+
 void Builder::defineTypes() {
     // Opaque declarations break definition-order dependencies without allowing
     // recursive inline layouts, which are still rejected by layout().
@@ -257,12 +285,16 @@ void Builder::defineTypes() {
                 "joyeer.enum." + std::to_string(definition.type)));
     }
     for (const auto& [id, aggregate] : aggregates) loweredTypes.emplace(id, aggregate);
+    // The target's layout, which folds `size_of` and places every `field_addr` (the portable module has none yet).
+    const llvm::DataLayout targetLayout(llvm::Triple(llvm::sys::getDefaultTargetTriple()).computeDataLayout());
     for (const auto& [id, aggregate] : aggregates) {
         if (const auto found = structures.find(id); found != structures.end()) {
             std::vector<llvm::Type*> fields;
             for (const auto& field : found->second->fields) fields.push_back(llvmType(field.type));
             aggregate->setBody(fields);
             layout(id);
+            if (found->second->role == ir::StructureRole::dictEntry) checkDictionaryEntryLayout(*found->second,
+                    aggregate, targetLayout);
         } else {
             const auto valueLayout = layout(id);
             aggregate->setBody({builder.getInt32Ty(),
