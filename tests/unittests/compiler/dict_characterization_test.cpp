@@ -10,6 +10,8 @@
 #include <gtest/gtest.h>
 
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -82,11 +84,32 @@ TEST(DictCharacterization, OtherKeyTypesAreRejectedAtTheType) {
             "struct Point { var x: Int }\nfunc f(d: Dict<Point, Int>) {}\nfunc main() {}\n",
             "func main() { let d = [1.5: 1]\n print(value: d.count) }\n",
             "func main() { let d: [Double: Int] = [1.5: 1]\n print(value: d.count) }\n",
-            "func main() { let d: [Double: Int] = [:]\n print(value: d.count) }\n" }) {
+            "func main() { let d: [Double: Int] = [:]\n print(value: d.count) }\n",
+            // An optional context gives the literal its key type, so the key is reported at the context only.
+            "struct Point { var x: Int }\nfunc f(): [Point: Int]? { return [Point(x: 1): 1] }\nfunc main() {}\n",
+            "struct Point { var x: Int }\nfunc main() { let p = Point(x: 1)\n let o: [Point: Int]? = [p: 1] }\n",
+            "func f(d: [Int64: Int]) {}\nfunc main() {}\n",
+            "func f(d: [Int8: Int]) {}\nfunc main() {}\n",
+            "func f(d: [UInt: Int]) {}\nfunc main() {}\n" }) {
         SCOPED_TRACE(program);
         const auto text = diagnose(program);
         EXPECT_EQ(occurrences(text, "' cannot be a dictionary key"), 1u) << text;
     }
+    // A contextual function-type or type-parameter key is reported at the context, not again at the literal.
+    for (const auto& [program, needle] : std::vector<std::pair<std::string, std::string>> {
+            { "func inc(x: Int): Int { return x }\nfunc main() { let d: Dict<(Int): Int, Int> = [inc: 1] }\n",
+              "a function type cannot be a dictionary key" },
+            { "func f<K>(k: consuming K) { let d: [K: Int] = [k: 1] }\nfunc main() {}\n",
+              "dictionary key" },
+            { "struct G<T> { var t: T\n func m(): [Self: Int] { return [:] } }\nfunc main() {}\n",
+              "dictionary key" } }) {
+        SCOPED_TRACE(program);
+        const auto text = diagnose(program);
+        EXPECT_EQ(occurrences(text, needle), 1u) << text;
+    }
+    // An empty literal takes its key and value types from an optional context.
+    EXPECT_EQ(diagnose("func main() { let o: [String: Int]? = [:] }\n").find(
+                      "missing-contextual-type"), std::string::npos);
     // The four admitted keys, by type kind.
     EXPECT_EQ(diagnose("func f(a: [Int: Int], b: [Bool: Int], c: [UInt8: Int], d: [String: Int]) {}\n"
                        "func main() {}\n"), "");
@@ -107,6 +130,12 @@ TEST(DictCharacterization, TypeParameterKeysAreRejected) {
     EXPECT_TRUE(contains(parameter, "type-checking.invalid-type-argument")) << parameter;
     EXPECT_TRUE(contains(parameter, "a dictionary key cannot be the type parameter type 'K'")) << parameter;
     EXPECT_TRUE(contains(parameter, "keys are restricted to Int, Bool, UInt8 and String")) << parameter;
+    const auto nominal = diagnose("func f<K>(d: Dict<K, Int>) {}\nfunc main() {}\n");
+    EXPECT_TRUE(contains(nominal, "a dictionary key cannot be the type parameter type 'K'")) << nominal;
+    // A key that only mentions a type parameter names the type and the parameter it depends on.
+    const auto mentions = diagnose("func f<T>(d: [[T]: Int]) {}\nfunc main() {}\n");
+    EXPECT_TRUE(contains(mentions, "'[T]' cannot be a dictionary key: it depends on the type parameter 'T'"))
+            << mentions;
 }
 
 TEST(DictCharacterization, LinearAndNeverKeysAndValuesAreRejected) {
@@ -117,6 +146,38 @@ TEST(DictCharacterization, LinearAndNeverKeysAndValuesAreRejected) {
     EXPECT_TRUE(contains(linear, "use an array and drain it with removeLast")) << linear;
     const auto never = diagnose("func f(d: [String: Never]) {}\nfunc main() {}\n");
     EXPECT_TRUE(contains(never, "the value type of a dictionary cannot be 'Never'")) << never;
+    // The nominal spelling reads the same as the sugar.
+    const auto nominalKey = diagnose("func f(d: Dict<Never, Int>) {}\nfunc main() {}\n");
+    EXPECT_TRUE(contains(nominalKey, "the key type of a dictionary cannot be 'Never'")) << nominalKey;
+    EXPECT_FALSE(contains(nominalKey, "type parameter 'K'")) << nominalKey;
+    const auto nominalValue = diagnose("func f(d: Dict<String, Never>) {}\nfunc main() {}\n");
+    EXPECT_TRUE(contains(nominalValue, "the value type of a dictionary cannot be 'Never'")) << nominalValue;
+}
+
+// The right side of an assignment runs before the target is accessed (spec 4.4.3), so a right side that consumes the
+// target's root leaves nothing to assign into.
+TEST(DictCharacterization, ARightSideThatConsumesTheTargetsRootIsRejected) {
+    for (const auto* program : {
+            "func take(d: consuming [String: Int]): Int { return d.count }\n"
+            "func main() { var d: [String: Int] = [\"a\": 1]\n &d[\"b\"] = take(d: consume d) }\n",
+            "func take(a: consuming [Int]): Int { return a.count }\n"
+            "func main() { var a: [Int] = [1]\n &a[0] = take(a: consume a) }\n",
+            "struct S { var d: [String: Int] }\nfunc take(d: consuming [String: Int]): Int { return d.count }\n"
+            "func main() { var s = S(d: [\"a\": 1])\n &s.d[\"b\"] = take(d: consume s.d) }\n" }) {
+        SCOPED_TRACE(program);
+        EXPECT_TRUE(contains(diagnose(program), "semantic-analysis.use-after-consume")) << diagnose(program);
+    }
+    // Reinitializing the whole root from its own consumed value stays valid.
+    EXPECT_EQ(diagnose("func pass(d: consuming [String: Int]): [String: Int] { return d }\n"
+                       "func main() { var d: [String: Int] = [\"a\": 1]\n d = pass(d: consume d)\n"
+                       " print(value: d.count) }\n"), "");
+}
+
+TEST(DictCharacterization, ItsCountIsReadOnlyWithDictionaryHelp) {
+    const auto text = diagnose("func main() { var d: [String: Int] = [\"a\": 1]\n &d.count = 3 }\n");
+    EXPECT_TRUE(contains(text, "type-checking.assignment-to-immutable")) << text;
+    EXPECT_TRUE(contains(text, "a dictionary's 'count' changes only by inserting with '&d[key] = value'")) << text;
+    EXPECT_FALSE(contains(text, "append")) << text;
 }
 
 TEST(DictCharacterization, GetOfANoncopyableValueIsRejected) {
@@ -170,6 +231,9 @@ TEST(DictCharacterization, AUserTypeNamedDictShadowsOnlyTheSpelling) {
     const auto text = diagnose("struct Dict { var x: Int }\n"
                                "func main() { let d = Dict(x: 1)\n let b: Int = d }\n");
     EXPECT_TRUE(contains(text, "cannot use value of type '<main>.Dict' where 'Int' is required")) << text;
+    // A generic user Dict is an ordinary struct: its arguments are not dictionary keys.
+    EXPECT_EQ(diagnose("struct Dict<K, V> { var k: Int }\nstruct Point { var x: Int }\n"
+                       "func f(d: Dict<Point, Int>): Int { return d.k }\nfunc main() {}\n"), "");
 }
 
 TEST(DictCharacterization, ExtensionsOfDictAreRejected) {

@@ -1562,6 +1562,63 @@ func mutate(values: inout [String: [Int]], key: String) {
     }
 }
 
+// The position of the first call from `function` to a function whose name contains `fragment`, in block order.
+size_t firstCallPosition(const joyeer::ir::Module& module, const joyeer::ir::Function& function,
+                         const std::string& fragment) {
+    size_t position = 0;
+    for (const auto& block : function.blocks) {
+        for (const auto& instruction : block.instructions) {
+            if (instruction.opcode == joyeer::ir::Opcode::call && instruction.callee.has_value() &&
+                module.functions.at(*instruction.callee).name.find(fragment) != std::string::npos) {
+                return position;
+            }
+            ++position;
+        }
+    }
+    ADD_FAILURE() << "no call to " << fragment;
+    return position;
+}
+
+// An index that may disturb the base runs before the base's element is addressed (spec 4.4.3's order), so a growth
+// in the index never leaves the outer element address dangling; a key the later operands may disturb is owned.
+TEST_F(IRLoweringTest, AnIndexThatMayDisturbTheBaseRunsBeforeTheBaseIsAddressed) {
+    lower(R"JOYEER(func growTable(outer: inout [Int: [String: Int]]): String {
+return "x"
+}
+func growList(items: inout [[Int]]): Int {
+return 0
+}
+func readTable(outer: inout [Int: [String: Int]]): Int {
+return outer[0][growTable(outer: &outer)]
+}
+func readList(items: inout [[Int]]): Int {
+return items[0][growList(items: &items)]
+}
+func readDeep(items: inout [[[Int]]], grid: inout [[Int]]): Int {
+return items[0][growList(items: &grid)][1]
+}
+func clobber(text: inout String): Int {
+return 7
+}
+func assign(outer: inout [String: [String: Int]], key: inout String) {
+&outer[key]["x"] = clobber(text: &key)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& module = *result.module;
+    EXPECT_LT(firstCallPosition(module, function("readTable"), "growTable"),
+              firstCallPosition(module, function("readTable"), ".element"));
+    EXPECT_LT(firstCallPosition(module, function("readList"), "growList"),
+              firstCallPosition(module, function("readList"), ".element"));
+    EXPECT_LT(firstCallPosition(module, function("readDeep"), "growList"),
+              firstCallPosition(module, function("readDeep"), ".element"));
+    // The outer String key is copied before `clobber` may reassign it.
+    EXPECT_GE(opcodeCount(function("assign"), joyeer::ir::Opcode::copyValue), 1u);
+}
+
 TEST_F(IRLoweringTest, LowersMutableArrayElementsAsAddressProjections) {
     lower(R"JOYEER(func incrementFirst(values: inout [Int]): Int {
 &values[0] = values[0] + 1

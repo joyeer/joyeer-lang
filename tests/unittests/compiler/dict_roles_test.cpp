@@ -489,6 +489,21 @@ TEST_F(DictRoleTest, TheRoleIsRequiredOnlyWhenAProgramMentionsADictionary) {
     EXPECT_NE(diagnostics().find("dict_type"), std::string::npos) << diagnostics();
     load("func f(): Int { let table: [String: Int] = [\"a\": 1]\n return table.count }\n", arrayLibrary);
     EXPECT_NE(diagnostics().find("dict_type"), std::string::npos) << diagnostics();
+    // An unannotated literal is a mention too.
+    load("func f(): Int { let table = [\"a\": 1]\n return table.count }\n", arrayLibrary);
+    EXPECT_NE(diagnostics().find("invalid-prelude"), std::string::npos) << diagnostics();
+    EXPECT_NE(diagnostics().find("dict_type"), std::string::npos) << diagnostics();
+}
+
+// Only the dictionary's own declaration may key a dictionary by its type parameter (0027 Decision 4); any other
+// generic in a bundled prelude is held to the key rules.
+TEST_F(DictRoleTest, OnlyTheDictionaryItselfMayKeyByATypeParameter) {
+    load("func main() {}\n", table() + "\npublic func misuse<T>(table: Table<T, Int>): Int { return 1 }\n");
+    EXPECT_NE(diagnostics().find("a dictionary key cannot be the type parameter type 'T'"), std::string::npos)
+            << diagnostics();
+    load("func main() {}\n", table() + "\npublic func misuse<T>(table: [T: Int]): Int { return 1 }\n");
+    EXPECT_NE(diagnostics().find("a dictionary key cannot be the type parameter type 'T'"), std::string::npos)
+            << diagnostics();
 }
 
 // ---- IR, wire and backend ----
@@ -975,6 +990,26 @@ TEST_F(DictRoleTest, MorePackingFormsAreRejectedByTheirRule) {
         { "one value stored as two keys", "make", "rule 4", [&](auto& body) {
               body[nth(body, Opcode::fieldAddress, 1, key) + 1].operands[0] =
                       body[nth(body, Opcode::fieldAddress, 0, key) + 1].operands[0];
+          } },
+        // A stored value's only other uses are on paths that never reach the transfer, such as its cleanup on an
+        // early exit; a use the packing block reaches, or one before the storage, would drop or move it twice.
+        { "a stored key used again after the transfer", "make", "rule 4", [&](auto& body) {
+              const auto stored = body[nth(body, Opcode::fieldAddress, 0, key) + 1].operands[0];
+              joyeer::ir::Instruction place { Opcode::stackAllocate };
+              place.result = joyeer::ir::Value { 9000, checking.model->types().intType(),
+                                                 joyeer::ir::ValueCategory::address };
+              joyeer::ir::Instruction store { Opcode::store };
+              store.operands = { stored, 9000 };
+              body.insert(body.begin() + static_cast<std::ptrdiff_t>(nth(body, Opcode::call) + 1), { place, store });
+          } },
+        { "a stored value used before the storage", "make", "rule 4", [&](auto& body) {
+              const auto stored = body[nth(body, Opcode::fieldAddress, 0, value) + 1].operands[0];
+              joyeer::ir::Instruction place { Opcode::stackAllocate };
+              place.result = joyeer::ir::Value { 9000, checking.model->types().boolType(),
+                                                 joyeer::ir::ValueCategory::address };
+              joyeer::ir::Instruction store { Opcode::store };
+              store.operands = { stored, 9000 };
+              body.insert(body.begin() + static_cast<std::ptrdiff_t>(nth(body, Opcode::stackBlock)), { place, store });
           } },
         { "an empty literal with a stray slot", "makeEmpty", "rule 3", [&](auto& body) {
               const auto block = nth(body, Opcode::stackBlock);

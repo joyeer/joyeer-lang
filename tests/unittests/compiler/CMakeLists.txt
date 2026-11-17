@@ -1103,6 +1103,17 @@ if(JOYEER_CLANG_EXECUTABLE)
             E2EDictLibraryEdges dict_library_edges
             "2\n2\nsome\nnone\n32\nb\n1\n2\n"
             0 1 2 3)
+    # Key operands of a nested target or read are evaluated, and owned, before the right side and later indexes (spec
+    # 4.4.3); outputs from the spec's order, not from a compiler.
+    add_joyeer_native_regression(
+            E2EDictKeyAliasing dict_key_aliasing
+            "41\n7\n2\n2\n1\n7\n2\n41\n300\n42\n300\n"
+            0 1 2 3)
+    # An early exit inside a literal drops the evaluated entries once; output of the builtin baseline (939d210).
+    add_joyeer_native_regression(
+            E2EDictLiteralEarlyExit dict_literal_early_exit
+            "1\nnone\n3\n3\n9\n1\n"
+            0 1 2 3)
     # Sendability (decision 0027): a dictionary moves into a task and comes back as a result.
     add_joyeer_native_regression(
             E2EDictTaskTransfer dict_task_transfer

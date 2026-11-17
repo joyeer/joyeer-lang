@@ -1,0 +1,27 @@
+// An entry of a dictionary literal that exits early (`?` on an absent value) drops the entries evaluated before it,
+// each once, and builds nothing; a literal whose entries all evaluate is built as usual.
+struct Res {
+    var id: Int
+    deinit() { print(value: self.id) }
+}
+
+func pick(flag: Bool): Res? {
+    if flag { return .None }
+    return .Some(Res(id: 9))
+}
+
+func build(flag: Bool): [String: Res]? {
+    let table: [String: Res] = ["a" + "b": Res(id: 1), "c": pick(flag: flag)?, "d": Res(id: 3)]
+    return .Some(consume table)
+}
+
+func main() {
+    match build(flag: true) {
+        .Some(_) => print(value: "some"),
+        .None => print(value: "none"),
+    }
+    match build(flag: false) {
+        .Some(t) => print(value: t.count),
+        .None => print(value: "none"),
+    }
+}
