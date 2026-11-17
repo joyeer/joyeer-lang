@@ -340,8 +340,10 @@ private:
     SemanticModel::Ptr model;
     std::vector<NameResolutionDiagnostic> diagnostics;
     // The builtin Dict's `get` returns the optional role enum.
-    SymbolId dictionarySymbol = invalidSymbolId;
     SourceSpan collectionsPreludeSpan {};
+    // Whether the missing `dict_type` role was reported: it is required only once a program mentions a dictionary
+    // (decision 0027, Decision 7), and reported once.
+    bool missingDictionaryReported = false;
     uint32_t activeModule = 0;
     // The type `Self` denotes while resolving the signature or body of a member.
     std::optional<SymbolId> selfType;
@@ -752,6 +754,18 @@ private:
         return id;
     }
 
+    // The declaration carrying the `dict_type` role. A collections prelude without one is valid until a program
+    // mentions a dictionary (decision 0027, Decision 7); the first mention reports it, once.
+    std::optional<SymbolId> dictionaryRole() {
+        if (model->dictSymbol_.has_value()) return model->dictSymbol_;
+        if (!missingDictionaryReported) {
+            missingDictionaryReported = true;
+            report(NameResolutionDiagnosticId::invalidPrelude, collectionsPreludeSpan,
+                   "the compiler-bundled collections prelude does not declare a 'dict_type' struct");
+        }
+        return std::nullopt;
+    }
+
     // The second field of an array or dictionary role struct is readable everywhere (decisions 0025, 0027). The
     // shape check in the type checker guarantees it is `count`.
     void markReadOnlyCounts() {
@@ -808,23 +822,6 @@ private:
                    "the compiler-bundled collections prelude does not declare an 'array_type' struct");
             return;
         }
-        const auto optionalType = *model->optionalSymbol_;
-        declareBuiltinMember(
-                dictionarySymbol,
-                SymbolKind::builtinMember,
-                "get",
-                optionalType,
-                CallableSignature {
-                    CallableKind::function,
-                    true,
-                    { CallableParameter {
-                        std::string("key"),
-                        true,
-                        std::nullopt,
-                        std::nullopt,
-                        std::nullopt,
-                    } },
-                });
         const auto stringType = scope(model->preludeScope_).types.at("String");
         declareBuiltinMember(stringType, SymbolKind::builtinMember, "utf8", *model->arraySymbol_,
                              CallableSignature { CallableKind::function, true, {} });
@@ -845,12 +842,9 @@ private:
         const auto stringType = declareBuiltinType("String");
         const auto byteType = declareBuiltinType("UInt8");
         declareBuiltinType("Any");
-        const auto dictionaryType = declareBuiltinType("Dict");
-        dictionarySymbol = dictionaryType;
         const auto ioErrorType = declareBuiltinType("IOError");
 
         declareBuiltinMember(stringType, SymbolKind::builtinMember, "count", intType);
-        declareBuiltinMember(dictionaryType, SymbolKind::builtinMember, "count", intType);
 
         CallableSignature noPayload { CallableKind::enumCase, false, {} };
 
@@ -1880,7 +1874,11 @@ private:
                 const auto dictionary = std::static_pointer_cast<syntax::DictionaryTypeSyntax>(type);
                 resolveType(dictionary->key, currentScope);
                 resolveType(dictionary->value, currentScope);
-                return bindBuiltinType(type, currentScope, "Dict");
+                // `[K: V]` binds to the declaration carrying `dict_type`, never to a name in scope (decision 0027).
+                const auto role = dictionaryRole();
+                if (!role.has_value()) return std::nullopt;
+                model->referenceSymbols_[nodeId(type)] = *role;
+                return role;
             }
             case syntax::Kind::optionalType: {
                 const auto optional = std::static_pointer_cast<syntax::OptionalTypeSyntax>(type);
@@ -2451,7 +2449,8 @@ private:
                 // The role-bound type, never the spelling: a user type named `Array` must not take literals.
                 return model->arraySymbol_;
             case syntax::Kind::dictionaryExpr:
-                return lookupType(model->fileScope_, "Dict").symbol;
+                // The role-bound type, never the spelling: a user type named `Dict` must not take literals.
+                return model->dictSymbol_;
             case syntax::Kind::subscriptExpr: {
                 const auto subscript = std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
                 const auto base = expressionType(subscript->base);

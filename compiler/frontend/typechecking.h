@@ -5,6 +5,7 @@
 #include "nativebinding.h"
 #include "compiler/diagnostics/diagnostic.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -166,6 +167,10 @@ public:
     [[nodiscard]] TypeId resultType(TypeId success, TypeId failure);
     [[nodiscard]] bool isArray(const TypeRecord* record) const;
     [[nodiscard]] bool isArray(TypeId id) const { return isArray(type(id)); }
+    // Whether `record` is an instance of the struct bound to the `dict_type` role (decision 0027): `[K: V]` binds to
+    // the role, never to a name.
+    [[nodiscard]] bool isDictionary(const TypeRecord* record) const;
+    [[nodiscard]] bool isDictionary(TypeId id) const { return isDictionary(type(id)); }
     // Whether `record` is an instance of the enum bound to the `optional` or `result` role (decision
     // 0024): the language binds `T?`, `nil` and postfix `?` to the role, never to a name.
     [[nodiscard]] bool isOptional(const TypeRecord* record) const;
@@ -432,6 +437,8 @@ public:
     [[nodiscard]] bool isDictRoleType(TypeId type) const;
     // The interned `dict_entry` instance of a concrete dictionary role instance (decision 0027), if any.
     [[nodiscard]] std::optional<TypeId> dictEntryType(TypeId dictionary) const;
+    // The `key` and `value` field symbols of the validated `dict_entry` struct, which a literal stores through.
+    [[nodiscard]] std::optional<std::array<semantic::SymbolId, 2>> dictEntryFields() const;
     // Consuming parameters declared with exactly the role's owned type parameter accept owned arguments.
     [[nodiscard]] bool isOwnedArgumentContext(semantic::SymbolId function, size_t parameter) const;
     // The consuming method that ends a linear value of `type`. With `leaf`, arrays are looked through and the
@@ -499,6 +506,7 @@ private:
     std::unordered_map<semantic::SymbolId, CollectionRole> collectionRoles;
     // Each concrete dictionary role instance's interned entry instance.
     std::unordered_map<TypeId, TypeId> dictEntryTypes;
+    std::optional<std::array<semantic::SymbolId, 2>> dictEntryFieldSymbols;
     std::vector<Conformance> conformanceList;
     std::vector<Instance> instanceList;
     std::map<std::pair<semantic::SymbolId, std::vector<TypeId>>, size_t> instanceIndices;

@@ -114,7 +114,6 @@ TypeContext::TypeContext(const semantic::SemanticModel& model): model(model) {
                 std::string(descriptor.name), TypeKind::enumeration, registeredType);
     }
 
-    registerGenericBuiltin("Dict", TypeKind::dictionary, 2);
     for (const auto& [name, kind] : {
             std::pair {"Int8", TypeKind::int8}, {"Int16", TypeKind::int16},
             {"Int32", TypeKind::int32}, {"Int64", TypeKind::int64},
@@ -180,9 +179,14 @@ bool TypeContext::isArray(const TypeRecord* record) const {
 }
 
 TypeId TypeContext::dictionaryType(TypeId key, TypeId value) {
-    const auto symbol = builtinSymbol("Dict");
-    assert(symbol.has_value());
+    const auto symbol = model.roleSymbol(semantic::LibraryRole::dictType);
+    if (!symbol.has_value()) return errorTypeId;
     return typeForSymbol(*symbol, { key, value }).value_or(errorTypeId);
+}
+
+bool TypeContext::isDictionary(const TypeRecord* record) const {
+    return record != nullptr && record->kind == TypeKind::structure &&
+            record->symbol == model.roleSymbol(semantic::LibraryRole::dictType) && record->arguments.size() == 2;
 }
 
 TypeId TypeContext::optionalType(TypeId wrapped) {
@@ -373,6 +377,10 @@ std::string TypeContext::displayName(TypeId id, bool disambiguateNominals) const
     if (isArray(value)) {
         return "[" + displayName(value->arguments[0], disambiguateNominals) + "]";
     }
+    if (isDictionary(value)) {
+        return "[" + displayName(value->arguments[0], disambiguateNominals) + ": " +
+                displayName(value->arguments[1], disambiguateNominals) + "]";
+    }
 
     switch (value->kind) {
         case TypeKind::error:
@@ -415,7 +423,7 @@ std::string TypeContext::displayName(TypeId id, bool disambiguateNominals) const
                 if (declaration->libraryRole == semantic::LibraryRole::none &&
                     (value->kind == TypeKind::structure || value->kind == TypeKind::enumeration)) {
                     for (const auto role : {semantic::LibraryRole::optional, semantic::LibraryRole::result,
-                                           semantic::LibraryRole::arrayType}) {
+                                           semantic::LibraryRole::arrayType, semantic::LibraryRole::dictType}) {
                         const auto roleSymbol = model.roleSymbol(role);
                         const auto* roleDeclaration = roleSymbol.has_value() ? model.symbol(*roleSymbol) : nullptr;
                         if (roleDeclaration == nullptr || roleDeclaration->name != name) continue;
@@ -599,6 +607,10 @@ bool TypeCheckedModel::isDictRoleType(TypeId type) const {
     if (record == nullptr || record->kind != TypeKind::structure) return false;
     const auto found = collectionRoles.find(record->symbol);
     return found != collectionRoles.end() && found->second.kind == semantic::LibraryRole::dictType;
+}
+
+std::optional<std::array<semantic::SymbolId, 2>> TypeCheckedModel::dictEntryFields() const {
+    return dictEntryFieldSymbols;
 }
 
 std::optional<TypeId> TypeCheckedModel::dictEntryType(TypeId dictionary) const {
@@ -1497,6 +1509,7 @@ private:
                             structure->fields.size() == 2 && structure->deinitializer == nullptr &&
                             structure->methods.empty() && !structure->isLinear;
                     static const char* const entryFieldNames[2] = { "key", "value" };
+                    std::array<semantic::SymbolId, 2> entryFields {};
                     for (size_t index = 0; shaped && index < 2; ++index) {
                         const auto& field = structure->fields[index];
                         const auto fieldSymbol = model->semanticModelValue->declaredSymbol(field);
@@ -1504,8 +1517,11 @@ private:
                                                                        : std::optional<TypeId>();
                         shaped = field->name != nullptr && field->name->rawValue == entryFieldNames[index] &&
                                 fieldType == model->typeContext.typeParameterType((*parameters)[index]);
+                        if (shaped) entryFields[index] = *fieldSymbol;
                     }
                     matches = shaped;
+                    // Lowering packs a literal through these two fields (decision 0027).
+                    if (matches) model->dictEntryFieldSymbols = entryFields;
                     if (!matches) {
                         roleFailure = "the dict_entry role requires exactly the fields 'key: K' then 'value: V' of "
                                 "its two unconstrained, unmarked type parameters, no methods and no deinit";
@@ -1855,7 +1871,8 @@ private:
                         }
                     }
                     const auto* record = model->typeContext.type(result);
-                    if (record != nullptr && record->kind == TypeKind::dictionary) {
+                    if (model->typeContext.isDictionary(record) &&
+                        !genericLibraryKey(record->arguments[0], syntaxType->span)) {
                         rejectInvalidDictionaryKey(record->arguments[0], nominal->arguments[0]->span);
                     }
                     break;
@@ -1886,7 +1903,7 @@ private:
                         model->typeContext.errorType()), dictionary->key->span, "key");
                 const auto value = rejectNeverDictionaryPart(resolveType(dictionary->value).value_or(
                         model->typeContext.errorType()), dictionary->value->span, "value");
-                rejectInvalidDictionaryKey(key, dictionary->key->span);
+                if (!genericLibraryKey(key, syntaxType->span)) rejectInvalidDictionaryKey(key, dictionary->key->span);
                 result = model->typeContext.dictionaryType(key, value);
                 break;
             }
@@ -2708,7 +2725,9 @@ private:
                        "'Never' has no values, so a generic function cannot take or hold one (spec 2.9)");
                 continue;
             }
-            if (model->isLinear(argument) && !targetSymbol.acceptsLinearArguments) {
+            // A dictionary's linear key or value is reported once, as `linear-collection-element`.
+            if (model->isLinear(argument) && !targetSymbol.acceptsLinearArguments &&
+                targetSymbol.libraryRole != semantic::LibraryRole::dictType) {
                 report(TypeCheckingDiagnosticId::linearTypeArgument, span,
                        "type parameter '" + parameter + "' of '" + targetSymbol.name + "' cannot be the linear type " +
                                argumentName,
@@ -3805,7 +3824,7 @@ private:
         const auto* type = model->typeContext.type(id);
         if (type == nullptr) return;
         const auto arguments = type->arguments;
-        if (type->kind == TypeKind::dictionary &&
+        if (model->typeContext.isDictionary(type) &&
             std::any_of(arguments.begin(), arguments.end(),
                         [this](TypeId argument) { return model->isLinear(argument); })) {
             report(TypeCheckingDiagnosticId::linearCollectionElement, span,
@@ -4678,6 +4697,11 @@ private:
         const auto* record = model->typeContext.type(type);
         if (record == nullptr) return false;
         if (model->isArrayRoleType(type)) return containsFunctionType(record->arguments[0]);
+        if (model->typeContext.isDictionary(record)) {
+            const auto arguments = record->arguments;
+            return std::any_of(arguments.begin(), arguments.end(),
+                               [this](TypeId argument) { return containsFunctionType(argument); });
+        }
         switch (record->kind) {
             case TypeKind::function: return true;
             case TypeKind::dictionary:
@@ -4690,6 +4714,12 @@ private:
                         [this](TypeId argument) { return containsFunctionType(argument); });
             default: return false;
         }
+    }
+
+    // The library dictionary's own generic body writes `Dict<K, V>` over its type parameters (decision 0027, Decision 4):
+    // the key rules do not apply to a type-parameter key in a bundled prelude.
+    bool genericLibraryKey(TypeId key, SourceSpan span) const {
+        return model->typeContext.mentionsTypeParameter(key) && model->semanticModelValue->isPreludeSource(span);
     }
 
     // `admission`: also reject a key outside the four admitted types (decision 0027, Decision 4), unless the key type
@@ -6143,7 +6173,7 @@ private:
             const auto base = model->typeOf(
                     std::static_pointer_cast<syntax::SubscriptExprSyntax>(path)->base);
             const auto* baseType = base.has_value() ? model->typeContext.type(*base) : nullptr;
-            if (baseType != nullptr && baseType->kind == TypeKind::dictionary) {
+            if (model->typeContext.isDictionary(baseType)) {
                 report(TypeCheckingDiagnosticId::invalidOperatorOperands, assignment->span,
                        "compound assignment to a dictionary element is not supported; "
                        "read it with 'get' and assign the result");
@@ -6564,6 +6594,12 @@ private:
                     // A library array subscripts like a builtin one (decision 0025).
                     indexType = model->typeContext.intType();
                     result = baseType->arguments[0];
+                    break;
+                }
+                if (model->typeContext.isDictionary(baseType)) {
+                    // A library dictionary subscripts by its key to its value (decision 0027).
+                    indexType = baseType->arguments[0];
+                    result = baseType->arguments[1];
                     break;
                 }
                 [[fallthrough]];
@@ -7217,7 +7253,7 @@ private:
         std::optional<TypeId> valueType;
         if (expected.has_value()) {
             const auto* expectedType = model->typeContext.type(*expected);
-            if (expectedType != nullptr && expectedType->kind == TypeKind::dictionary) {
+            if (model->typeContext.isDictionary(expectedType)) {
                 keyType = expectedType->arguments[0];
                 valueType = expectedType->arguments[1];
             }

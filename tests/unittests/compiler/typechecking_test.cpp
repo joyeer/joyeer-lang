@@ -77,7 +77,9 @@ TEST_F(TypeContextTest, InternsConcreteBuiltinGenericApplications) {
     EXPECT_EQ(type(array).kind, TypeKind::structure);
     EXPECT_TRUE(types->isArray(array));
     EXPECT_EQ(type(array).arguments, std::vector { types->intType() });
-    EXPECT_EQ(type(dictionary).kind, TypeKind::dictionary);
+    // `[K: V]` is the library struct bound to `dict_type` (decision 0027).
+    EXPECT_EQ(type(dictionary).kind, TypeKind::structure);
+    EXPECT_TRUE(types->isDictionary(dictionary));
     EXPECT_TRUE(types->isResult(&type(result)));
     EXPECT_EQ(
             types->displayName(result),

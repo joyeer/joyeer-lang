@@ -84,3 +84,109 @@ public struct Array<T> {
         destroyArray(array: joyeer_intrinsic_place_address<Array<T>>(value: &self))
     }
 }
+
+// The library dictionary (decision 0027): the `{data, count, capacity}` handle of the runtime dictionary ABI in
+// `core/dictionaries.joyeer`, which keeps the algorithms (a linear scan comparing keys by the runtime key kind), the
+// traps, the allocation sizes and the growth. Keys are passed by `borrow_address`; owned keys and values move through
+// stack slots, because the runtime adopts their bytes.
+
+@c_extern(symbol: "joyeer_dictionary_create_owned_abi")
+private func createDictionary(output: Int, entries: Int, count: Int, keySize: Int, valueSize: Int,
+        entrySize: Int, valueOffset: Int, keyKind: Int32, cloneKey: Int, destroyKey: Int,
+        cloneValue: Int, destroyValue: Int): Void
+
+@c_extern(symbol: "joyeer_dictionary_clone_abi")
+private func cloneDictionary(output: Int, data: Int, count: Int): Void
+
+@c_extern(symbol: "joyeer_dictionary_set_owned_abi")
+private func setOwned(dictionary: Int, key: Int, value: Int): Void
+
+@c_extern(symbol: "joyeer_dictionary_find_abi")
+private func findValue(data: Int, count: Int, key: Int, keySize: Int, keyKind: Int32): Int
+
+@c_extern(symbol: "joyeer_dictionary_at_abi")
+private func valueAt(data: Int, count: Int, key: Int, keySize: Int, keyKind: Int32): Int
+
+@c_extern(symbol: "joyeer_dictionary_destroy_abi")
+private func destroyDictionary(dictionary: Int): Void
+
+// One entry as a literal packs it: its ordinary layout is the runtime's entry layout, the key at offset 0 and the
+// value at `alignTo(size_of<K>, align_of<V>)`. It is never a value.
+@compiler_role(dict_entry)
+private struct DictEntry<K, V> {
+    var key: K
+    var value: V
+}
+
+@compiler_role(dict_type)
+public struct Dict<K, V> {
+    private var address: Int
+    private var count: Int
+    private var capacity: Int
+
+    // The address of the stored value: `d[k]` reads, borrows, consumes and mutates through it. A missing key traps
+    // with `dictionary key not found` and never inserts.
+    @compiler_role(dict_element)
+    private borrowing func element(key: K): Int {
+        return valueAt(data: self.address, count: self.count,
+                key: joyeer_intrinsic_borrow_address<K>(value: key), keySize: joyeer_intrinsic_size_of<K>(),
+                keyKind: joyeer_intrinsic_key_kind<K>() as Int32)
+    }
+
+    // `&d[k] = v`: inserts, or replaces the value of an existing key (the runtime then destroys the incoming key and
+    // the old value).
+    @compiler_role(dict_set)
+    private mutating func insert(key: consuming K, value: consuming V): Void {
+        let keySlot = joyeer_intrinsic_stack_slot<K>()
+        let valueSlot = joyeer_intrinsic_stack_slot<V>()
+        joyeer_intrinsic_move_in<K>(address: keySlot, value: consume key)
+        joyeer_intrinsic_move_in<V>(address: valueSlot, value: consume value)
+        setOwned(dictionary: joyeer_intrinsic_place_address<Dict<K, V>>(value: &self), key: keySlot,
+                value: valueSlot)
+    }
+
+    // An independent copy of the stored value, or `.None` for a missing key.
+    @compiler_role(dict_get)
+    public borrowing func get(key: K): Optional<V> {
+        let value = findValue(data: self.address, count: self.count,
+                key: joyeer_intrinsic_borrow_address<K>(value: key), keySize: joyeer_intrinsic_size_of<K>(),
+                keyKind: joyeer_intrinsic_key_kind<K>() as Int32)
+        if value == 0 {
+            return .None
+        }
+        let slot = joyeer_intrinsic_stack_slot<V>()
+        joyeer_intrinsic_clone_at<V>(destination: slot, source: value)
+        return .Some(joyeer_intrinsic_move_out<V>(address: slot))
+    }
+
+    @compiler_role(dict_copy)
+    private borrowing func duplicate(): Dict<K, V> {
+        let slot = joyeer_intrinsic_stack_slot<Dict<K, V>>()
+        cloneDictionary(output: slot, data: self.address, count: self.count)
+        return joyeer_intrinsic_move_out<Dict<K, V>>(address: slot)
+    }
+
+    // A literal: `count` entries packed at `address`, moved into a new dictionary (duplicate keys keep the last
+    // value). Called on an inert zero value.
+    @compiler_role(dict_literal)
+    private consuming func literal(address: Int, count: Int): Dict<K, V> {
+        // The runtime's entry formula: the value at the key's size rounded up to the value's alignment. Written
+        // here, not as a helper: a non-generic prelude function would be emitted into every module.
+        let valueAlignment = joyeer_intrinsic_align_of<V>()
+        let valueOffset = (joyeer_intrinsic_size_of<K>() + valueAlignment - 1) / valueAlignment * valueAlignment
+        let slot = joyeer_intrinsic_stack_slot<Dict<K, V>>()
+        createDictionary(output: slot, entries: address, count: count, keySize: joyeer_intrinsic_size_of<K>(),
+                valueSize: joyeer_intrinsic_size_of<V>(), entrySize: joyeer_intrinsic_size_of<DictEntry<K, V>>(),
+                valueOffset: valueOffset, keyKind: joyeer_intrinsic_key_kind<K>() as Int32,
+                cloneKey: joyeer_intrinsic_clone_callback<K>(), destroyKey: joyeer_intrinsic_destroy_callback<K>(),
+                cloneValue: joyeer_intrinsic_clone_callback<V>(),
+                destroyValue: joyeer_intrinsic_destroy_callback<V>())
+        return joyeer_intrinsic_move_out<Dict<K, V>>(address: slot)
+    }
+
+    deinit() {
+        // A moved-from or zero value owns nothing: no runtime call.
+        if self.address == 0 { return }
+        destroyDictionary(dictionary: joyeer_intrinsic_place_address<Dict<K, V>>(value: &self))
+    }
+}

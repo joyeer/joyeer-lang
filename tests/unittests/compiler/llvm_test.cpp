@@ -531,7 +531,8 @@ TEST_F(LLVMBackendTest, UnitContainersKeepChecksWithoutUnitPayloadLoadsOrStores)
     EXPECT_EQ(result.text.find("load {}"), std::string::npos);
     EXPECT_EQ(result.text.find("store {}"), std::string::npos);
     EXPECT_NE(result.text.find("array index out of bounds"), std::string::npos);
-    EXPECT_NE(result.text.find("call ptr @joyeer_dictionary_at_abi"), std::string::npos);
+    // The library dictionary's addressor calls the runtime lookup (decision 0027).
+    EXPECT_NE(result.text.find("@joyeer_dictionary_at_abi(i64"), std::string::npos);
     EXPECT_NE(result.text.find("call void @joyeer_array_append_owned_abi"), std::string::npos);
 }
 
@@ -1137,8 +1138,6 @@ return values[0] + lookup["answer"]
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     EXPECT_TRUE(std::regex_search(result.text,
             std::regex(R"(%joyeer\.struct\.[0-9]+ = type \{ i64, i64, i64 \})")));
-    EXPECT_NE(result.text.find("%joyeer.dictionary = type { ptr, i64, i64 }"),
-              std::string::npos);
     EXPECT_NE(result.text.find("@joyeer_array_create"), std::string::npos);
     EXPECT_NE(result.text.find("@joyeer_dictionary_create"), std::string::npos);
     EXPECT_EQ(result.text.find("@joyeer_array_at"), std::string::npos);
@@ -1228,12 +1227,13 @@ return lookup
 )JOYEER");
 
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    // The library's `dict_set` passes the handle's address and the moved key and value as Int addresses.
     EXPECT_NE(
             result.text.find(
-                    "declare void @joyeer_dictionary_set_owned_abi(ptr, ptr, ptr)"),
+                    "declare void @joyeer_dictionary_set_owned_abi(i64, i64, i64)"),
             std::string::npos);
     EXPECT_NE(
-            result.text.find("call void @joyeer_dictionary_set_owned_abi(ptr"),
+            result.text.find("call void @joyeer_dictionary_set_owned_abi(i64"),
             std::string::npos);
     EXPECT_NE(result.text.find("call void @joyeer_clone_type_"), std::string::npos);
 }
@@ -1254,198 +1254,48 @@ return values.get(key: key)
 }
 )JOYEER"));
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
-    EXPECT_NE(result.text.find(
-            "declare ptr @joyeer_dictionary_find_abi(ptr, i64, ptr, i64, i32)"),
-            std::string::npos);
-    EXPECT_EQ(result.text.find("@joyeer_dictionary_at_abi"), std::string::npos);
-    const auto sourceStart = result.text.find("define %joyeer.enum.");
-    ASSERT_NE(sourceStart, std::string::npos);
-    const auto bodies = result.text.substr(sourceStart);
-    EXPECT_EQ(bodies.find("call void @joyeer_clone_type_"), std::string::npos);
-    EXPECT_EQ(bodies.find("call void @joyeer_destroy_type_"), std::string::npos);
-    for (const auto* keyAbi : {
-                 ", i64 8, i32 1)", ", i64 1, i32 2)",
-                 ", i64 16, i32 3)", ", i64 1, i32 4)",
-             }) {
-        EXPECT_NE(bodies.find(keyAbi), std::string::npos);
-    }
-    std::istringstream lines(bodies);
+    // The library's `get` (decision 0027): one non-trapping lookup per key type, with the key's size.
+    EXPECT_NE(result.text.find("declare i64 @joyeer_dictionary_find_abi(i64, i64, i64, i64, i32)"),
+              std::string::npos);
+    std::istringstream lines(result.text);
     std::string line;
     size_t lookups = 0;
-    size_t presenceChecks = 0;
     while (std::getline(lines, line)) {
-        if (line.find("call ptr @joyeer_dictionary_find_abi") != std::string::npos) ++lookups;
-        if (line.find("icmp ne ptr") != std::string::npos) ++presenceChecks;
+        if (line.find("call i64 @joyeer_dictionary_find_abi") != std::string::npos) ++lookups;
     }
     EXPECT_EQ(lookups, 4u);
-    EXPECT_EQ(presenceChecks, 4u);
-}
-
-TEST_F(LLVMBackendTest, DictionaryGetClonesOnlyTheFoundOwnedPayloadExactlyOnce) {
-    struct Case {
-        const char* declarations;
-        const char* valueType;
-        const char* cloneOperation;
-    };
-    for (const auto& testCase : {
-                 Case { "", "String", "call void @joyeer_string_clone_abi" },
-                 Case { "", "[String]", "call %joyeer.struct." },
-                 Case { "", "[String: String]", "call void @joyeer_dictionary_clone_abi" },
-                 Case { "struct Box { var text: String }\n", "Box",
-                        "getelementptr inbounds %joyeer.struct." },
-                 Case { "enum Choice { None, Text(String) }\n", "Choice", "switch i32" },
-                 Case { "", "String?", "switch i32" },
-             }) {
-        SCOPED_TRACE(testCase.valueType);
-        ASSERT_NO_FATAL_FAILURE(emit(
-                std::string(testCase.declarations) +
-                "func read(values: borrowing [Int: " + testCase.valueType +
-                "], key: Int): Optional<" + testCase.valueType + "> {\n"
-                "return values.get(key: key)\n}\n"));
-        ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
-        const auto sourceStart = result.text.find("define %joyeer.enum.");
-        ASSERT_NE(sourceStart, std::string::npos);
-        const auto body = result.text.substr(
-                sourceStart, result.text.find("\n}", sourceStart) - sourceStart);
-        EXPECT_EQ(body.find("@joyeer_dictionary_clone_abi"), std::string::npos);
-        EXPECT_EQ(body.find("call void @joyeer_destroy_type_"), std::string::npos);
-        EXPECT_EQ(body.find("@joyeer_dictionary_at_abi"), std::string::npos);
-        std::istringstream lines(body);
-        std::string line;
-        std::string label;
-        std::string storedValueAddress;
-        size_t clones = 0;
-        while (std::getline(lines, line)) {
-            if (const auto parsedLabel = blockLabel(line)) label = *parsedLabel;
-            if (line.find("call ptr @joyeer_dictionary_find_abi") != std::string::npos) {
-                const auto addressStart = line.find('%');
-                storedValueAddress = line.substr(
-                        addressStart, line.find(" = ", addressStart) - addressStart);
-            }
-            const auto call = line.find("call void @joyeer_clone_type_");
-            if (call == std::string::npos) continue;
-            ++clones;
-            EXPECT_TRUE(label.starts_with("dictionary.get.some.")) << line;
-            ASSERT_FALSE(storedValueAddress.empty());
-            EXPECT_TRUE(line.ends_with(", ptr " + storedValueAddress + ")")) << line;
-            const auto helperStart = line.find('@', call);
-            const auto helper = line.substr(helperStart, line.find('(', helperStart) - helperStart);
-            const auto definitionStart = result.text.find("define internal void " + helper + "(");
-            ASSERT_NE(definitionStart, std::string::npos);
-            const auto definition = result.text.substr(
-                    definitionStart, result.text.find("\n}", definitionStart) - definitionStart);
-            EXPECT_NE(definition.find(testCase.cloneOperation), std::string::npos);
-        }
-        EXPECT_EQ(clones, 1u);
-        EXPECT_NE(body.find("store %joyeer.enum."), std::string::npos);
-        EXPECT_NE(body.find(" zeroinitializer, ptr "), std::string::npos);
-        EXPECT_NE(body.find("label %dictionary.get.done."), std::string::npos);
+    for (const auto* keySize : { "getelementptr (i64, ptr null, i32 1)", "getelementptr (i1, ptr null, i32 1)",
+                                 "getelementptr (i8, ptr null, i32 1)",
+                                 "getelementptr (%joyeer.string, ptr null, i32 1)" }) {
+        EXPECT_NE(result.text.find(keySize), std::string::npos) << keySize;
     }
 }
 
-TEST_F(LLVMBackendTest, DictionaryGetCopiesTrivialAndNestedOptionalPayloadsWithoutCloning) {
-    ASSERT_NO_FATAL_FAILURE(emit(R"JOYEER(
-struct Empty {}
-struct Point { var x: Int }
-enum Choice { None, Value(Int) }
-func empty(values: borrowing [Int: Empty]): Empty? {
-return values.get(key: 1)
-}
-func point(values: borrowing [Int: Point]): Point? {
-return values.get(key: 1)
-}
-func choice(values: borrowing [Int: Choice]): Choice? {
-return values.get(key: 1)
-}
-func nested(values: borrowing [Int: Int?]): Optional<Int?> {
-return values.get(key: 1)
-}
-func boolean(values: borrowing [Int: Bool]): Bool? {
-return values.get(key: 1)
-}
-func byte(values: borrowing [Int: UInt8]): UInt8? {
-return values.get(key: 1)
-}
-)JOYEER"));
-    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
-    const auto sourceStart = result.text.find("define %joyeer.enum.");
-    ASSERT_NE(sourceStart, std::string::npos);
-    const auto bodies = result.text.substr(sourceStart);
-    EXPECT_EQ(bodies.find("call void @joyeer_clone_type_"), std::string::npos);
-    std::istringstream lines(bodies);
-    std::string line;
-    std::string label;
-    size_t enumPayloadCopies = 0;
-    size_t structurePayloadCopies = 0;
-    size_t scalarPayloadCopies = 0;
-    while (std::getline(lines, line)) {
-        if (const auto parsedLabel = blockLabel(line)) label = *parsedLabel;
-        if (!label.starts_with("dictionary.get.some.")) continue;
-        if (line.find(" = load %joyeer.enum.") != std::string::npos) ++enumPayloadCopies;
-        if (line.find(" = load %joyeer.struct.") != std::string::npos) ++structurePayloadCopies;
-        if (line.find(" = load i1,") != std::string::npos ||
-            line.find(" = load i8,") != std::string::npos) ++scalarPayloadCopies;
-    }
-    EXPECT_EQ(enumPayloadCopies, 2u);
-    EXPECT_EQ(structurePayloadCopies, 2u);
-    EXPECT_EQ(scalarPayloadCopies, 2u);
-}
-
-TEST_F(LLVMBackendTest, DictionaryGetHandlesEmptyAndUnitDictionariesWithoutPayloadAccess) {
-    ASSERT_NO_FATAL_FAILURE(emit(R"JOYEER(
-func empty(): Void? {
-let values: [Int: Void] = [:]
-return values.get(key: 1)
-}
-func present(): Void? {
-let values: [Int: Void] = [1: ()]
-return values.get(key: 1)
-}
-)JOYEER"));
-    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
-    EXPECT_NE(result.text.find("call ptr @joyeer_dictionary_find_abi"), std::string::npos);
-    EXPECT_NE(result.text.find("icmp ne ptr"), std::string::npos);
-    EXPECT_EQ(result.text.find("load void"), std::string::npos);
-    EXPECT_EQ(result.text.find("store void"), std::string::npos);
-    EXPECT_EQ(result.text.find("load {}"), std::string::npos);
-    EXPECT_EQ(result.text.find("store {}"), std::string::npos);
-    const auto sourceStart = result.text.find("define %joyeer.enum.");
-    ASSERT_NE(sourceStart, std::string::npos);
-    const auto bodies = result.text.substr(sourceStart);
-    EXPECT_EQ(bodies.find(", i32 0, i32 1, i32 0"), std::string::npos);
-    EXPECT_EQ(bodies.find("call void @joyeer_clone_type_"), std::string::npos);
-}
-
-TEST_F(LLVMBackendTest, DictionaryGetCarriesDebugLocationsThroughLookupAndCloneBranches) {
+// Since the dictionary switch (decision 0027) `get` is the library's `dict_get` method: a lookup, then `clone_at` of the
+// found value. The builtin lowering's branch-shape tests went with it; the hand-built tests below still cover that
+// backend path until the cleanup stage removes it.
+TEST_F(LLVMBackendTest, LibraryDictionaryGetLooksUpWithDebugLocationsAndNoUnitPayloadAccess) {
     ASSERT_NO_FATAL_FAILURE(emit(
-            "func read(values: borrowing [Int: String], key: Int): String? {\n"
+            "func text(values: borrowing [Int: String], key: Int): String? {\n"
+            "return values.get(key: key)\n}\n"
+            "func unit(values: borrowing [Int: Void], key: Int): Void? {\n"
             "return values.get(key: key)\n}\n",
             true,
             joyeer::llvmbackend::EmitOptions {
                 true, joyeer::DebugInfoFormat::dwarf, joyeer::OptimizationLevel::O0, true,
             }));
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
-    const auto sourceStart = result.text.find("define %joyeer.enum.");
-    ASSERT_NE(sourceStart, std::string::npos);
-    const auto body = result.text.substr(
-            sourceStart, result.text.find("\n}", sourceStart) - sourceStart);
-    std::istringstream lines(body);
+    EXPECT_EQ(result.text.find("load {}"), std::string::npos);
+    EXPECT_EQ(result.text.find("store {}"), std::string::npos);
+    std::istringstream lines(result.text);
     std::string line;
-    std::string lookupLocation;
-    size_t locatedOperations = 0;
+    size_t lookups = 0;
     while (std::getline(lines, line)) {
-        if (line.find("call ptr @joyeer_dictionary_find_abi") == std::string::npos &&
-            line.find("call void @joyeer_clone_type_") == std::string::npos &&
-            line.find("label %dictionary.get.") == std::string::npos) {
-            continue;
-        }
-        const auto location = line.find(", !dbg !");
-        ASSERT_NE(location, std::string::npos) << line;
-        if (lookupLocation.empty()) lookupLocation = line.substr(location);
-        EXPECT_EQ(line.substr(location), lookupLocation);
-        ++locatedOperations;
+        if (line.find("call i64 @joyeer_dictionary_find_abi") == std::string::npos) continue;
+        ++lookups;
+        EXPECT_NE(line.find(", !dbg !"), std::string::npos) << line;
     }
-    EXPECT_EQ(locatedOperations, 4u);
+    EXPECT_EQ(lookups, 2u);
 }
 
 TEST(LLVMOwnershipBackendTest, DictionaryGetUsesConcreteOptionalCaseTags) {

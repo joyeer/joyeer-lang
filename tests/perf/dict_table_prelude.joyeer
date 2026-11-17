@@ -22,18 +22,18 @@ private func createTable(output: Int, entries: Int, count: Int, keySize: Int, va
 private func cloneTable(output: Int, data: Int, count: Int): Void
 
 @c_extern(symbol: "joyeer_dictionary_set_owned_abi")
-private func setOwned(dictionary: Int, key: Int, value: Int): Void
+private func setTableOwned(dictionary: Int, key: Int, value: Int): Void
 
 @c_extern(symbol: "joyeer_dictionary_find_abi")
-private func findValue(data: Int, count: Int, key: Int, keySize: Int, keyKind: Int32): Int
+private func findTableValue(data: Int, count: Int, key: Int, keySize: Int, keyKind: Int32): Int
 
 @c_extern(symbol: "joyeer_dictionary_at_abi")
-private func valueAt(data: Int, count: Int, key: Int, keySize: Int, keyKind: Int32): Int
+private func tableValueAt(data: Int, count: Int, key: Int, keySize: Int, keyKind: Int32): Int
 
 @c_extern(symbol: "joyeer_dictionary_destroy_abi")
 private func destroyTable(dictionary: Int): Void
 
-private func roundUp(value: Int, alignment: Int): Int {
+private func tableRoundUp(value: Int, alignment: Int): Int {
     return (value + alignment - 1) / alignment * alignment
 }
 
@@ -44,7 +44,7 @@ public struct Table<K, V> {
 
     // The strict read `d[k]`: traps with `dictionary key not found` when the key is absent.
     public borrowing func at(key: borrowing K): V {
-        let value = valueAt(data: self.address, count: self.count,
+        let value = tableValueAt(data: self.address, count: self.count,
                 key: joyeer_intrinsic_borrow_address<K>(value: key), keySize: joyeer_intrinsic_size_of<K>(),
                 keyKind: joyeer_intrinsic_key_kind<K>() as Int32)
         let slot = joyeer_intrinsic_stack_slot<V>()
@@ -53,7 +53,7 @@ public struct Table<K, V> {
     }
 
     public borrowing func get(key: borrowing K): Optional<V> {
-        let value = findValue(data: self.address, count: self.count,
+        let value = findTableValue(data: self.address, count: self.count,
                 key: joyeer_intrinsic_borrow_address<K>(value: key), keySize: joyeer_intrinsic_size_of<K>(),
                 keyKind: joyeer_intrinsic_key_kind<K>() as Int32)
         if value == 0 {
@@ -71,7 +71,7 @@ public struct Table<K, V> {
         let valueSlot = joyeer_intrinsic_stack_slot<V>()
         joyeer_intrinsic_move_in<K>(address: keySlot, value: consume key)
         joyeer_intrinsic_move_in<V>(address: valueSlot, value: consume value)
-        setOwned(dictionary: joyeer_intrinsic_place_address<Table<K, V>>(value: &self), key: keySlot,
+        setTableOwned(dictionary: joyeer_intrinsic_place_address<Table<K, V>>(value: &self), key: keySlot,
                 value: valueSlot)
     }
 
@@ -99,8 +99,8 @@ public func emptyTable<K, V>(key: K, value: V): Table<K, V> {
     if valueAlign > entryAlign {
         entryAlign = valueAlign
     }
-    let valueOffset = roundUp(value: joyeer_intrinsic_size_of<K>(), alignment: valueAlign)
-    let entrySize = roundUp(value: valueOffset + joyeer_intrinsic_size_of<V>(), alignment: entryAlign)
+    let valueOffset = tableRoundUp(value: joyeer_intrinsic_size_of<K>(), alignment: valueAlign)
+    let entrySize = tableRoundUp(value: valueOffset + joyeer_intrinsic_size_of<V>(), alignment: entryAlign)
     var table: Table<K, V> = Table(address: 0, count: 0, capacity: 0)
     createTable(output: joyeer_intrinsic_place_address<Table<K, V>>(value: &table), entries: 0, count: 0,
             keySize: joyeer_intrinsic_size_of<K>(),

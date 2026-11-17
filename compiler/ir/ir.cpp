@@ -1599,6 +1599,13 @@ VerificationResult Verifier::verify(const Module& module) const {
             const auto& valueField = entry->second->fields[1];
             const bool unitValue = types.contains(valueField.type) &&
                     types.at(valueField.type)->kind == typing::TypeKind::voidType;
+            // A stored value is used once in the packing window, so one owned value never fills two slots. Its other
+            // uses are elsewhere, such as its cleanup on an early exit before the storage.
+            const auto usedOnceInWindow = [&](ValueId value) {
+                return std::count_if(literalUses[value].begin(), literalUses[value].end(), [&](const auto& use) {
+                    return use.block == block.id && use.index > index && use.index < transfer.index;
+                }) == 1;
+            };
             std::unordered_set<int64_t> keys;
             std::unordered_set<int64_t> storedValues;
             std::vector<ValueId> admittedSlots;
@@ -1651,7 +1658,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 value->second.category == ValueCategory::value && store.block == block.id &&
                                 store.index > projection.index && sameBlockTransfer && store.index < transfer.index &&
                                 evaluatedBefore(value->first, block.id, index) &&
-                                literalUses[value->first].size() == 1;
+                                usedOnceInWindow(value->first);
                     }
                     if (!stored) {
                         return "rule 4: each field address must have exactly one use, a store in its block before "

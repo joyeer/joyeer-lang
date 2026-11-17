@@ -67,6 +67,18 @@ protected:
         return *found;
     }
 
+    // Calls from `function` to functions whose name contains `fragment`, such as a library role method.
+    size_t callsTo(const joyeer::ir::Function& function, const std::string& fragment) const {
+        size_t count = 0;
+        for (const auto& block : function.blocks) {
+            for (const auto& instruction : block.instructions) {
+                if (instruction.opcode != joyeer::ir::Opcode::call || !instruction.callee.has_value()) continue;
+                count += result.module->functions.at(*instruction.callee).name.find(fragment) != std::string::npos;
+            }
+        }
+        return count;
+    }
+
     size_t opcodeCount(
             const joyeer::ir::Function& function,
             joyeer::ir::Opcode opcode) const {
@@ -790,11 +802,13 @@ TEST_F(IRLoweringTest, DictionaryGetBorrowsInputsAndOwnsItsResultWithoutExtraCop
           "return values.get(key: key)?\n}\n");
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+    // Since the dictionary switch (decision 0027) `get` is a call to the library's `dict_get` method; the dictionary
+    // and the key are borrowed, so neither is copied.
     const auto& lookup = function("lookup");
-    EXPECT_EQ(opcodeCount(lookup, joyeer::ir::Opcode::dictionaryGet), 1u);
+    EXPECT_EQ(callsTo(lookup, ".get"), 1u);
     EXPECT_EQ(opcodeCount(lookup, joyeer::ir::Opcode::copyValue), 0u);
-    EXPECT_EQ(opcodeCount(lookup, joyeer::ir::Opcode::constructDictionary), 0u);
-    EXPECT_EQ(opcodeCount(function("propagate"), joyeer::ir::Opcode::dictionaryGet), 1u);
+    EXPECT_EQ(opcodeCount(lookup, joyeer::ir::Opcode::dictionaryGet), 0u);
+    EXPECT_EQ(callsTo(function("propagate"), ".get"), 1u);
     EXPECT_EQ(opcodeCount(function("propagate"), joyeer::ir::Opcode::copyValue), 0u);
 }
 
@@ -1459,11 +1473,15 @@ return values[0] + lookup["answer"]
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     const auto verification = joyeer::ir::Verifier().verify(*result.module);
     ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    // Both literals pack into a stack block and call their role's literal method (decisions 0026, 0027); both
+    // subscripts go through an addressor.
     const auto& build = function("build");
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::stackBlock), 1u);
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::constructDictionary), 1u);
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::subscript), 1u);
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::integerAddress), 4u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::stackBlock), 2u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::constructDictionary), 0u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::subscript), 0u);
+    EXPECT_EQ(callsTo(build, ".literal"), 2u);
+    EXPECT_EQ(callsTo(build, ".element"), 2u);
+    EXPECT_GE(opcodeCount(build, joyeer::ir::Opcode::fieldAddress), 2u);
 
     const auto arrayType = std::find_if(
             result.module->types.begin(),
@@ -1514,10 +1532,12 @@ return lookup
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     const auto verification = joyeer::ir::Verifier().verify(*result.module);
     ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    // Each `&d[k] = v` calls the library's `dict_set` with an owned key and value (decision 0027): the unmarked `let`
+    // key and value are copied.
     const auto& build = function("build");
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::dictionarySet), 2u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::dictionarySet), 0u);
+    EXPECT_EQ(callsTo(build, ".insert"), 2u);
     EXPECT_GE(opcodeCount(build, joyeer::ir::Opcode::copyValue), 2u);
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::count), 1u);
     EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::returnValue), 1u);
 }
 

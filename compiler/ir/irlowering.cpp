@@ -1879,12 +1879,8 @@ private:
         if (target != nullptr && target->kind == syntax::Kind::subscriptExpr) {
             const auto subscript = std::static_pointer_cast<syntax::SubscriptExprSyntax>(target);
             const auto baseType = typeOf(subscript->base);
-            const auto* dictionaryType = baseType.has_value()
-                    ? model->types().type(*baseType) : nullptr;
-            if (dictionaryType != nullptr &&
-                dictionaryType->kind == typing::TypeKind::dictionary &&
-                dictionaryType->arguments.size() == 2) {
-                return lowerDictionarySet(expression, subscript, *dictionaryType);
+            if (baseType.has_value() && model->types().isDictionary(*baseType)) {
+                return lowerDictionarySet(expression, subscript, *baseType);
             }
         }
         const auto deferredAddress = prepareAddress(expression->target);
@@ -1945,23 +1941,38 @@ private:
         return emitUnit(expression->span);
     }
 
+    // `&d[k] = v` on a library dictionary (decision 0027): insert or replace through `dict_set`. The base's own
+    // index operands, then the key, then the value are evaluated to owned temporaries (spec 4.4.3); only then is
+    // the base addressed, so the right side cannot leave that address dangling, and a missing outer key traps after
+    // the value was evaluated. A trap in the right side inserts nothing.
     std::optional<ir::Value> lowerDictionarySet(
             const syntax::AssignmentExprSyntax::Ptr& expression,
             const syntax::SubscriptExprSyntax::Ptr& subscript,
-            const typing::TypeRecord& dictionaryType) {
-        const auto dictionary = lowerAddress(subscript->base);
+            typing::TypeId dictionaryType) {
+        const auto* record = model->types().type(dictionaryType);
+        const auto method = model->collectionRoleMethod(dictionaryType, semantic::LibraryRole::dictSet);
+        const auto instance = method.has_value() && record != nullptr
+                ? model->instanceIndex(*method, record->arguments) : std::nullopt;
+        if (!instance.has_value() || *instance >= instanceFunctions.size() ||
+            instanceFunctions[*instance] == ir::invalidFunctionId) {
+            report(DiagnosticId::missingSymbol, expression->span, "the dictionary insertion has no lowered instance");
+            return std::nullopt;
+        }
+        const auto keyType = record->arguments[0];
+        const auto valueType = record->arguments[1];
+        auto base = prepareAddress(subscript->base);
+        if (!base.has_value() || currentBlockTerminated()) return std::nullopt;
+        auto key = prepareOperand(subscript->index, keyType);
+        if (!key.has_value() || currentBlockTerminated()) return std::nullopt;
+        auto value = prepareOperand(expression->value, valueType);
+        if (!value.has_value() || currentBlockTerminated()) return std::nullopt;
+        const auto dictionary = (*base)();
         if (!dictionary.has_value()) return std::nullopt;
-        auto key = prepareOperand(subscript->index, dictionaryType.arguments[0]);
-        if (!key.has_value()) return std::nullopt;
-        auto value = prepareOperand(expression->value, dictionaryType.arguments[1]);
-        if (!value.has_value()) return std::nullopt;
-        key = acquireOwned(*key, subscript->index->span);
-        value = acquireOwned(*value, expression->value->span);
-        if (!key.has_value() || !value.has_value()) return std::nullopt;
-
-        auto instruction = makeInstruction(ir::Opcode::dictionarySet, expression->span);
-        instruction.operands = { dictionary->id, key->id, value->id };
-        emit(std::move(instruction));
+        auto call = makeInstruction(ir::Opcode::call, expression->span);
+        call.callee = instanceFunctions[*instance];
+        call.operands = { dictionary->id };
+        if (!transferOperands(call, { *key, *value }, expression->span)) return std::nullopt;
+        emit(std::move(call));
         return emitUnit(expression->span);
     }
 
@@ -2008,7 +2019,7 @@ private:
             if (!base.has_value() || !index.has_value() || !type.has_value()) {
                 return std::nullopt;
             }
-            if (const auto baseType = typeOf(subscript->base); baseType.has_value() && model->isArrayRoleType(*baseType)) {
+            if (const auto baseType = typeOf(subscript->base); baseType.has_value() && isRoleSubscriptBase(*baseType)) {
                 return emitRoleElementAddress(*baseType, *base, *index, *type, subscript->span);
             }
             return emitValue(
@@ -2050,7 +2061,7 @@ private:
             const auto type = typeOf(subscript);
             if (!index.has_value() || !type.has_value()) return std::nullopt;
             std::optional<typing::TypeId> roleBase;
-            if (const auto baseType = typeOf(subscript->base); baseType.has_value() && model->isArrayRoleType(*baseType)) {
+            if (const auto baseType = typeOf(subscript->base); baseType.has_value() && isRoleSubscriptBase(*baseType)) {
                 roleBase = *baseType;
             }
             return DeferredAddress([this, base = std::move(*base), index = *index, type = *type, roleBase,
@@ -2188,12 +2199,19 @@ private:
         return std::nullopt;
     }
 
-    // `a[i]` on a library array (decision 0025): the `array_element` addressor of the receiver's instance
-    // returns the element's address as an `Int`, which only this lowering turns into a typed place.
+    // Whether `type` is subscripted through a role addressor: a library array or dictionary.
+    bool isRoleSubscriptBase(typing::TypeId type) const {
+        return model->isArrayRoleType(type) || model->types().isDictionary(type);
+    }
+
+    // `a[i]` on a library array (decision 0025) and `d[k]` on a library dictionary (decision 0027): the addressor of
+    // the receiver's instance returns the element's address as an `Int`, which only this lowering turns into a typed
+    // place. A dictionary key is passed raw as the borrowed argument; an owned key temporary keeps its own cleanup.
     std::optional<ir::Value> emitRoleElementAddress(
             typing::TypeId arrayType, const ir::Value& baseAddress, const ir::Value& index,
             typing::TypeId elementType, SourceSpan span) {
-        const auto method = model->arrayRoleMethod(arrayType, semantic::LibraryRole::arrayElement);
+        const auto method = model->collectionRoleMethod(arrayType, model->types().isDictionary(arrayType)
+                ? semantic::LibraryRole::dictElement : semantic::LibraryRole::arrayElement);
         const auto* record = model->types().type(arrayType);
         const auto instance = method.has_value() && record != nullptr
                 ? model->instanceIndex(*method, record->arguments) : std::nullopt;
@@ -2223,7 +2241,7 @@ private:
 
     std::optional<ir::Value> lowerSubscript(
             const syntax::SubscriptExprSyntax::Ptr& expression) {
-        if (const auto baseType = typeOf(expression->base); baseType.has_value() && model->isArrayRoleType(*baseType)) {
+        if (const auto baseType = typeOf(expression->base); baseType.has_value() && isRoleSubscriptBase(*baseType)) {
             std::optional<ir::Value> baseAddress;
             if (isAddressable(expression->base)) {
                 baseAddress = lowerAddress(expression->base);
@@ -2342,30 +2360,91 @@ private:
         const auto type = typeOf(expression);
         if (!type.has_value()) return std::nullopt;
         const auto* dictionaryType = model->types().type(*type);
-        if (dictionaryType == nullptr ||
-            dictionaryType->kind != typing::TypeKind::dictionary ||
-            dictionaryType->arguments.size() != 2) {
-            report(
-                    DiagnosticId::missingType,
-                    expression->span,
-                    "dictionary literal has no dictionary type");
+        const auto entryType = model->dictEntryType(*type);
+        const auto fields = model->dictEntryFields();
+        if (dictionaryType == nullptr || !model->types().isDictionary(*type) || !entryType.has_value() ||
+            !fields.has_value()) {
+            report(DiagnosticId::missingType, expression->span, "dictionary literal has no dictionary type");
             return std::nullopt;
         }
-
-        auto instruction = makeInstruction(
-                ir::Opcode::constructDictionary,
-                expression->span);
-        instruction.result = makeValue(*type, ir::ValueCategory::value);
-        std::vector<ir::Value> entries;
-        for (const auto& entry : expression->entries) {
-            const auto key = prepareOperand(entry->key, dictionaryType->arguments[0]);
-            if (!key.has_value()) return std::nullopt;
-            entries.push_back(*key);
-            const auto value = prepareOperand(entry->value, dictionaryType->arguments[1]);
-            if (!value.has_value()) return std::nullopt;
-            entries.push_back(*value);
+        const auto arguments = dictionaryType->arguments;
+        const auto keyType = arguments[0];
+        const auto valueType = arguments[1];
+        const auto literal = model->collectionRoleMethod(*type, semantic::LibraryRole::dictLiteral);
+        const auto instance = literal.has_value() ? model->instanceIndex(*literal, arguments) : std::nullopt;
+        if (!instance.has_value() || *instance >= instanceFunctions.size() ||
+            instanceFunctions[*instance] == ir::invalidFunctionId) {
+            report(DiagnosticId::missingSymbol, expression->span,
+                   "the dictionary literal method has no lowered instance");
+            return std::nullopt;
         }
-        if (!transferOperands(instruction, entries, expression->span)) return std::nullopt;
+        // Every key and value is evaluated first, left to right, entry by entry (decision 0027, rule 4).
+        std::vector<std::pair<ir::Value, ir::Value>> entries;
+        for (const auto& entry : expression->entries) {
+            const auto key = prepareOperand(entry->key, keyType);
+            if (!key.has_value()) return std::nullopt;
+            const auto value = prepareOperand(entry->value, valueType);
+            if (!value.has_value()) return std::nullopt;
+            entries.emplace_back(*key, *value);
+        }
+        if (currentBlockTerminated()) return std::nullopt;
+        const auto integer = [&](int64_t number, SourceSpan span) {
+            auto constant = makeInstruction(ir::Opcode::integerConstant, span);
+            constant.integerValue = number;
+            constant.result = makeValue(model->types().intType(), ir::ValueCategory::value);
+            const auto value = *constant.result;
+            emit(std::move(constant));
+            recordValue(value, ValueOwnership::trivial);
+            return value;
+        };
+        const auto count = integer(static_cast<int64_t>(entries.size()), expression->span);
+        const auto receiverStorage = emitValue(ir::Opcode::stackAllocate, *type, ir::ValueCategory::address,
+                                              {}, expression->span);
+        auto zero = makeInstruction(ir::Opcode::zeroInitialize, expression->span);
+        zero.operands = { receiverStorage.id };
+        emit(std::move(zero));
+        const auto receiver = emitValue(ir::Opcode::load, *type, ir::ValueCategory::value,
+                                       { receiverStorage.id }, expression->span);
+        recordValue(receiver, ValueOwnership::owned);
+        const auto ownedReceiver = acquireOwned(receiver, expression->span);
+        if (!ownedReceiver.has_value()) return std::nullopt;
+
+        auto storage = makeInstruction(ir::Opcode::stackBlock, expression->span);
+        storage.integerValue = static_cast<int64_t>(*entryType);
+        storage.operands = { count.id };
+        storage.result = makeValue(model->types().intType(), ir::ValueCategory::value);
+        const auto block = *storage.result;
+        emit(std::move(storage));
+        recordValue(block, ValueOwnership::trivial);
+        // Each entry's key, and its value unless `V` is Void, are stored through the entry's fields; nothing can fail
+        // after ownership starts moving into the untracked stack block.
+        for (size_t index = 0; index < entries.size(); ++index) {
+            const auto& entry = expression->entries[index];
+            const auto key = acquireOwned(entries[index].first, entry->key->span);
+            const auto value = acquireOwned(entries[index].second, entry->value->span);
+            if (!key.has_value() || !value.has_value()) return std::nullopt;
+            const auto offset = integer(static_cast<int64_t>(index), entry->span);
+            auto slot = makeInstruction(ir::Opcode::slotAddress, entry->span);
+            slot.integerValue = static_cast<int64_t>(*entryType);
+            slot.operands = { block.id, offset.id };
+            slot.result = makeValue(model->types().intType(), ir::ValueCategory::value);
+            const auto address = *slot.result;
+            emit(std::move(slot));
+            recordValue(address, ValueOwnership::trivial);
+            const auto place = emitValue(ir::Opcode::integerAddress, *entryType, ir::ValueCategory::address,
+                                         { address.id }, entry->span);
+            const auto keyPlace = emitValue(ir::Opcode::fieldAddress, keyType, ir::ValueCategory::address,
+                                            { place.id }, entry->key->span, (*fields)[0]);
+            emitRawStore(*key, keyPlace, entry->key->span);
+            if (valueType == model->types().voidType()) continue;
+            const auto valuePlace = emitValue(ir::Opcode::fieldAddress, valueType, ir::ValueCategory::address,
+                                              { place.id }, entry->value->span, (*fields)[1]);
+            emitRawStore(*value, valuePlace, entry->value->span);
+        }
+        auto instruction = makeInstruction(ir::Opcode::call, expression->span);
+        instruction.callee = instanceFunctions[*instance];
+        instruction.operands = { ownedReceiver->id, block.id, count.id };
+        instruction.result = makeValue(*type, ir::ValueCategory::value);
         const auto result = *instruction.result;
         emit(std::move(instruction));
         recordValue(result, ValueOwnership::owned);
