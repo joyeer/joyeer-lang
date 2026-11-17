@@ -4692,7 +4692,16 @@ private:
         }
     }
 
-    void rejectInvalidDictionaryKey(TypeId key, SourceSpan span) {
+    // `admission`: also reject a key outside the four admitted types (decision 0027, Decision 4), unless the key type
+    // came from a context (an annotation or a parameter) that already reported it.
+    void rejectInvalidDictionaryKey(TypeId key, SourceSpan span, bool admission = true) {
+        // A function-type, type-parameter or Never key has its own diagnostic, so each mistake reports once.
+        if (admission && key != model->typeContext.errorType() && key != model->typeContext.neverType() &&
+            !containsFunctionType(key) && !model->typeContext.mentionsTypeParameter(key) && !admittedKeyKind(key)) {
+            report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
+                   "'" + model->typeContext.displayName(key) + "' cannot be a dictionary key",
+                   "keys are restricted to Int, Bool, UInt8 and String, closed until plan 0012 (spec 2.6, 20.5)");
+        }
         if (containsFunctionType(key)) {
             report(TypeCheckingDiagnosticId::invalidFunctionType, span,
                    "a function type cannot be a dictionary key: function values have no equality",
@@ -7213,6 +7222,8 @@ private:
                 valueType = expectedType->arguments[1];
             }
         }
+        // A key type from the context was checked where the context wrote it.
+        const bool contextualKey = keyType.has_value();
         // The annotation was already rejected (for example `[String: Never]`): no follow-on error for its literal.
         const bool annotationRejected = expected.has_value() && *expected == model->typeContext.errorType();
         if (expression->entries.empty() && annotationRejected) return model->typeContext.errorType();
@@ -7246,7 +7257,7 @@ private:
         const auto key = rejectNeverDictionaryPart(*keyType, expression->span, "key", true);
         const auto value = rejectNeverDictionaryPart(*valueType, expression->span, "value", true);
         rejectInvalidDictionaryKey(key, expression->entries.empty()
-                ? expression->span : expression->entries.front()->key->span);
+                ? expression->span : expression->entries.front()->key->span, !contextualKey);
         return model->typeContext.dictionaryType(key, value);
     }
 };
