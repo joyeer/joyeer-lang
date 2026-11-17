@@ -58,11 +58,48 @@ TEST(DictCharacterization, AnEmptyLiteralNeedsAContext) {
     EXPECT_TRUE(contains(text, "empty dictionary literal requires contextual key and value types")) << text;
 }
 
-// CHANGES WITH 0027 (Decision 4): a key type outside Int, Bool, UInt8 and String passes the checker today and fails
-// only in the backend when a dictionary is built, read or assigned; afterwards it is rejected at the type.
-TEST(DictCharacterization, OtherKeyTypesPassTheChecker) {
-    EXPECT_EQ(diagnose("struct Point { var x: Int }\nfunc f(d: [Point: Int]): Int { return 1 }\nfunc main() {}\n"), "");
-    EXPECT_EQ(diagnose("func f(d: [Double: Int]) {}\nfunc main() {}\n"), "");
+size_t occurrences(const std::string& text, const std::string& needle) {
+    size_t count = 0;
+    for (auto at = text.find(needle); at != std::string::npos; at = text.find(needle, at + needle.size())) ++count;
+    return count;
+}
+
+// CHANGED WITH 0027 (Decision 4): a key type outside Int, Bool, UInt8 and String passed the checker and failed only in
+// the backend when a dictionary was built, read or assigned; it is now rejected at the type, once per mistake: at an
+// annotation's key, a nominal Dict's first argument, or a literal's first key (the whole literal when empty) when no
+// context gave the key type.
+TEST(DictCharacterization, OtherKeyTypesAreRejectedAtTheType) {
+    const auto point = diagnose("struct Point { var x: Int }\nfunc f(d: [Point: Int]): Int { return 1 }\nfunc main() {}\n");
+    EXPECT_TRUE(contains(point, "type-checking.invalid-type-argument")) << point;
+    EXPECT_TRUE(contains(point, "'Point' cannot be a dictionary key")) << point;
+    EXPECT_TRUE(contains(point, "keys are restricted to Int, Bool, UInt8 and String")) << point;
+    EXPECT_EQ(occurrences(point, "cannot be a dictionary key"), 1u) << point;
+    for (const auto* program : {
+            "func f(d: [Double: Int]) {}\nfunc main() {}\n",
+            "func f(d: [Int32: Int]) {}\nfunc main() {}\n",
+            "func f(d: [Int?: Int]) {}\nfunc main() {}\n",
+            "func f(d: [[Int]: Int]) {}\nfunc main() {}\n",
+            "struct Point { var x: Int }\nfunc f(d: Dict<Point, Int>) {}\nfunc main() {}\n",
+            "func main() { let d = [1.5: 1]\n print(value: d.count) }\n",
+            "func main() { let d: [Double: Int] = [1.5: 1]\n print(value: d.count) }\n",
+            "func main() { let d: [Double: Int] = [:]\n print(value: d.count) }\n" }) {
+        SCOPED_TRACE(program);
+        const auto text = diagnose(program);
+        EXPECT_EQ(occurrences(text, "cannot be a dictionary key"), 1u) << text;
+    }
+    // The four admitted keys, by type kind.
+    EXPECT_EQ(diagnose("func f(a: [Int: Int], b: [Bool: Int], c: [UInt8: Int], d: [String: Int]) {}\n"
+                       "func main() {}\n"), "");
+    // A function-type, type-parameter or Never key keeps its own diagnostic only.
+    for (const auto* program : {
+            "func f(d: [(Int) -> Int: Int]) {}\nfunc main() {}\n",
+            "func f<K>(d: [K: Int]) {}\nfunc main() {}\n",
+            "func f(d: [Never: Int]) {}\nfunc main() {}\n" }) {
+        SCOPED_TRACE(program);
+        const auto text = diagnose(program);
+        EXPECT_FALSE(contains(text, "cannot be a dictionary key")) << text;
+        EXPECT_NE(text, "") << text;
+    }
 }
 
 TEST(DictCharacterization, TypeParameterKeysAreRejected) {
