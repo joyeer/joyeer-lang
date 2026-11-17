@@ -1351,6 +1351,10 @@ abcdabcd
             "2\n102\n11\n202\na!\n52\n6\n65\n30\n60\n7\n"
             0 1 2 3)
     add_joyeer_native_regression(
+            E2ECompoundAssignmentIndexOnce compound_assignment_index_once
+            "index\nrhs\n9\nindex\nrhs\n6\nindex\nrhs\n20\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
             E2EForIn for_in
             "10\na\nbc\nx\ny\n17\n0\n1\n2\n10\n20\n30\n-2\n-1\n255\n0\n1\n2\n16\ntick\ntick\n104\n105\n10\n20\n30\n6\n0\n1\n10\n11\np\nq\npq\n"
             0 1 2 3)
@@ -1629,6 +1633,8 @@ add_joyeer_rejected_regression(FlowRegressionProjectionIndex semantic-analysis
         regression_flow_projection_index semantic-analysis.use-before-initialization)
 add_joyeer_rejected_regression(FlowRegressionPossibleInitialization semantic-analysis
         regression_flow_possible_initialization semantic-analysis.initializing-initialized-storage)
+add_joyeer_rejected_regression(FlowRegressionCompoundTargetConsumed semantic-analysis
+        regression_flow_compound_target_consumed semantic-analysis.use-after-consume)
 
 add_test(NAME NameResolutionCliRejectsUndefinedName
         COMMAND ${CMAKE_COMMAND}

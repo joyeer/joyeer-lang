@@ -651,6 +651,106 @@ print(value: text)
             << joyeer::analysis::dump(result.diagnostics);
 }
 
+// Spec 4.4.3: a compound assignment evaluates its index operands once, before the right side.
+TEST_F(SemanticAnalysisTest, CompoundAssignmentAnalyzesIndexOperandsOnce) {
+    for (const auto* target : {
+                "&a[consumeIndex(i: consume i)] += 7",
+                "&a[consumeIndex(i: consume i)] -= a[0]",
+                "&cells[consumeIndex(i: consume i)].n += 7",
+                "&grid[0][consumeIndex(i: consume i)] *= 2" }) {
+        SCOPED_TRACE(target);
+        ASSERT_NO_FATAL_FAILURE(analyze(
+                "struct Cell { var n: Int }\n"
+                "func consumeIndex(i: consuming Int): Int { return i }\n"
+                "func main() {\n"
+                "var a = [1, 2, 3]\n"
+                "var cells = [Cell(n: 1), Cell(n: 2)]\n"
+                "var grid = [[1, 2], [3, 4]]\n"
+                "let i = 1\n" + std::string(target) + "\n"
+                "print(value: a[0] + cells[0].n + grid[0][0])\n}\n"));
+        EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+        EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+                << joyeer::analysis::dump(result.diagnostics);
+    }
+}
+
+// The index's own effects still apply once: a later read of the consumed index is rejected.
+TEST_F(SemanticAnalysisTest, CompoundAssignmentIndexConsumeStillEndsTheIndex) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func consumeIndex(i: consuming Int): Int { return i }
+func main() {
+var a = [1, 2, 3]
+let i = 1
+&a[consumeIndex(i: consume i)] += 7
+print(value: i)
+}
+)JOYEER"));
+    EXPECT_EQ(
+            std::count_if(
+                    result.diagnostics.begin(),
+                    result.diagnostics.end(),
+                    [](const auto& diagnostic) {
+                        return diagnostic.id ==
+                                joyeer::analysis::DiagnosticId::useAfterConsume;
+                    }),
+            1)
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+// Spec 4.4.3: `op=` reads the old value after the right side, so a right side that consumes the
+// target's root leaves nothing to read.
+TEST_F(SemanticAnalysisTest, CompoundAssignmentReadsTheTargetAfterTheRightSide) {
+    for (const auto* target : {
+                "&a[0] += take(a: consume a)",
+                "&a[i] += take(a: consume a)",
+                "n += drop(n: consume n)" }) {
+        SCOPED_TRACE(target);
+        ASSERT_NO_FATAL_FAILURE(analyze(
+                "func take(a: consuming [Int]): Int { return 1 }\n"
+                "func drop(n: consuming Int): Int { return 1 }\n"
+                "func invalid() {\n"
+                "var a = [1, 2, 3]\n"
+                "var n = 1\n"
+                "let i = 0\n" + std::string(target) + "\n}\n"));
+        EXPECT_FALSE(result.succeeded());
+        EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+                << joyeer::analysis::dump(result.diagnostics);
+    }
+}
+
+TEST_F(SemanticAnalysisTest, CompoundAssignmentRequiresAnInitializedTarget) {
+    for (const auto* target : {
+                "&a[0] += 1",
+                "n += 1",
+                "cell.n += 1" }) {
+        SCOPED_TRACE(target);
+        ASSERT_NO_FATAL_FAILURE(analyze(
+                "struct Cell { var n: Int }\n"
+                "func invalid() {\n"
+                "var a: [Int]\n"
+                "var n: Int\n"
+                "var cell: Cell\n" + std::string(target) + "\n}\n"));
+        EXPECT_FALSE(result.succeeded());
+        EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useBeforeInitialization))
+                << joyeer::analysis::dump(result.diagnostics);
+    }
+}
+
+TEST_F(SemanticAnalysisTest, CompoundAssignmentRejectsAConsumedElementTarget) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+struct Cell { var text: String }
+func take(value: consuming String) {}
+func invalid() {
+var cells = [Cell(text: "a")]
+take(value: consume cells[0].text)
+&cells[0].text += "b"
+}
+)JOYEER"));
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
 TEST_F(SemanticAnalysisTest, DoesNotRestoreADifferentConsumedElement) {
     for (const auto* replacement : {
                 "&values[1] = \"new\"",
