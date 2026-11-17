@@ -148,12 +148,18 @@ remain separate gates.
   [0027](../decisions/0027-library-dict.md), accepted by the user 2026-11-16 for stages 1-4 after three
   language-designer reviews: the accepted key set stays `Int`, `Bool`, `UInt8` and `String` (checked at the type),
   the linear-key/value prohibition stays, and hashing and `Equatable` keys stay with plan 0012.
-- [ ] Benchmark construction, lookup, insertion/replacement, growth, and nested destruction.
-- [ ] Implement the existing dictionary API and buffer ownership in Joyeer, preserving the
-  documented copy-on-lookup and value-semantics boundaries.
+- [x] Benchmark construction, lookup, insertion/replacement, growth, and nested destruction. Evidence:
+  `tests/perf/benchmark_dicts.py` and the `dict_*` programs; the measurement stage and the switch's cost gate
+  (2026-11-17 log entries), with the one missed `-O2` row accepted by the user on the placement evidence.
+- [x] Implement the existing dictionary API and buffer ownership in Joyeer, preserving the
+  documented copy-on-lookup and value-semantics boundaries. Evidence: the library `Dict<K, V>` in
+  `lib/Runtime/collections.joyeer` behind the 0027 roles (stage 6); the differential against the builtin
+  (identical outputs and allocation counts at -O0 to -O3); role reviews and fixes; Windows x64 and Linux x86_64
+  validation (2026-11-18 log entry).
 - [ ] Remove dictionary-specific opcodes, type kinds, and backend cases after fixtures pass.
 - [ ] Benchmark both profiles, run all role reviewers and full platform validation, and
-  update supported features and runtime/IR notes.
+  update supported features and runtime/IR notes. Done for the switch on Windows x64 and Linux x86_64 (2026-11-18);
+  remaining: macOS validation, and the cleanup stage (7) above.
 
 ## Open questions
 
@@ -801,3 +807,24 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   itself costs nothing measurable there. Raw reports in `out/perf-gate/dict-switch/layout2`.
 - 2026-11-17: The user accepted the `String` lookup -O2 row on the placement evidence (recorded in 0027's acceptance
   condition; the gate limits are unchanged). The switch proceeds to the role reviews and full validation.
+- 2026-11-18: 0027 stage 6 role reviews (type-system and IR/backend, 53b538c..ffb0fd3), two re-review rounds, every
+  fix test-first (tests f262f9d, e1b6c2e, 04db019 observed failing; fixes 680b42a, 4ba2e53, 07d2fac). Fixed: a
+  nested target's String key borrowed across a right side that consumed or reassigned it (use after free, new with
+  the switch), and the same for a read whose index disturbs its base (a grown outer table, and a String byte read
+  through a binding, field, dictionary value or array element, older than the branch): key operands are owned and
+  the base is addressed only after any operand that may disturb it; a plain lookup still copies no key. Verifier
+  rule 4 follows paths from the packing (join and loop shapes rejected; each walk pinned by a mutation test). The
+  post-optimization verify and its fault injection move behind `JOYEER_BACKEND_TEST_HOOKS` (Debug presets and
+  `validate.py`), out of Release packages. A right side that consumes the target's root is rejected (older than
+  the branch) and one that initializes it is pinned (spec 4.4.3); one key diagnostic per mistake, including under an
+  optional context, which now gives array and dictionary literals their types; `Dict<Never, V>` reads like
+  `[Never: V]`; dictionary help for `count`; only `Dict`'s own key parameter is exempt in a prelude; an unannotated
+  literal reports a missing `dict_type` role. The benchmark programs compile to byte-identical LLVM IR before and
+  after these fixes at -O0 and -O2, so the cost gate stands. Correction to the 2026-11-17 entry: `[((Int): Int): Int]`
+  is an array of functions, not an escaping key; the real issue is that `[(Point): Int]` displays like a dictionary
+  type. Left open, older than the branch: compound assignment analyzes its index twice (`&a[take(i: consume i)] += 1`
+  reports use-after-consume); a key under a generic context (`Box(d: [[3]: 4])`) reports twice; compile time grows
+  about 14x from 100 to 200 blocks in one function (arrays too); an operator index (`d[k][i + 1]`) copies a String
+  key it could borrow. Validation at 07d2fac: Windows AMD64 Debug and Release `ctest` 1971/1971, `fern test` 7/7
+  (six tests passed only on rerun while the machine ran reviewer timing jobs: Fern.Workspace, Fern.Manifest and four
+  `E2EOptimizationEquivalence_*`); Linux x86_64 fresh WSL clone 1947/1947 and 7/7, no reruns. macOS not run.
