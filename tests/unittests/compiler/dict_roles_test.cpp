@@ -420,11 +420,13 @@ TEST_F(DictRoleTest, CopyabilityFollowsBothOwnedTypes) {
 
 TEST_F(DictRoleTest, TheDictRoleIsAffineOnly) {
     // Unlike the array role, the dictionary role owns no linear key or value (0027 Decision 3).
+    // Since the switch the role type is the dictionary, so it reports the dictionary's own diagnostic, once.
     using Id = joyeer::typing::TypeCheckingDiagnosticId;
     load("func bad(table: borrowing Table<Int, JoinHandle<Int>>): Int { return table.count }\n");
-    EXPECT_TRUE(hasTypeDiagnostic(Id::linearTypeArgument)) << diagnostics();
+    EXPECT_TRUE(hasTypeDiagnostic(Id::linearCollectionElement)) << diagnostics();
+    EXPECT_FALSE(hasTypeDiagnostic(Id::linearTypeArgument)) << diagnostics();
     load("func bad(table: borrowing Table<JoinHandle<Int>, Int>): Int { return table.count }\n");
-    EXPECT_TRUE(hasTypeDiagnostic(Id::linearTypeArgument)) << diagnostics();
+    EXPECT_TRUE(hasTypeDiagnostic(Id::linearCollectionElement)) << diagnostics();
 }
 
 TEST_F(DictRoleTest, DictionarySyntaxBindsToTheRole) {
@@ -440,7 +442,7 @@ TEST_F(DictRoleTest, EveryDictionaryOperationLowersThroughTheRoles) {
          "func empty(): [String: Int] { return [:] }\n"
          "func read(table: [String: Int]): Int { return table[\"a\"] }\n"
          "func write(table: inout [String: Int]) { &table[\"c\"] = 3 }\n"
-         "func mutate(table: inout [String: [Int]]) { &table[\"c\"].append(element: 3) }\n"
+         "func mutate(table: inout [String: [Int]]) { &table[\"c\"][0] = 3 }\n"
          "func look(table: [String: Int]): Int? { return table.get(key: \"a\") }\n"
          "func size(table: [String: Int]): Int { return table.count }\n"
          "func copy(table: [String: Int]): [String: Int] { let again = table\n return again }\n");
@@ -448,9 +450,18 @@ TEST_F(DictRoleTest, EveryDictionaryOperationLowersThroughTheRoles) {
     ASSERT_NE(module, nullptr);
     const auto verification = joyeer::ir::Verifier().verify(*module);
     EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
-    const auto dumped = joyeer::ir::dump(*module);
-    for (const auto* builtin : { "construct_dictionary", "dictionary_set", "dictionary_get", "subscript_addr" }) {
-        EXPECT_EQ(dumped.find(builtin), std::string::npos) << builtin;
+    // No builtin dictionary opcode (the extern names in the dump would match a text search).
+    using joyeer::ir::Opcode;
+    for (const auto& function : module->functions) {
+        for (const auto& block : function.blocks) {
+            for (const auto& instruction : block.instructions) {
+                EXPECT_TRUE(instruction.opcode != Opcode::constructDictionary &&
+                            instruction.opcode != Opcode::dictionarySet &&
+                            instruction.opcode != Opcode::dictionaryGet &&
+                            instruction.opcode != Opcode::subscriptAddress)
+                        << function.name;
+            }
+        }
     }
     // A literal packs into one block per literal and calls the literal method.
     size_t blocks = 0;
