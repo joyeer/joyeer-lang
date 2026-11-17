@@ -10,6 +10,7 @@
 #include "compiler/frontend/typechecking.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/irlowering.h"
+#include "dict_role_library.h"
 
 #include <gtest/gtest.h>
 
@@ -871,7 +872,9 @@ TEST_F(CollectionRoleTest, AnElementOfAnArrayOrDictionaryTypeCanBeMutatedInPlace
          "func removed(items: inout Buffer<[Int]>): Int? { return &items[0].removeLast() }\n"
          "func inserted(items: inout Buffer<[String: Int]>) { &items[0][\"k\"] = 1 }\n"
          "func looked(items: Buffer<[String: Int]>): Int? { return items[0].get(key: \"k\") }\n"
-         "func lookedUp(items: Buffer<[Int]>): Int { return items[0].count }\n", library);
+         "func lookedUp(items: Buffer<[Int]>): Int { return items[0].count }\n",
+         // `[K: V]` binds to the dictionary role, which a replaced collections prelude declares (decision 0027).
+         library + joyeer::fixtures::dictRoleLibrary());
     EXPECT_TRUE(checks()) << diagnostics();
     const auto module = lower();
     ASSERT_NE(module, nullptr);

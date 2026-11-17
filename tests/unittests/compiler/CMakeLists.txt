@@ -1103,6 +1103,15 @@ if(JOYEER_CLANG_EXECUTABLE)
             E2EDictLibraryEdges dict_library_edges
             "2\n2\nsome\nnone\n32\nb\n1\n2\n"
             0 1 2 3)
+    # Sendability (decision 0027): a dictionary moves into a task and comes back as a result.
+    add_joyeer_native_regression(
+            E2EDictTaskTransfer dict_task_transfer
+            "25
+3
+4
+9
+"
+            0 1 2 3)
     # The String destroy helper skips the runtime for the zero value only (plan 0011, 0027 stage 3).
     add_joyeer_native_regression(
             E2EStringMovedDrop string_moved_drop
@@ -1508,9 +1517,10 @@ abcdabcd
             E2EUnitDictionaryMissing unit_dictionary_missing "dictionary key not found")
     add_joyeer_native_checked_trap(
             E2EDictTrapOrder dict_trap_order "^x[^0-9a-zA-Z]+Joyeer runtime error: dictionary key not found")
-    # CHANGES WITH 0027: after the switch `rhs` prints before the trap.
+    # CHANGED WITH 0027: the value is evaluated before the base is addressed, so `rhs` prints before the trap.
     add_joyeer_native_checked_trap(
-            E2EDictNestedMissingTrap dict_nested_missing_trap "^Joyeer runtime error: dictionary key not found")
+            E2EDictNestedMissingTrap dict_nested_missing_trap
+            "^rhs[^0-9a-zA-Z]+Joyeer runtime error: dictionary key not found")
 
     # Runtime-loaded operands keep these checks from folding to unconditional
     # panic calls; E2EOptimizedOverflowTrap still covers constant overflow.

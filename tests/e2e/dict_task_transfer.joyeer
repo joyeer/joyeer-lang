@@ -1,0 +1,26 @@
+// Sendability of a dictionary (decision 0027): a dictionary is a task input or result exactly when its key and value
+// are (spec 21.2.2, relocatability and the linear ban), so the library dictionary needs no compiler rule. One moves
+// into a task and is read there; another is mutated in a task and comes back as its result.
+func total(table: consuming [String: Int]): Int {
+    return table["a"] + table["b"]
+}
+
+func grow(table: consuming [String: [Int]]): [String: [Int]] {
+    var owned = consume table
+    &owned["c"] = [3, 4]
+    &owned["a"].append(element: 9)
+    return owned
+}
+
+func main() {
+    let table: [String: Int] = ["a": 20, "b": 5]
+    let worker = spawn(function: total, input: consume table)
+    let sum = consume worker.join()
+    print(value: sum)
+    let lists: [String: [Int]] = ["a": [1], "b": [2]]
+    let grower = spawn(function: grow, input: consume lists)
+    let back = consume grower.join()
+    print(value: back.count)
+    print(value: back["c"][1])
+    print(value: back["a"][1])
+}

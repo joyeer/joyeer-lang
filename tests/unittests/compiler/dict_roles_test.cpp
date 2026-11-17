@@ -10,6 +10,7 @@
 #include "compiler/frontend/typechecking.h"
 #include "compiler/ir/ir.h"
 #include "compiler/ir/irlowering.h"
+#include "dict_role_library.h"
 
 #include <gtest/gtest.h>
 
@@ -51,117 +52,7 @@ public struct Array<T> {
 }
 )";
 
-// The runtime dictionary ABI the table is written over (decision 0027 option A).
-constexpr auto tableExterns = R"(
-@c_extern(symbol: "joyeer_dictionary_create_owned_abi")
-private func createTable(output: Int, entries: Int, count: Int, keySize: Int, valueSize: Int,
-        entrySize: Int, valueOffset: Int, keyKind: Int32, cloneKey: Int, destroyKey: Int,
-        cloneValue: Int, destroyValue: Int): Void
-
-@c_extern(symbol: "joyeer_dictionary_clone_abi")
-private func cloneTable(output: Int, data: Int, count: Int): Void
-
-@c_extern(symbol: "joyeer_dictionary_set_owned_abi")
-private func setOwned(dictionary: Int, key: Int, value: Int): Void
-
-@c_extern(symbol: "joyeer_dictionary_find_abi")
-private func findValue(data: Int, count: Int, key: Int, keySize: Int, keyKind: Int32): Int
-
-@c_extern(symbol: "joyeer_dictionary_at_abi")
-private func valueAt(data: Int, count: Int, key: Int, keySize: Int, keyKind: Int32): Int
-
-@c_extern(symbol: "joyeer_dictionary_destroy_abi")
-private func destroyTable(dictionary: Int): Void
-
-private func roundUp(value: Int, alignment: Int): Int {
-    return (value + alignment - 1) / alignment * alignment
-}
-)";
-
-// The interleaved entry a literal packs: its ordinary struct layout is the runtime's entry layout.
-constexpr auto tableEntry = R"(
-@compiler_role(dict_entry)
-private struct TableEntry<K, V> {
-    var key: K
-    var value: V
-}
-)";
-
-constexpr auto tableHead = R"(
-@compiler_role(dict_type)
-public struct Table<K, V> {
-    private var address: Int
-    private var count: Int
-    private var capacity: Int
-)";
-
-constexpr auto tableElement = R"(
-    @compiler_role(dict_element)
-    private borrowing func element(key: K): Int {
-        return valueAt(data: self.address, count: self.count,
-                key: joyeer_intrinsic_borrow_address<K>(value: key), keySize: joyeer_intrinsic_size_of<K>(),
-                keyKind: joyeer_intrinsic_key_kind<K>() as Int32)
-    }
-)";
-
-constexpr auto tableSet = R"(
-    @compiler_role(dict_set)
-    private mutating func insert(key: consuming K, value: consuming V): Void {
-        let keySlot = joyeer_intrinsic_stack_slot<K>()
-        let valueSlot = joyeer_intrinsic_stack_slot<V>()
-        joyeer_intrinsic_move_in<K>(address: keySlot, value: consume key)
-        joyeer_intrinsic_move_in<V>(address: valueSlot, value: consume value)
-        setOwned(dictionary: joyeer_intrinsic_place_address<Table<K, V>>(value: &self), key: keySlot,
-                value: valueSlot)
-    }
-)";
-
-constexpr auto tableGet = R"(
-    @compiler_role(dict_get)
-    public borrowing func get(key: K): Optional<V> {
-        let value = findValue(data: self.address, count: self.count,
-                key: joyeer_intrinsic_borrow_address<K>(value: key), keySize: joyeer_intrinsic_size_of<K>(),
-                keyKind: joyeer_intrinsic_key_kind<K>() as Int32)
-        if value == 0 {
-            return .None
-        }
-        let slot = joyeer_intrinsic_stack_slot<V>()
-        joyeer_intrinsic_clone_at<V>(destination: slot, source: value)
-        return .Some(joyeer_intrinsic_move_out<V>(address: slot))
-    }
-)";
-
-constexpr auto tableCopy = R"(
-    @compiler_role(dict_copy)
-    private borrowing func duplicate(): Table<K, V> {
-        let slot = joyeer_intrinsic_stack_slot<Table<K, V>>()
-        cloneTable(output: slot, data: self.address, count: self.count)
-        return joyeer_intrinsic_move_out<Table<K, V>>(address: slot)
-    }
-)";
-
-// Called on an inert zero value with `count` entries packed at `address` (the closed packing protocol).
-constexpr auto tableLiteral = R"(
-    @compiler_role(dict_literal)
-    private consuming func literal(address: Int, count: Int): Table<K, V> {
-        let valueOffset = roundUp(value: joyeer_intrinsic_size_of<K>(), alignment: joyeer_intrinsic_align_of<V>())
-        let slot = joyeer_intrinsic_stack_slot<Table<K, V>>()
-        createTable(output: slot, entries: address, count: count, keySize: joyeer_intrinsic_size_of<K>(),
-                valueSize: joyeer_intrinsic_size_of<V>(), entrySize: joyeer_intrinsic_size_of<TableEntry<K, V>>(),
-                valueOffset: valueOffset, keyKind: joyeer_intrinsic_key_kind<K>() as Int32,
-                cloneKey: joyeer_intrinsic_clone_callback<K>(), destroyKey: joyeer_intrinsic_destroy_callback<K>(),
-                cloneValue: joyeer_intrinsic_clone_callback<V>(),
-                destroyValue: joyeer_intrinsic_destroy_callback<V>())
-        return joyeer_intrinsic_move_out<Table<K, V>>(address: slot)
-    }
-)";
-
-constexpr auto tableTail = R"(
-    deinit() {
-        destroyTable(dictionary: joyeer_intrinsic_place_address<Table<K, V>>(value: &self))
-    }
-}
-)";
+using namespace joyeer::fixtures;
 
 // The pieces of the table library, each replaceable by a malformed test.
 struct TableParts {
@@ -536,14 +427,57 @@ TEST_F(DictRoleTest, TheDictRoleIsAffineOnly) {
     EXPECT_TRUE(hasTypeDiagnostic(Id::linearTypeArgument)) << diagnostics();
 }
 
-TEST_F(DictRoleTest, DictionarySyntaxStaysBuiltinUntilTheSwitch) {
-    // Stage 5 adds the roles only: `[K: V]` and literals keep the builtin dictionary even when the prelude has the
-    // role.
-    load("func make(): [String: Int] { return [\"a\": 1] }\n"
-         "func read(table: [String: Int]): Int { return table[\"a\"] }\n");
+TEST_F(DictRoleTest, DictionarySyntaxBindsToTheRole) {
+    // The switch (0027 stage 6): `[K: V]` and literals bind to the `dict_type` declaration, never to a spelling.
+    load("func same(table: Table<String, Int>): [String: Int] { return table }\n"
+         "func back(table: [String: Int]): Table<String, Int> { return table }\n"
+         "func literal(): Table<String, Int> { return [\"a\": 1] }\n");
     EXPECT_TRUE(checks()) << diagnostics();
-    EXPECT_TRUE(rejectedMentioning("func bad(table: [String: Int]): Table<String, Int> { return table }\n", "Table"))
-            << diagnostics();
+}
+
+TEST_F(DictRoleTest, EveryDictionaryOperationLowersThroughTheRoles) {
+    load("func make(): [String: Int] { return [\"a\": 1, \"b\": 2, \"a\": 3] }\n"
+         "func empty(): [String: Int] { return [:] }\n"
+         "func read(table: [String: Int]): Int { return table[\"a\"] }\n"
+         "func write(table: inout [String: Int]) { &table[\"c\"] = 3 }\n"
+         "func mutate(table: inout [String: [Int]]) { &table[\"c\"].append(element: 3) }\n"
+         "func look(table: [String: Int]): Int? { return table.get(key: \"a\") }\n"
+         "func size(table: [String: Int]): Int { return table.count }\n"
+         "func copy(table: [String: Int]): [String: Int] { let again = table\n return again }\n");
+    const auto module = lower();
+    ASSERT_NE(module, nullptr);
+    const auto verification = joyeer::ir::Verifier().verify(*module);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto dumped = joyeer::ir::dump(*module);
+    for (const auto* builtin : { "construct_dictionary", "dictionary_set", "dictionary_get", "subscript_addr" }) {
+        EXPECT_EQ(dumped.find(builtin), std::string::npos) << builtin;
+    }
+    // A literal packs into one block per literal and calls the literal method.
+    size_t blocks = 0;
+    for (const auto& function : module->functions) {
+        for (const auto& block : function.blocks) {
+            for (const auto& instruction : block.instructions) {
+                blocks += instruction.opcode == joyeer::ir::Opcode::stackBlock && !function.runtimeContext;
+            }
+        }
+    }
+    EXPECT_EQ(blocks, 2u);
+    for (const auto* method : { ".literal", ".element", ".insert", ".get", ".duplicate" }) {
+        EXPECT_TRUE(std::any_of(module->functions.begin(), module->functions.end(), [&](const auto& function) {
+            return function.name.find(method) != std::string::npos;
+        })) << method;
+    }
+}
+
+TEST_F(DictRoleTest, TheRoleIsRequiredOnlyWhenAProgramMentionsADictionary) {
+    // The seam (0027 Decision 7): a collections prelude without `dict_type` is valid until a dictionary is used.
+    load("func main() { let values: [Int] = [1]\n print(value: values[0]) }\n", arrayLibrary);
+    EXPECT_TRUE(checks()) << diagnostics();
+    load("func f(table: [String: Int]): Int { return 1 }\n", arrayLibrary);
+    EXPECT_NE(diagnostics().find("invalid-prelude"), std::string::npos) << diagnostics();
+    EXPECT_NE(diagnostics().find("dict_type"), std::string::npos) << diagnostics();
+    load("func f(): Int { let table: [String: Int] = [\"a\": 1]\n return table.count }\n", arrayLibrary);
+    EXPECT_NE(diagnostics().find("dict_type"), std::string::npos) << diagnostics();
 }
 
 // ---- IR, wire and backend ----

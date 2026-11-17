@@ -153,19 +153,23 @@ TEST(DictCharacterization, ADictionaryIsNotIterable) {
     EXPECT_TRUE(contains(text, "cannot iterate over a value of type '[String: Int]'")) << text;
 }
 
-// CHANGES WITH 0027: the library's stored fields are inaccessible, not unknown members.
-TEST(DictCharacterization, UnknownMembers) {
-    const auto text = diagnose("func main() { var d: [String: Int] = [\"a\": 1]\n print(value: d.address) }\n");
-    EXPECT_TRUE(contains(text, "name-resolution.unknown-member")) << text;
-    EXPECT_TRUE(contains(text, "type 'Dict' has no member named 'address'")) << text;
+// CHANGED WITH 0027: the library's stored fields are inaccessible, not unknown members.
+TEST(DictCharacterization, TheLibraryFieldsAreInaccessible) {
+    for (const std::string field : { "address", "capacity" }) {
+        const auto text = diagnose("func main() { var d: [String: Int] = [\"a\": 1]\n print(value: d." + field + ") }\n");
+        EXPECT_TRUE(contains(text, "inaccessible-declaration")) << text;
+        EXPECT_TRUE(contains(text, "declaration '" + field + "' is not accessible from this file")) << text;
+    }
 }
 
-// CHANGES WITH 0027: a user type named Dict captures the member lookup of `[K: V]` today; afterwards `[K: V]` binds to
-// the role and the user type only shadows the spelling.
-TEST(DictCharacterization, AUserTypeNamedDictCapturesTheSugar) {
+// CHANGED WITH 0027: a user type named Dict captured the member lookup of `[K: V]`; now `[K: V]` binds to the role,
+// the user type only shadows the spelling, and diagnostics qualify it.
+TEST(DictCharacterization, AUserTypeNamedDictShadowsOnlyTheSpelling) {
+    EXPECT_EQ(diagnose("struct Dict { var x: Int }\n"
+                       "func main() { let m: [String: Int] = [\"a\": 1]\n print(value: m.count) }\n"), "");
     const auto text = diagnose("struct Dict { var x: Int }\n"
-                               "func main() { let m: [String: Int] = [\"a\": 1]\n print(value: m.count) }\n");
-    EXPECT_TRUE(contains(text, "type 'Dict' has no member named 'count'")) << text;
+                               "func main() { let d = Dict(x: 1)\n let b: Int = d }\n");
+    EXPECT_TRUE(contains(text, "cannot use value of type '<main>.Dict' where 'Int' is required")) << text;
 }
 
 TEST(DictCharacterization, ExtensionsOfDictAreRejected) {
@@ -173,12 +177,12 @@ TEST(DictCharacterization, ExtensionsOfDictAreRejected) {
     EXPECT_TRUE(contains(text, "name-resolution.invalid-extension-target")) << text;
 }
 
-// CHANGES WITH 0027: equality of dictionaries type-checks today and fails in LLVM; afterwards the ordinary struct rule
-// rejects it in the checker, as for arrays. Only the checker is exercised here: compiling it natively asserts in a
-// Debug LLVM build.
-TEST(DictCharacterization, EqualityTypeChecks) {
+// CHANGED WITH 0027: equality of dictionaries type-checked and failed in LLVM; the ordinary struct rule now rejects it in
+// the checker, as for arrays.
+TEST(DictCharacterization, EqualityOfLibraryDictionariesWaitsForEquatable) {
     const auto text = diagnose("func main() { let a: [Int: Int] = [1: 1]\n let e = a == a\n print(value: e) }\n");
-    EXPECT_FALSE(contains(text, "error")) << text;
+    EXPECT_TRUE(contains(text, "type-checking.invalid-operator-operands")) << text;
+    EXPECT_TRUE(contains(text, "[Int: Int]")) << text;
 }
 
 TEST(DictCharacterization, NativeBindingsTakeNoDictionary) {
