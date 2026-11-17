@@ -799,3 +799,5 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   64-byte line, against the baseline: 0.990 [0.981, 1.001], within the gate (50 repetitions each). So the row's
   difference is the runtime's code placement, which any change in user code size moves; the library dictionary
   itself costs nothing measurable there. Raw reports in `out/perf-gate/dict-switch/layout2`.
+- 2026-11-17: The user accepted the `String` lookup -O2 row on the placement evidence (recorded in 0027's acceptance
+  condition; the gate limits are unchanged). The switch proceeds to the role reviews and full validation.

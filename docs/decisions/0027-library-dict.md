@@ -2,7 +2,8 @@
 
 - Status: accepted for stages 1-4 (2026-11-16, revision 4, by the user, after three language-designer reviews, the
   last "accept with changes"). Stages 5-7 are conditional on the measured gates (Acceptance condition below); the
-  three open questions of revision 2 were answered by the user the same day.
+  three open questions of revision 2 were answered by the user the same day. The switch's one missed `-O2` row, a
+  code-placement effect, was accepted by the user on 2026-11-17 (Acceptance condition).
 - Spec: [§2.6](../../specs/02-types.md#26-generics) and §2.6.1 (lookup), §4.1.1 (copyability),
   [§20.5](../../specs/20-protocols.md) (key constraints), §20.12.5 (layout intrinsics and roles) and
   [§21.2.2](../../specs/21-concurrency.md) (task transfer) change with this record once it is accepted.
@@ -301,6 +302,13 @@ calls and are removed only at cleanup.
 As 0026 did: this record is accepted for stages 1-4 (characterization, the role-table refactor, the intrinsics and the
 measurement). Stages 5-7 are conditional on the measurement meeting the gates above or on the user's explicit decision
 about a missed gate; a missed gate is not renegotiated in a pull request.
+
+**Switch gate decision (2026-11-17, by the user).** At the switch every size, `hello` and `-O0` row passed, and every
+`-O2` row but one: `dict_lookup_string` at `-O2` missed, 1.038 [1.029, 1.050] on the 50-repetition rerun. The
+machine-code investigation found the hot loops identical; the difference is the runtime library's code placement,
+which the larger user code moves by 0x90 bytes. The builtin baseline moved to the candidate's runtime addresses
+reproduces the miss (1.042 [1.013, 1.057]), and the candidate at the baseline's alignment passes (0.990 [0.981,
+1.001]). The user accepted the row on this evidence; the limits above are unchanged. Evidence in plan 0011's log.
 
 ## Open questions
 
