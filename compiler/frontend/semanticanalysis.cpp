@@ -1121,26 +1121,35 @@ private:
     void analyzeAssignment(
             const syntax::AssignmentExprSyntax::Ptr& expression,
             InitializationState& state) {
-        if (expression->op != nullptr && expression->op->kind != equal) {
-            // `x op= y` reads x first, so it must already be initialized.
-            auto read = expression->target;
-            while (read != nullptr && (read->kind == syntax::Kind::accessExpr ||
-                                       read->kind == syntax::Kind::parenthesizedExpr)) {
-                read = read->kind == syntax::Kind::accessExpr
-                        ? std::static_pointer_cast<syntax::AccessExprSyntax>(read)->operand
-                        : std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(read)->expression;
-            }
-            analyzeExpression(read, state);
-        }
         auto assigned = storagePath(expression->target);
         if (assigned.has_value()) activePaths.push_back(&*assigned);
-        analyzeAssignmentTarget(expression->target, state);
-        analyzeExpression(expression->value, state);
+        if (expression->op != nullptr && expression->op->kind != equal && assigned.has_value()) {
+            // Spec 4.4.3: `x op= y` evaluates the target's index operands once, then the right side, and
+            // only then reads the old value, which must still be initialized and not consumed.
+            analyzeStorageOperands(expression->target, state);
+            analyzeExpression(expression->value, state);
+            if (state.reachable) analyzeStorageRead(storageRead(expression->target), state);
+        } else {
+            analyzeAssignmentTarget(expression->target, state);
+            analyzeExpression(expression->value, state);
+        }
         if (assigned.has_value()) activePaths.pop_back();
         if (state.reachable && assigned.has_value() && tracked.contains(assigned->root)) {
             checkLinearOverwrite(expression->target, *assigned, state);
             markInitialized(*assigned, state);
         }
+    }
+
+    // The storage an assignment target names, without its `&` marker or parentheses, so a diagnostic
+    // about reading it points at the storage itself.
+    static syntax::ExprPtr storageRead(syntax::ExprPtr target) {
+        while (target != nullptr && (target->kind == syntax::Kind::accessExpr ||
+                                     target->kind == syntax::Kind::parenthesizedExpr)) {
+            target = target->kind == syntax::Kind::accessExpr
+                    ? std::static_pointer_cast<syntax::AccessExprSyntax>(target)->operand
+                    : std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(target)->expression;
+        }
+        return target;
     }
 
     void analyzeAssignmentTarget(
