@@ -1128,7 +1128,9 @@ private:
             // only then reads the old value, which must still be initialized and not consumed.
             analyzeStorageOperands(expression->target, state);
             analyzeExpression(expression->value, state);
-            if (state.reachable) analyzeStorageRead(storageRead(expression->target), state);
+            if (state.reachable) {
+                analyzeStorageRead(storageRead(expression->target), state, /*compoundTarget=*/true);
+            }
         } else {
             analyzeAssignmentTarget(expression->target, state);
             analyzeExpression(expression->value, state);
@@ -1456,9 +1458,11 @@ private:
         return true;
     }
 
+    // `compoundTarget` marks the old-value read of `x op= y`, which happens after the right side.
     bool analyzeStorageRead(
             const syntax::ExprPtr& expression,
-            const InitializationState& state) {
+            const InitializationState& state,
+            bool compoundTarget = false) {
         const auto path = storagePath(expression);
         if (!path.has_value() || !tracked.contains(path->root)) return true;
         const auto* declaration = model->semanticModel()->symbol(path->root);
@@ -1475,8 +1479,10 @@ private:
                                 ? "' is used after all or part of its ownership was consumed"
                                 : "' is used before being initialized"),
                 consumed
-                        ? std::optional<std::string>(
-                                "reinitialize the consumed storage before reading it")
+                        ? std::optional<std::string>(compoundTarget
+                                ? "the right side runs before the target's old value is read (spec 4.4.3): do "
+                                  "not consume the target's storage in the right side"
+                                : "reinitialize the consumed storage before reading it")
                         : std::optional<std::string>(
                                 "initialize this binding on every continuing path before reading it"),
             });
