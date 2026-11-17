@@ -1109,6 +1109,11 @@ if(JOYEER_CLANG_EXECUTABLE)
             E2EDictKeyAliasing dict_key_aliasing
             "41\n7\n2\n2\n1\n7\n2\n41\n300\n42\n300\n"
             0 1 2 3)
+    # A String byte read whose index reassigns the string reads the new string ('b' is 98); from the spec's order.
+    add_joyeer_native_regression(
+            E2EStringIndexAliasing string_index_aliasing
+            "98\n98\n98\n98\n"
+            0 1 2 3)
     # An early exit inside a literal drops the evaluated entries once; output of the builtin baseline (939d210).
     add_joyeer_native_regression(
             E2EDictLiteralEarlyExit dict_literal_early_exit

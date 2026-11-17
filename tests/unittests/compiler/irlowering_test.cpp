@@ -1619,6 +1619,41 @@ func assign(outer: inout [String: [String: Int]], key: inout String) {
     EXPECT_GE(opcodeCount(function("assign"), joyeer::ir::Opcode::copyValue), 1u);
 }
 
+// The same order for a String byte read: an index that may reassign the string runs before the string is loaded.
+// A plain nested assignment or read borrows its lookup keys: only the key `dict_set` inserts is copied.
+TEST_F(IRLoweringTest, AStringIndexThatMayDisturbRunsBeforeTheStringIsLoadedAndPlainKeysAreBorrowed) {
+    lower(R"JOYEER(func clobber(text: inout String): Int {
+return 0
+}
+func readByte(s: inout String): UInt8 {
+return s[clobber(text: &s)]
+}
+func plainAssign(outer: inout [String: [String: Int]], k1: String, k2: String) {
+&outer[k1][k2] = 5
+}
+func plainRead(outer: [String: [String: Int]], k1: String, k2: String): Int {
+return outer[k1][k2]
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& read = function("readByte");
+    size_t position = 0;
+    std::optional<size_t> firstLoad;
+    for (const auto& block : read.blocks) {
+        for (const auto& instruction : block.instructions) {
+            if (instruction.opcode == joyeer::ir::Opcode::load && !firstLoad.has_value()) firstLoad = position;
+            ++position;
+        }
+    }
+    ASSERT_TRUE(firstLoad.has_value());
+    EXPECT_LT(firstCallPosition(*result.module, read, "clobber"), *firstLoad);
+    EXPECT_EQ(opcodeCount(function("plainAssign"), joyeer::ir::Opcode::copyValue), 1u);
+    EXPECT_EQ(opcodeCount(function("plainRead"), joyeer::ir::Opcode::copyValue), 0u);
+}
+
 TEST_F(IRLoweringTest, LowersMutableArrayElementsAsAddressProjections) {
     lower(R"JOYEER(func incrementFirst(values: inout [Int]): Int {
 &values[0] = values[0] + 1

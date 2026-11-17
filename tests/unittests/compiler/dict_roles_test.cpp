@@ -1031,6 +1031,88 @@ TEST_F(DictRoleTest, MorePackingFormsAreRejectedByTheirRule) {
     }
 }
 
+// Rule 4 across blocks: a stored value's other uses must be on paths that never reach the packing and that the
+// packing never reaches. Each shape splits the packed `make` into blocks and adds one use of the first key.
+TEST_F(DictRoleTest, AStoredValueUsedOnAPathThroughThePackingIsRejected) {
+    using joyeer::ir::Opcode;
+    load(literalProgram);
+    const auto lowered = lower();
+    ASSERT_NE(lowered, nullptr);
+    auto base = *lowered;
+    const auto literal = packLiteral(base, "make", 2);
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(base).succeeded());
+    const auto& packed = bodyOf(base, "make");
+    // The packing starts at the zero receiver, which rule 6 keeps in the packing block.
+    const auto storage = nth(packed, Opcode::stackAllocate);
+    const auto call = nth(packed, Opcode::call);
+    const auto key0 = packed[nth(packed, Opcode::fieldAddress, 0, literal.keyField) + 1].operands[0];
+    using Body = std::vector<joyeer::ir::Instruction>;
+    const Body before(packed.begin(), packed.begin() + static_cast<std::ptrdiff_t>(storage));
+    const Body packing(packed.begin() + static_cast<std::ptrdiff_t>(storage),
+                       packed.begin() + static_cast<std::ptrdiff_t>(call + 1));
+    const Body ret(packed.begin() + static_cast<std::ptrdiff_t>(call + 1), packed.end());
+    const auto integer = checking.model->types().intType();
+    const auto boolean = checking.model->types().boolType();
+    const auto useKey = [&]() -> Body {
+        joyeer::ir::Instruction place { Opcode::stackAllocate };
+        place.result = joyeer::ir::Value { 9000, integer, joyeer::ir::ValueCategory::address };
+        joyeer::ir::Instruction store { Opcode::store };
+        store.operands = { key0, 9000 };
+        return { place, store };
+    };
+    const auto branch = [](joyeer::ir::BlockId target) {
+        joyeer::ir::Instruction instruction { Opcode::branch };
+        instruction.targets = { target };
+        return instruction;
+    };
+    const auto condition = [&]() {
+        joyeer::ir::Instruction instruction { Opcode::booleanConstant };
+        instruction.integerValue = 1;
+        instruction.result = joyeer::ir::Value { 9100, boolean, joyeer::ir::ValueCategory::value };
+        return instruction;
+    };
+    const auto choose = [](joyeer::ir::BlockId yes, joyeer::ir::BlockId no) {
+        joyeer::ir::Instruction instruction { Opcode::conditionalBranch };
+        instruction.operands = { 9100 };
+        instruction.targets = { yes, no };
+        return instruction;
+    };
+    const auto join = [](Body first, const Body& second) {
+        first.insert(first.end(), second.begin(), second.end());
+        return first;
+    };
+    const joyeer::ir::Instruction stop { Opcode::unreachable };
+    struct Case {
+        const char* name;
+        std::vector<Body> blocks;
+    };
+    const std::vector<Case> cases {
+        // A use in a block the packing block dominates (after the transfer).
+        { "a successor of the packing", { join(join(before, packing), { branch(1) }), join(useKey(), ret) } },
+        // A use in a dominator of the packing block (before the storage).
+        { "a dominator of the packing", { join(join(before, useKey()), { branch(1) }), join(packing, ret) } },
+        // A join reached both from the packing and from a path that skips it.
+        { "a join after the packing", {
+              join(before, { condition(), choose(1, 2) }), join(packing, { branch(3) }), { branch(3) },
+              join(useKey(), { stop }) } },
+        // The packing in a loop whose value was evaluated before the loop: the second iteration transfers it again.
+        { "a packing in a loop", {
+              join(before, { condition(), branch(1) }), { choose(2, 3) }, join(packing, { branch(1) }), { stop } } },
+    };
+    for (const auto& mutation : cases) {
+        SCOPED_TRACE(mutation.name);
+        auto copy = base;
+        auto& function = functionExactly(copy, "make");
+        function.blocks.clear();
+        for (size_t index = 0; index < mutation.blocks.size(); ++index) {
+            function.blocks.push_back(joyeer::ir::BasicBlock { static_cast<joyeer::ir::BlockId>(index),
+                                                               "b" + std::to_string(index), mutation.blocks[index] });
+        }
+        const auto messages = joyeer::ir::dump(joyeer::ir::Verifier().verify(copy));
+        EXPECT_NE(messages.find("dictionary literal rule 4"), std::string::npos) << messages;
+    }
+}
+
 TEST_F(DictRoleTest, AnEntryIsNeverAValue) {
     // Only the packing of a verified literal reaches an entry, through addresses (0027 Decision 3): nothing holds,
     // passes, clones or destroys one.
