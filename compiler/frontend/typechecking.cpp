@@ -385,9 +385,6 @@ std::string TypeContext::displayName(TypeId id, bool disambiguateNominals) const
     switch (value->kind) {
         case TypeKind::error:
             return "<error>";
-        case TypeKind::dictionary:
-            return "[" + displayName(value->arguments[0], disambiguateNominals) + ": " +
-                    displayName(value->arguments[1], disambiguateNominals) + "]";
         case TypeKind::typeParameter: {
             const auto* declaration = model.symbol(value->symbol);
             if (declaration != nullptr && declaration->kind == semantic::SymbolKind::protocol) return "Self";
@@ -706,11 +703,6 @@ bool TypeCheckedModel::isLinear(
     visiting.push_back(id);
     bool linear = false;
     switch (type->kind) {
-        case TypeKind::dictionary:
-            for (const auto argument : type->arguments) {
-                if (isLinear(argument, visiting, clean)) { linear = true; break; }
-            }
-            break;
         case TypeKind::typeParameter: {
             const auto* parameter = semanticModelValue->symbol(type->symbol);
             linear = parameter != nullptr && parameter->mustTransferParameter;
@@ -814,15 +806,6 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
     const auto name = "'" + typeContext.displayName(id) + "'";
 
     switch (type->kind) {
-        case TypeKind::dictionary:
-            for (const auto argument : type->arguments) {
-                if (noncopyableReason(argument, visiting, clean).has_value()) {
-                    reason = name + " holds the noncopyable type '" +
-                            typeContext.displayName(argument) + "'";
-                    break;
-                }
-            }
-            break;
         case TypeKind::typeParameter: {
             // Copyable only when its constraint says so (spec 20.5). `Self` in a protocol is never
             // copied: requirements have no bodies.
@@ -4722,9 +4705,6 @@ private:
         }
         switch (record->kind) {
             case TypeKind::function: return true;
-            case TypeKind::dictionary:
-                return std::any_of(record->arguments.begin(), record->arguments.end(),
-                        [this](TypeId argument) { return containsFunctionType(argument); });
             case TypeKind::enumeration:
                 // Role-bound enums are looked through: an optional function value stays a function value.
                 if (!model->typeContext.isOptional(record) && !model->typeContext.isResult(record)) return false;
@@ -5270,7 +5250,6 @@ private:
         }
         collectCallReceiverAccess(expression, semanticTarget, accesses);
 
-        std::optional<TypeId> receiverArgumentType;
         std::optional<TypeId> receiverResultType;
         if (semanticTarget != nullptr &&
             semanticTarget->kind == semantic::SymbolKind::builtinMember &&
@@ -5286,24 +5265,6 @@ private:
                 receiverResultType = model->typeContext.arrayType(model->typeContext.uint8Type());
                 model->symbolTypes[semanticTarget->id] = *receiverResultType;
                 model->callables.at(semanticTarget->id).result = *receiverResultType;
-            } else if (semanticTarget->name == "get" &&
-                       baseType != nullptr && baseType->kind == TypeKind::dictionary &&
-                       baseType->arguments.size() == 2) {
-                receiverArgumentType = baseType->arguments[0];
-                // Copy the value type out first: creating the Optional can grow the type table and
-                // invalidate `baseType`.
-                const auto valueType = baseType->arguments[1];
-                receiverResultType = model->typeContext.optionalType(valueType);
-                if (const auto reason = model->noncopyableReason(valueType)) {
-                    report(
-                            TypeCheckingDiagnosticId::copyOfNoncopyable,
-                            expression->span,
-                            "'get' returns a copy of the stored value, and '" +
-                                    model->typeContext.displayName(valueType) +
-                                    "' is noncopyable: " + *reason,
-                            "a noncopyable element cannot be read without removing it, which "
-                            "is not supported yet");
-                }
             }
         }
         // `d.get(key:)` of a library dictionary returns a copy of the stored value (decision 0027): keyed on the
@@ -5346,10 +5307,7 @@ private:
             const auto parameterIndex = semanticTarget == nullptr
                     ? std::optional<size_t>()
                     : parameterIndexForArgument(*semanticTarget, *argument, index);
-            const auto expected = receiverArgumentType.has_value() &&
-                                  parameterIndex == std::optional<size_t>(0)
-                    ? receiverArgumentType
-                    : signature != nullptr && parameterIndex.has_value() &&
+            const auto expected = signature != nullptr && parameterIndex.has_value() &&
                       *parameterIndex < signature->parameters.size()
                     ? std::optional<TypeId>(signature->parameters[*parameterIndex])
                     : std::optional<TypeId>();
@@ -6634,10 +6592,6 @@ private:
                 indexType = model->typeContext.intType();
                 result = model->typeContext.uint8Type();
                 break;
-            case TypeKind::dictionary:
-                indexType = baseType->arguments[0];
-                result = baseType->arguments[1];
-                break;
             case TypeKind::structure:
                 if (model->isArrayRoleType(base)) {
                     // A library array subscripts like a builtin one (decision 0025).
@@ -7377,7 +7331,6 @@ const char* typeKindName(TypeKind kind) {
         case TypeKind::uint8: return "uint8";
         case TypeKind::structure: return "structure";
         case TypeKind::enumeration: return "enumeration";
-        case TypeKind::dictionary: return "dictionary";
         case TypeKind::function: return "function";
         case TypeKind::typeParameter: return "type-parameter";
         case TypeKind::int8: return "int8";

@@ -67,8 +67,6 @@ bool producesValue(Opcode opcode) {
         case Opcode::constantValue:
         case Opcode::integerFits:
         case Opcode::constructStruct:
-        case Opcode::constructDictionary:
-        case Opcode::dictionaryGet:
         case Opcode::fieldAddress:
         case Opcode::extractField:
         case Opcode::constructEnum:
@@ -77,7 +75,6 @@ bool producesValue(Opcode opcode) {
         case Opcode::stringUtf8:
         case Opcode::count:
         case Opcode::subscript:
-        case Opcode::subscriptAddress:
         case Opcode::functionAddress:
         case Opcode::typeSize:
         case Opcode::typeAlignment:
@@ -191,7 +188,6 @@ DestructionAnalysis::DestructionAnalysis(const Module& module) {
         bool result = false;
         switch (found->second->kind) {
             case typing::TypeKind::string:
-            case typing::TypeKind::dictionary:
                 result = true;
                 break;
             case typing::TypeKind::structure: {
@@ -393,7 +389,7 @@ VerificationResult Verifier::verify(const Module& module) const {
     }
     for (const auto& type : module.types) {
         const auto kindSlot = static_cast<uint64_t>(type.kind);
-        if (kindSlot == 10 || kindSlot > static_cast<uint64_t>(typing::TypeKind::typeParameter)) {
+        if (kindSlot == 10 || kindSlot == 11 || kindSlot > static_cast<uint64_t>(typing::TypeKind::typeParameter)) {
             report(VerificationErrorId::typeMismatch, std::nullopt, std::nullopt, std::nullopt,
                    "type '" + type.name + "' has an unknown or removed type kind");
         }
@@ -441,11 +437,6 @@ VerificationResult Verifier::verify(const Module& module) const {
     std::unordered_map<TypeId, std::vector<TypeId>> copyDependents;
     std::unordered_set<TypeId> noncopyableTypes;
     std::vector<TypeId> pendingNoncopyable;
-    for (const auto& type : module.types) {
-        if (type.kind == typing::TypeKind::dictionary) {
-            for (const auto argument : type.arguments) copyDependents[argument].push_back(type.id);
-        }
-    }
     for (const auto& structure : module.structures) {
         if (structure.deinitializer.has_value() &&
             !(isInertZero(structure.role) && structure.copier.has_value()) &&
@@ -720,18 +711,6 @@ VerificationResult Verifier::verify(const Module& module) const {
                              : enumeration.role == EnumerationRole::result ? "result" : "unknown") + " role");
         }
     }
-    // The payload of an optional instance's present case.
-    const auto optionalPayload = [&enumerations](TypeId type) -> std::optional<TypeId> {
-        const auto found = enumerations.find(type);
-        if (found == enumerations.end() || found->second->role != EnumerationRole::optional ||
-            found->second->firstRoleCase >= found->second->cases.size()) {
-            return std::nullopt;
-        }
-        const auto& payloads = found->second->cases[found->second->firstRoleCase].payloadTypes;
-        if (payloads.size() != 1) return std::nullopt;
-        return payloads[0];
-    };
-
     auto enumCaseFor = [&enumerations](
             TypeId type,
             semantic::SymbolId symbol) -> const EnumCaseDefinition* {
@@ -1931,8 +1910,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                 grew = false;
                 for (const auto& block : function.blocks) {
                     for (const auto& instruction : block.instructions) {
-                        if ((instruction.opcode == Opcode::fieldAddress || instruction.opcode == Opcode::payloadAddress ||
-                             instruction.opcode == Opcode::subscriptAddress) &&
+                        if ((instruction.opcode == Opcode::fieldAddress || instruction.opcode == Opcode::payloadAddress) &&
                             instruction.result.has_value() && !instruction.operands.empty() &&
                             elementAddresses.contains(instruction.operands[0]) &&
                             elementAddresses.insert(instruction.result->id).second) {
@@ -1954,9 +1932,6 @@ VerificationResult Verifier::verify(const Module& module) const {
                             case Opcode::destroy:
                             case Opcode::fieldAddress:
                             case Opcode::payloadAddress:
-                            case Opcode::subscriptAddress:
-                            case Opcode::dictionarySet:
-                            case Opcode::dictionaryGet:
                                 allowed = position == 0;
                                 break;
                             case Opcode::store:
@@ -2183,7 +2158,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                 const auto& instruction = block.instructions[index];
                 const auto location = std::optional<size_t>(index);
                 const auto opcodeSlot = static_cast<uint64_t>(instruction.opcode);
-                if ((opcodeSlot >= 35 && opcodeSlot <= 38) ||
+                if ((opcodeSlot >= 35 && opcodeSlot <= 41) || opcodeSlot == 50 ||
                     opcodeSlot > static_cast<uint64_t>(Opcode::stackBlock)) {
                     report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
                            "instruction has an unknown or removed opcode");
@@ -2918,59 +2893,6 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         break;
                         }
-                        case Opcode::constructDictionary: {
-                        const auto* resultType = instruction.result.has_value() &&
-                            types.contains(instruction.result->type)
-                            ? types.at(instruction.result->type)
-                            : nullptr;
-                        bool matches = resultType != nullptr &&
-                            resultType->kind == typing::TypeKind::dictionary &&
-                            resultType->arguments.size() == 2 &&
-                            instruction.result->category == ValueCategory::value &&
-                            instruction.operands.size() % 2 == 0 &&
-                            instruction.targets.empty();
-                        if (resultType != nullptr && resultType->arguments.size() == 2) {
-                            for (size_t index = 0; index < operands.size(); ++index) {
-                                matches &= operands[index] != nullptr &&
-                                        operands[index]->category == ValueCategory::value &&
-                                        operands[index]->type ==
-                                                resultType->arguments[index % 2];
-                            }
-                        }
-                        if (!matches) {
-                            report(
-                                VerificationErrorId::typeMismatch,
-                                functionId,
-                                block.id,
-                                location,
-                                "dictionary construction entries do not match key/value types");
-                        }
-                        break;
-                        }
-                        case Opcode::dictionarySet:
-                        if (requireShape(3, 0) && operands[0] != nullptr &&
-                            operands[1] != nullptr && operands[2] != nullptr) {
-                            const auto found = types.find(operands[0]->type);
-                            const auto* dictionaryType = found == types.end()
-                                    ? nullptr
-                                    : found->second;
-                            if (operands[0]->category != ValueCategory::address ||
-                                operands[1]->category != ValueCategory::value ||
-                                operands[2]->category != ValueCategory::value ||
-                                dictionaryType == nullptr ||
-                                dictionaryType->kind != typing::TypeKind::dictionary ||
-                                dictionaryType->arguments.size() != 2 ||
-                                dictionaryType->arguments[0] != operands[1]->type ||
-                                dictionaryType->arguments[1] != operands[2]->type) {
-                                report(
-                                        VerificationErrorId::typeMismatch,
-                                        functionId,
-                                        block.id,
-                                        location,
-                                        "dictionary set requires a dictionary address and matching key/value");
-                            }
-                        }
-                        break;
                     case Opcode::functionAddress: {
                         if (!requireShape(0, 0)) break;
                         if (!knownCallee) {
@@ -3066,35 +2988,6 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         break;
                     }
-                    case Opcode::dictionaryGet:
-                        if (requireShape(2, 0) && operands[0] != nullptr &&
-                            operands[1] != nullptr && instruction.result.has_value()) {
-                            const auto* dictionaryType = types.contains(operands[0]->type)
-                                    ? types.at(operands[0]->type)
-                                    : nullptr;
-                            const auto* resultType = types.contains(instruction.result->type)
-                                    ? types.at(instruction.result->type)
-                                    : nullptr;
-                            const auto matches =
-                                    operands[0]->category == ValueCategory::value &&
-                                    operands[1]->category == ValueCategory::value &&
-                                    instruction.result->category == ValueCategory::value &&
-                                    dictionaryType != nullptr &&
-                                    dictionaryType->kind == typing::TypeKind::dictionary &&
-                                    dictionaryType->arguments.size() == 2 &&
-                                    dictionaryType->arguments[0] == operands[1]->type &&
-                                    resultType != nullptr &&
-                                    optionalPayload(resultType->id) == std::optional<TypeId>(dictionaryType->arguments[1]);
-                            if (!matches) {
-                                report(
-                                        VerificationErrorId::typeMismatch,
-                                        functionId,
-                                        block.id,
-                                        location,
-                                        "dictionary get requires a dictionary value and matching key, producing Optional<V>");
-                            }
-                        }
-                        break;
                         case Opcode::fieldAddress:
                         case Opcode::extractField: {
                         const auto shapeMatches = requireShape(1, 0);
@@ -3258,8 +3151,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 const auto matches = baseType != nullptr && resultType != nullptr &&
                                         operands[0]->category == ValueCategory::value &&
                                         instruction.result->category == ValueCategory::value &&
-                                        (baseType->kind == typing::TypeKind::string ||
-                                         baseType->kind == typing::TypeKind::dictionary) &&
+                                        baseType->kind == typing::TypeKind::string &&
                                         resultType->kind == typing::TypeKind::integer;
                                 if (!matches) {
                                     report(
@@ -3267,12 +3159,11 @@ VerificationResult Verifier::verify(const Module& module) const {
                                         functionId,
                                         block.id,
                                         location,
-                                        "count requires String/Dict and produces Int");
+                                        "count requires String and produces Int");
                                 }
                         }
                         break;
                         case Opcode::subscript:
-                        case Opcode::subscriptAddress:
                         if (requireShape(2, 0) && operands[0] != nullptr &&
                                 operands[1] != nullptr && instruction.result.has_value()) {
                                 const auto* baseType = types.contains(operands[0]->type)
@@ -3299,21 +3190,14 @@ VerificationResult Verifier::verify(const Module& module) const {
                                                 });
                                         if (intType != module.types.end()) expectedIndex = intType->id;
                                         if (byteType != module.types.end()) expectedResult = byteType->id;
-                                    } else if (baseType->kind == typing::TypeKind::dictionary &&
-                                               baseType->arguments.size() == 2) {
-                                        expectedIndex = baseType->arguments[0];
-                                        expectedResult = baseType->arguments[1];
                                     }
                                 }
-                                const auto expectedCategory = instruction.opcode == Opcode::subscript
-                                        ? ValueCategory::value
-                                        : ValueCategory::address;
                                 const auto matches = indexType != nullptr &&
                                         expectedIndex.has_value() && expectedResult.has_value() &&
-                                        operands[0]->category == expectedCategory &&
+                                        operands[0]->category == ValueCategory::value &&
                                         operands[1]->category == ValueCategory::value &&
                                         operands[1]->type == *expectedIndex &&
-                                        instruction.result->category == expectedCategory &&
+                                        instruction.result->category == ValueCategory::value &&
                                         instruction.result->type == *expectedResult;
                                 if (!matches) {
                                     report(
@@ -3496,9 +3380,6 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::functionAddress: return "function_address";
         case Opcode::callIndirect: return "call_indirect";
         case Opcode::constructStruct: return "construct_struct";
-        case Opcode::constructDictionary: return "construct_dictionary";
-        case Opcode::dictionarySet: return "dictionary_set";
-        case Opcode::dictionaryGet: return "dictionary_get";
         case Opcode::fieldAddress: return "field_addr";
         case Opcode::extractField: return "extract_field";
         case Opcode::constructEnum: return "construct_enum";
@@ -3507,7 +3388,6 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::stringUtf8: return "string_utf8";
         case Opcode::count: return "count";
         case Opcode::subscript: return "subscript";
-        case Opcode::subscriptAddress: return "subscript_addr";
         case Opcode::branch: return "br";
         case Opcode::conditionalBranch: return "cond_br";
         case Opcode::switchPattern: return "switch_pattern";
@@ -3798,8 +3678,6 @@ std::string dump(const Module& module) {
                         }
                         break;
                     case Opcode::store:
-                    case Opcode::dictionarySet:
-                    case Opcode::dictionaryGet:
                     case Opcode::add:
                     case Opcode::subtract:
                     case Opcode::multiply:
@@ -3840,7 +3718,6 @@ std::string dump(const Module& module) {
                         out << ')';
                         break;
                     case Opcode::constructStruct:
-                    case Opcode::constructDictionary:
                     case Opcode::constructEnum:
                         out << '(';
                         for (size_t index = 0; index < instruction.operands.size(); ++index) {
@@ -3865,7 +3742,6 @@ std::string dump(const Module& module) {
                         out << ", " << instruction.integerValue;
                         break;
                     case Opcode::subscript:
-                    case Opcode::subscriptAddress:
                         for (size_t index = 0; index < instruction.operands.size(); ++index) {
                             out << (index == 0 ? " " : ", ")
                                 << valueName(instruction.operands[index]);

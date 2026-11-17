@@ -79,21 +79,21 @@ enum class Opcode {
 
     call,
     constructStruct,
-    // Wire slots 35-38 belonged to the removed builtin array operations.
-    constructDictionary = 39,
-    dictionarySet,
-    dictionaryGet,
-    fieldAddress,
+    // Wire slots 35-38 belonged to the removed builtin array operations, and 39-41 to the removed builtin
+    // dictionary operations (decision 0027); the verifier rejects them.
+    fieldAddress = 42,
     extractField,
     constructEnum,
     extractPayload,
     payloadAddress,
     stringUtf8,
+    // The byte length of a String.
     count,
+    // The byte of a String at an Int offset; traps out of range.
     subscript,
-    subscriptAddress,
+    // Wire slot 50 belonged to the removed `subscript_addr`, the builtin dictionary's element address.
 
-    branch,
+    branch = 51,
     conditionalBranch,
     switchPattern,
     returnValue,

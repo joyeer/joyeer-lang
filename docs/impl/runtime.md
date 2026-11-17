@@ -197,8 +197,8 @@ changing `count`.
 `Dict.get(key:)` uses nontrapping `joyeer_dictionary_find_abi`: a borrowed
 value address indicates a present key, and null indicates absence. Invalid
 handles or key types still trap. This private pointer never escapes to Joyeer
-source. Generated code constructs `Optional<V>` and clones the present value
-using the existing typed copy helpers; neither the receiver nor an absent
+source. The library's `dict_get` constructs `Optional<V>` and clones the present value
+with `clone_at`; neither the receiver nor an absent
 payload is cloned. Zero-sized values have a non-null presence address but
 require no payload load. Strict `joyeer_dictionary_at_abi` retains its
 missing-key trap and shares the single-pass lookup.

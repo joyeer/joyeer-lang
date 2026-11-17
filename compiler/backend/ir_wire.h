@@ -9,7 +9,8 @@
 
 namespace joyeer::llvmbackend::wire {
 
-inline constexpr uint32_t version = 24;
+// 25: the builtin dictionary slots (opcodes 39-41, `subscript_addr` 50, type kind 11) are removed (decision 0027).
+inline constexpr uint32_t version = 25;
 
 // This private wire format carries Joyeer IR, not LLVM assembly. Both sides
 // allocate their own C++ objects; only borrowed bytes cross the backend C ABI.

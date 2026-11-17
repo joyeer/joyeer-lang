@@ -2077,12 +2077,10 @@ private:
             if (const auto baseType = typeOf(subscript->base); baseType.has_value() && isRoleSubscriptBase(*baseType)) {
                 return emitRoleElementAddress(*baseType, *base, *index, *type, subscript->span);
             }
-            return emitValue(
-                    ir::Opcode::subscriptAddress,
-                    *type,
-                    ir::ValueCategory::address,
-                    { base->id, index->id },
-                    subscript->span);
+            // Only a collection role's element has an address; type checking rejects a String byte.
+            report(DiagnosticId::unsupportedSyntax, subscript->span,
+                   "only an array or dictionary element can be an assignment target");
+            return std::nullopt;
         }
         report(
                 DiagnosticId::unsupportedSyntax,
@@ -2119,23 +2117,18 @@ private:
             if (index.has_value() && ownKeys) index = prepareOwned(*index, subscript->index->span);
             const auto type = typeOf(subscript);
             if (!index.has_value() || !type.has_value()) return std::nullopt;
-            std::optional<typing::TypeId> roleBase;
-            if (const auto baseType = typeOf(subscript->base); baseType.has_value() && isRoleSubscriptBase(*baseType)) {
-                roleBase = *baseType;
+            const auto roleBase = typeOf(subscript->base);
+            if (!roleBase.has_value() || !isRoleSubscriptBase(*roleBase)) {
+                // Only a collection role's element has an address; type checking rejects a String byte.
+                report(DiagnosticId::unsupportedSyntax, subscript->span,
+                       "only an array or dictionary element can be an assignment target");
+                return std::nullopt;
             }
-            return DeferredAddress([this, base = std::move(*base), index = *index, type = *type, roleBase,
+            return DeferredAddress([this, base = std::move(*base), index = *index, type = *type, roleBase = *roleBase,
                                     span = subscript->span]() -> std::optional<ir::Value> {
                 const auto baseAddress = base();
                 if (!baseAddress.has_value()) return std::nullopt;
-                if (roleBase.has_value()) {
-                    return emitRoleElementAddress(*roleBase, *baseAddress, index, type, span);
-                }
-                return emitValue(
-                        ir::Opcode::subscriptAddress,
-                        type,
-                        ir::ValueCategory::address,
-                        { baseAddress->id, index.id },
-                        span);
+                return emitRoleElementAddress(roleBase, *baseAddress, index, type, span);
             });
         }
         if (expression->kind == syntax::Kind::memberExpr) {
@@ -3353,11 +3346,6 @@ private:
         }
         if (targetSymbol != nullptr &&
             targetSymbol->kind == semantic::SymbolKind::builtinMember &&
-            targetSymbol->name == "get") {
-            return lowerDictionaryGet(expression);
-        }
-        if (targetSymbol != nullptr &&
-            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
             targetSymbol->name == "utf8") {
             return lowerStringUtf8(expression);
         }
@@ -3831,58 +3819,6 @@ private:
         }
         emitRawStore(*value, slot, expression->span);
         return emitUnit(expression->span);
-    }
-
-    std::optional<ir::Value> lowerDictionaryGet(
-            const syntax::CallExprSyntax::Ptr& expression) {
-        if (expression->callee->kind != syntax::Kind::memberExpr ||
-            expression->arguments.size() != 1) {
-            report(
-                    DiagnosticId::unsupportedSyntax,
-                    expression->span,
-                    "Dict.get requires one key argument");
-            return std::nullopt;
-        }
-        const auto member =
-                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
-        const auto dictionary = lowerExpression(member->base);
-        const auto* dictionaryType = dictionary.has_value()
-                ? model->types().type(dictionary->type)
-                : nullptr;
-        if (!dictionary.has_value() || dictionaryType == nullptr ||
-            dictionaryType->kind != typing::TypeKind::dictionary ||
-            dictionaryType->arguments.size() != 2) {
-            report(
-                    DiagnosticId::missingType,
-                    expression->span,
-                    "Dict.get receiver has no concrete key/value types");
-            return std::nullopt;
-        }
-        if (!model->isCopyable(dictionaryType->arguments[1])) {
-            // `get` clones the stored value; type checking rejects this first.
-            report(
-                    DiagnosticId::ownershipViolation,
-                    expression->span,
-                    "Dict.get would copy a noncopyable value");
-            return std::nullopt;
-        }
-        auto key = lowerExpression(expression->arguments[0]->value);
-        const auto resultType = typeOf(expression);
-        if (!key.has_value() || !resultType.has_value()) return std::nullopt;
-        key = coerce(
-                *key,
-                dictionaryType->arguments[0],
-                expression->arguments[0]->value->span);
-        if (!key.has_value()) return std::nullopt;
-        auto instruction = makeInstruction(ir::Opcode::dictionaryGet, expression->span);
-        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
-        instruction.operands = { dictionary->id, key->id };
-        const auto result = *instruction.result;
-        emit(std::move(instruction));
-        recordValue(result, requiresDestroy(result.type)
-                ? ValueOwnership::owned
-                : ValueOwnership::trivial);
-        return result;
     }
 
     std::optional<ir::Value> lowerStringUtf8(

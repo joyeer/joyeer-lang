@@ -145,8 +145,6 @@ private:
     llvm::Value* emitIntrinsic(const intrinsic::Descriptor& descriptor,
             llvm::ArrayRef<llvm::Value*> arguments);
     bool emitCollection(const ir::Instruction& instruction, llvm::Value*& result);
-    int keyKind(ir::TypeId id);
-    llvm::Value* dictionaryFind(ir::TypeId id, llvm::Value* dictionary, llvm::Value* key);
 
     // Debug locations are attached to objects as they are built, never by
     // searching or rewriting printed instruction text.

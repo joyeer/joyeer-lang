@@ -212,7 +212,8 @@ Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
 
 ## Semantic and runtime limits
 
-- `String.count` and `String[i]` operate on bytes, not characters. Strings and
+- `String.count` and `String[i]` operate on bytes, not characters, and a byte is
+  read-only: `&s[i] = b` is `type-checking.assignment-to-immutable`. Strings and
   file input can contain arbitrary bytes; valid UTF-8 is not currently
   enforced.
 - Ordinary copies of heap-backed values can allocate and recursively clone

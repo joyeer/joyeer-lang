@@ -211,10 +211,11 @@ The current instruction set covers:
   references use the same operations as other library code. There are no concurrency opcodes;
 - ordinary source calls for library dictionary methods ([0027](../decisions/0027-library-dict.md)): `d[k]` calls
   the `dict_element` addressor, `&d[k] = v` calls `dict_set` with an owned key and value, and `get` is the public
-  `dict_get` method. The builtin `construct_dictionary`, `dictionary_set` and `dictionary_get` opcodes and the
-  dictionary arm of `subscript_addr` are no longer emitted; the verifier and backend keep them until the cleanup
-  stage removes them;
-- `String` count and value/address subscript operations, plus owned `String.utf8()` byte-array extraction;
+  `dict_get` method. There is no dictionary type kind or dictionary-specific opcode: wire 25 removed
+  `construct_dictionary`, `dictionary_set`, `dictionary_get` (slots 39-41), `subscript_addr` (50) and type kind 11,
+  and the verifier rejects those slots;
+- `String` `count` and byte `subscript` (a value; a byte is never addressed), plus owned `String.utf8()`
+  byte-array extraction;
 - high-level recursive pattern switching.
 
 An array literal prepares all owned elements first, then moves them into one `stack_block` and calls the
@@ -294,7 +295,7 @@ temporaries transfer directly. An overwrite first acquires the owned
 replacement, then destroys the previous value, then stores the replacement;
 this ordering keeps self-assignment valid. For `=` and `op=`, index operands of
 the target are lowered first, then the right-hand side, and only then is the
-element address computed (`subscript_addr`, `field_addr`): a right side that
+element address computed (an addressor call, `field_addr`): a right side that
 reallocates the target's storage cannot leave a stale address behind.
 Scope exits destroy owned storage
 and live temporaries in reverse order.
@@ -326,18 +327,14 @@ or clones a borrowed nontrivial value before the call, so runtime
 reallocation never aliases the caller's retained value and array destruction
 owns every appended element exactly once.
 
-`dictionary_set` likewise consumes a concrete key/value pair. Runtime lookup
+The library dictionary's `dict_set` method likewise consumes a concrete key/value pair. Runtime lookup
 decides whether to insert or update: insertion transfers both into a new entry;
 update keeps the existing key, destroys the incoming duplicate key and old
-value, then transfers the replacement value. Dictionary construction applies
+value, then transfers the replacement value. A dictionary literal applies
 the same last-value-wins policy and counts only unique keys.
 
-`dictionary_get` evaluates the receiver and key once, in source order, without
-copying the receiver. Native emission performs one lookup and clones only the
-present value into `.Some`; absence produces `.None` without a payload copy.
-The result is already owned, so lowering transfers it without another clone.
-Nested optional and unit payloads retain their exact types. Receiver and key
-temporaries remain live through lookup and are cleaned on every exit path.
+`get` is the library's `dict_get` method: an ordinary call that borrows the receiver and the key, performs one
+lookup and clones only a present value into `.Some`; absence produces `.None` without a payload copy.
 
 ---
 

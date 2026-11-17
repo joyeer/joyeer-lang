@@ -156,7 +156,6 @@ llvm::Type* Builder::llvmType(ir::TypeId id) {
         case typing::TypeKind::boolean: result = builder.getInt1Ty(); break;
         case typing::TypeKind::function: result = pointer(); break;
         case typing::TypeKind::string: name = "joyeer.string"; break;
-        case typing::TypeKind::dictionary: name = "joyeer.dictionary"; break;
         case typing::TypeKind::structure:
         case typing::TypeKind::enumeration:
             break;
@@ -202,7 +201,6 @@ Layout Builder::layout(ir::TypeId id) {
         // A function value is a code address; its parameter types are not part of its layout.
         case typing::TypeKind::function: result = {8, 8}; break;
         case typing::TypeKind::string: result = {16, 8}; break;
-        case typing::TypeKind::dictionary: result = {24, 8}; break;
         case typing::TypeKind::structure:
             for (const auto& field : structures.at(id)->fields) {
                 const auto fieldLayout = layout(field.type);

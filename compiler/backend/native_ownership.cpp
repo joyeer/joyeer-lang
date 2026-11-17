@@ -114,11 +114,9 @@ void Builder::emitClone(ir::TypeId id) {
     destination->setName("destination");
     sourceAddress->setName("source");
     const auto kind = type(id).kind;
-    if (kind == typing::TypeKind::string || kind == typing::TypeKind::dictionary) {
-        const auto name = kind == typing::TypeKind::string ? "joyeer_string_clone_abi"
-                : "joyeer_dictionary_clone_abi";
+    if (kind == typing::TypeKind::string) {
         auto* value = builder.CreateLoad(llvmType(id), sourceAddress, "value");
-        call(name, builder.getVoidTy(), {destination,
+        call("joyeer_string_clone_abi", builder.getVoidTy(), {destination,
                 builder.CreateExtractValue(value, 0, "data"), builder.CreateExtractValue(value, 1, "count")});
         return;
     }
@@ -178,10 +176,6 @@ void Builder::emitDestroy(ir::TypeId id) {
         call("joyeer_string_destroy_abi", builder.getVoidTy(), {address});
         builder.CreateBr(done);
         builder.SetInsertPoint(done);
-        return;
-    }
-    if (kind == typing::TypeKind::dictionary) {
-        call("joyeer_dictionary_destroy_abi", builder.getVoidTy(), {address});
         return;
     }
     if (kind == typing::TypeKind::structure) {

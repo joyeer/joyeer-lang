@@ -35,9 +35,8 @@ enum class TypeKind {
     uint8,
     structure,
     enumeration,
-    // Wire slot 10 belonged to the removed builtin array kind.
-    dictionary = 11,
-    int8,
+    // Wire slots 10 and 11 belonged to the removed builtin array and dictionary kinds.
+    int8 = 12,
     int16,
     int32,
     int64,
