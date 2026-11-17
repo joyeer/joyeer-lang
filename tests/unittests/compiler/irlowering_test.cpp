@@ -1541,6 +1541,27 @@ return lookup
     EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::returnValue), 1u);
 }
 
+// The library dictionary's addressor borrows the key (decision 0027): a lookup, a borrow and an in-place mutation
+// pass the String key raw to `dict_element`, so no lookup allocates a key copy.
+TEST_F(IRLoweringTest, DictionaryAccessBorrowsItsKeyWithoutACopy) {
+    lower(R"JOYEER(func read(values: [String: Int], key: String): Int {
+return values[key]
+}
+func mutate(values: inout [String: [Int]], key: String) {
+&values[key][0] = 1
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    for (const auto* name : { "read", "mutate" }) {
+        SCOPED_TRACE(name);
+        EXPECT_GE(callsTo(function(name), ".element"), 1u);
+        EXPECT_EQ(opcodeCount(function(name), joyeer::ir::Opcode::copyValue), 0u);
+    }
+}
+
 TEST_F(IRLoweringTest, LowersMutableArrayElementsAsAddressProjections) {
     lower(R"JOYEER(func incrementFirst(values: inout [Int]): Int {
 &values[0] = values[0] + 1

@@ -1112,6 +1112,32 @@ if(JOYEER_CLANG_EXECUTABLE)
 9
 "
             0 1 2 3)
+    # Allocation differential (decision 0027): the live-block counts of the builtin dictionary at every checkpoint.
+    foreach(level IN ITEMS 0 1 2 3)
+        add_test(NAME E2EDictAllocationsO${level}
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/dict_allocations.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/dict_allocations-O${level}${CMAKE_EXECUTABLE_SUFFIX}
+                        "-DCOMPILER_ARGS=--module-name;app;--runtime-module;app;-O${level}"
+                        "-DEXPECTED_OUTPUT=11
+14
+19
+26
+27
+37
+38
+w1v1
+v1
+none
+9
+"
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+        )
+        set_tests_properties(E2EDictAllocationsO${level} PROPERTIES
+                LABELS "e2e;llvm-backend;runtime;ownership;regression"
+                TIMEOUT 60)
+    endforeach()
     # The String destroy helper skips the runtime for the zero value only (plan 0011, 0027 stage 3).
     add_joyeer_native_regression(
             E2EStringMovedDrop string_moved_drop
@@ -1602,12 +1628,13 @@ abcdabcd
     # Differential check: every self-contained native fixture must behave the
     # same (exit status, stdout, stderr) at -O0 through -O3. Fixtures that need
     # program arguments, a working directory, input files, or that are meant to
-    # fail compilation are excluded.
+    # fail compilation are excluded, as is dict_allocations, which needs runtime-module flags and is compared at
+    # every level by its own registration.
     file(GLOB joyeer_native_fixtures "${JOYEER_TESTS_DIR}/e2e/*.joyeer")
     set(joyeer_equivalence_excluded
             entry_argument_bytes entry_arguments entry_exit_status
             filesystem file-kind-device process read_file propagation_file
-            json_parser missing_main full_debug)
+            json_parser missing_main full_debug dict_allocations)
     foreach(fixture_path IN LISTS joyeer_native_fixtures)
         get_filename_component(fixture "${fixture_path}" NAME_WE)
         if(fixture IN_LIST joyeer_equivalence_excluded)

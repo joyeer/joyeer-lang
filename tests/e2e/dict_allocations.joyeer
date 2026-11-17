@@ -1,0 +1,42 @@
+// Allocation differential of the dictionary switch (decision 0027): the live runtime blocks after each dictionary
+// operation. The expected counts are the builtin dictionary's (the baseline compiler before the switch was the
+// oracle, at -O0 to -O3); the library dictionary must allocate exactly as it did: the same header, entries, growth
+// and copies. Compiled as a runtime module, the one kind of unit that may bind the runtime's allocation counter.
+@c_extern(symbol: "joyeer_runtime_active_allocations")
+func allocations(): Int
+
+func main() {
+    let start = allocations()
+    var names: [String: String] = ["a" + "1": "x" + "1", "b" + "2": "y" + "2", "a" + "1": "w" + "1"]
+    print(value: allocations() - start)
+    let key = "a" + "1"
+    let found = names[key]
+    print(value: allocations() - start)
+    &names["c" + "3"] = "z" + "3"
+    &names[key] = "v" + "1"
+    print(value: allocations() - start)
+    let copy = names
+    print(value: allocations() - start)
+    let got = names.get(key: key)
+    let missing = names.get(key: "q")
+    print(value: allocations() - start)
+    var grown: [Int: [Int]] = [:]
+    var index = 0
+    while index < 9 {
+        &grown[index] = [index]
+        index = index + 1
+    }
+    print(value: allocations() - start)
+    var empty: [String: Int] = [:]
+    print(value: allocations() - start)
+    print(value: found + copy[key])
+    match got {
+        .Some(text) => print(value: text),
+        .None => print(value: "none"),
+    }
+    match missing {
+        .Some(text) => print(value: text),
+        .None => print(value: "none"),
+    }
+    print(value: grown.count + empty.count)
+}
