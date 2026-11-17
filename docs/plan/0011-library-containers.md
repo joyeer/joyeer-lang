@@ -729,3 +729,33 @@ redesign. No prerequisite is considered accepted merely because this plan names 
 - 2026-11-17: `scripts/validate.py` on b738906 (the String destroy guard) passes: Windows AMD64 Debug and Release
   `ctest` 1906/1906 (`Fern.Workspace` in Debug and `Fern.Manifest` in Release passed only on rerun), `fern test` 7/7;
   Linux x86_64 1882/1882 and 7/7, no reruns.
+- 2026-11-17: 0027 stage 5 (infrastructure part 3: the dictionary roles), `[K: V]` and literals untouched. Tests
+  first for each step, all observed failing: 2477086 (roles and shapes: unknown role names), 4ebb54f (IR, wire,
+  backend: the table lowered with no role and a live flag), 3da63de (literal protocol: the verifier admitted only
+  array storage), 7d599fe (review findings). Implemented: dac12cc, the seven roles parsed, recorded through the seam
+  (`dictSymbol_`, not required until the switch) and validated by the collection-role path shared with the array
+  (two owned parameters, the three private words, a deinit, each method role once with its closed signature, every
+  one private but `get`, a private entry with exactly `key: K` then `value: V`), linearity and copyability over both
+  arguments, the affine-only rule, no extension, instance discovery of the addressor, `dict_set`, the copy and the
+  literal method, and the interned entry; eac28ee, the IR flag `arrayLiteral` renamed `literalFactory`; 66e756f,
+  `StructureRole::dict` and `dictEntry`, wire 24, the inert-zero destroy, the always-inline wrappers by role, and
+  the backend's entry-layout invariant; 7b87f96, the closed packing protocol of a dictionary literal, checked rule
+  by rule (0027 rules 1-6) and naming the rule that fails, against a literal built by hand in the form the switch
+  will lower; 2b7b9da, docs and spec §20.12.5. Three test bugs were corrected in their own commits (c2b2962,
+  4ebb54f; a renamed label also renamed the body's parameter, a removed entry struct also removed a type the
+  literal names, an affine table may drop its self, a struct key cannot be lowered).
+- 2026-11-17: Stage 5 reviews, separately from the author. Type-system: no high; mediums fixed in 06d4d41 (tests
+  7d599fe): a type record read after `isCopyable` could grow the table (the stale read did not fire in the pinned
+  scenario), `get` of a noncopyable value now rejected at the call by the callee's role, `dict_get` must be named
+  `get`; lows fixed: no transfer marker on either struct, argument copies before recursion, a vacuous needle. IR/
+  backend: no high, no malformed literal accepted; mediums fixed: an entry is never a value (no value, parameter,
+  result, field, payload or type argument of its type, no capability opcode naming it, its address only a verified
+  literal place), and a packed literal now reaches LLVM at O0 and O2; lows fixed: the layout check runs after every
+  body is set and also compares the portable layout model, no clone or destroy helper for an entry, a cross-block
+  transfer is rule 6, a stored value has exactly one use, the stale array wording. Deferred to stage 6 (the switch),
+  where lowering consumes them: the entry's field symbols in the role record, the `invalid-prelude` seam at first
+  dictionary use, a durable stage fixture (no user path reaches the roles yet), executing a packed literal, and
+  per-instruction noise after a failed literal. Left as is: one mistake in the owner's parameter count is also
+  reported by each method role; the array protocol does not require single-use stored values (pre-existing; the
+  source lowering never reuses one). Evidence: dictionary-role tests 26/26, collection-role tests 70/70, Windows x64
+  Debug `ctest` 1932/1932.
