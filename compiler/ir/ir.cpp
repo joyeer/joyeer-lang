@@ -799,6 +799,35 @@ VerificationResult Verifier::verify(const Module& module) const {
         }
     }
 
+    // A dictionary entry is never a value (decision 0027): no other type holds one or takes it as a type argument.
+    std::unordered_set<TypeId> entryTypes;
+    for (const auto& structure : module.structures) {
+        if (structure.role == StructureRole::dictEntry) entryTypes.insert(structure.type);
+    }
+    if (!entryTypes.empty()) {
+        const auto holds = [&](const std::string& holder) {
+            report(VerificationErrorId::invalidReference, std::nullopt, std::nullopt, std::nullopt,
+                   "a dictionary entry is never a value, but '" + holder + "' holds one");
+        };
+        for (const auto& structure : module.structures) {
+            for (const auto& field : structure.fields) {
+                if (entryTypes.contains(field.type)) holds(structure.name);
+            }
+        }
+        for (const auto& enumeration : module.enumerations) {
+            for (const auto& enumCase : enumeration.cases) {
+                for (const auto payload : enumCase.payloadTypes) {
+                    if (entryTypes.contains(payload)) holds(enumeration.name);
+                }
+            }
+        }
+        for (const auto& type : module.types) {
+            for (const auto argument : type.arguments) {
+                if (entryTypes.contains(argument)) holds(type.name);
+            }
+        }
+    }
+
     for (const auto& function : module.functions) {
         if (!function.elementAddressor) continue;
         // An array's addressor takes an Int index, a dictionary's a key of its first type argument.
@@ -1553,6 +1582,10 @@ VerificationResult Verifier::verify(const Module& module) const {
                 return "rule 6: the block must be transferred exactly once, to the literal method, and otherwise "
                        "used only by its slots";
             }
+            const bool sameBlockTransfer = transfer.block == block.id;
+            if (!sameBlockTransfer || transfer.index <= index) {
+                return "rule 6: the literal method must follow the packing in its block, on an inert zero receiver";
+            }
             // Rule 1: the literal method receives the zero receiver, the block and its count.
             if (call.operands.size() != 3 || call.operands[1] != storage.result->id ||
                 call.operands[2] != storage.operands[0]) {
@@ -1566,7 +1599,6 @@ VerificationResult Verifier::verify(const Module& module) const {
             const auto& valueField = entry->second->fields[1];
             const bool unitValue = types.contains(valueField.type) &&
                     types.at(valueField.type)->kind == typing::TypeKind::voidType;
-            const bool sameBlockTransfer = transfer.block == block.id;
             std::unordered_set<int64_t> keys;
             std::unordered_set<int64_t> storedValues;
             std::vector<ValueId> admittedSlots;
@@ -1618,11 +1650,13 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 value != values.end() && value->second.type == fieldType &&
                                 value->second.category == ValueCategory::value && store.block == block.id &&
                                 store.index > projection.index && sameBlockTransfer && store.index < transfer.index &&
-                                evaluatedBefore(value->first, block.id, index);
+                                evaluatedBefore(value->first, block.id, index) &&
+                                literalUses[value->first].size() == 1;
                     }
                     if (!stored) {
                         return "rule 4: each field address must have exactly one use, a store in its block before "
-                               "the transfer of a value of the field's type evaluated before the storage";
+                               "the transfer of a value of the field's type evaluated before the storage and used only "
+                               "there";
                     }
                     (isKey ? keys : storedValues).insert(offset->integerValue);
                     admittedFields.push_back(field.result->id);
@@ -1726,7 +1760,6 @@ VerificationResult Verifier::verify(const Module& module) const {
                 valid = valid && transfer != nullptr;
                 if (transfer != nullptr) {
                     const auto& call = *transfer->instruction;
-                    const auto* factory = functions.at(*call.callee);
                     const auto result = types.find(factory->resultType);
                     valid = valid && transfer->block == block.id && transfer->index > index &&
                             call.operands.size() == 3 && call.operands[2] == storage.operands[0] &&
@@ -2090,6 +2123,16 @@ VerificationResult Verifier::verify(const Module& module) const {
                             std::to_string(function.entry));
         }
 
+        for (const auto& parameter : function.parameters) {
+            if (entryTypes.contains(parameter.value.type)) {
+                report(VerificationErrorId::typeMismatch, functionId, std::nullopt, std::nullopt,
+                       "a dictionary entry is never a value, so no parameter has its type");
+            }
+        }
+        if (entryTypes.contains(function.resultType)) {
+            report(VerificationErrorId::typeMismatch, functionId, std::nullopt, std::nullopt,
+                   "a dictionary entry is never a value, so no function returns one");
+        }
         for (const auto& block : function.blocks) {
             bool foundTerminator = false;
             for (size_t index = 0; index < block.instructions.size(); ++index) {
@@ -2110,6 +2153,45 @@ VerificationResult Verifier::verify(const Module& module) const {
                             "instruction appears after block terminator");
                 }
                 foundTerminator |= isTerminator(instruction.opcode);
+                if (!entryTypes.empty()) {
+                    // A dictionary entry is never a value (decision 0027): no instruction yields or takes one, an
+                    // entry address is only a place of verified literal storage, and only the layout queries and
+                    // that storage name the type.
+                    const auto misused = [&](const Value& value) {
+                        return entryTypes.contains(value.type) &&
+                                (value.category != ValueCategory::address || !literalPlaces.contains(value.id));
+                    };
+                    bool misuse = instruction.result.has_value() && misused(*instruction.result);
+                    for (const auto operand : instruction.operands) {
+                        const auto found = values.find(operand);
+                        misuse = misuse || (found != values.end() && misused(found->second));
+                    }
+                    const bool namesEntry = entryTypes.contains(static_cast<TypeId>(instruction.integerValue));
+                    switch (instruction.opcode) {
+                        case Opcode::destroyRange:
+                        case Opcode::cloneAt:
+                        case Opcode::cloneCallback:
+                        case Opcode::destroyCallback:
+                        case Opcode::linearRangeGuard:
+                            misuse = misuse || namesEntry;
+                            break;
+                        case Opcode::stackBlock:
+                            misuse = misuse || (namesEntry && (!instruction.result.has_value() ||
+                                                               !literalBlocks.contains(instruction.result->id)));
+                            break;
+                        case Opcode::slotAddress:
+                            misuse = misuse || (namesEntry && (!instruction.result.has_value() ||
+                                                               !literalSlots.contains(instruction.result->id)));
+                            break;
+                        default:
+                            break;
+                    }
+                    if (misuse) {
+                        report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
+                               "a dictionary entry is never a value: only verified dictionary literal storage "
+                               "addresses one");
+                    }
+                }
 
                 const auto knownCallee = instruction.callee.has_value() &&
                         functions.contains(*instruction.callee);
@@ -2859,7 +2941,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 : nullptr;
                         if (callee.literalFactory) {
                             report(VerificationErrorId::callMismatch, functionId, block.id, location,
-                                   "array literal factories cannot be formed as function values");
+                                   "literal factories cannot be formed as function values");
                         }
                         // Only a Joyeer function has the Joyeer convention; a C import, a data symbol
                         // and a builtin accepting any type have no address of a function type.

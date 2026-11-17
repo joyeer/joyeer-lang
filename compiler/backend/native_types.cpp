@@ -263,7 +263,12 @@ void Builder::checkDictionaryEntryLayout(const ir::StructureDefinition& definiti
     const auto valueOffset = alignTo(size(key), alignment(value));
     const auto entrySize = alignTo(valueOffset + size(value), std::max(alignment(key), alignment(value)));
     const auto* placed = target.getStructLayout(aggregate);
-    if (placed->getElementOffset(1) != valueOffset || placed->getSizeInBytes() != entrySize) {
+    // The backend's portable layout model must agree too: it answers every other size and offset question.
+    const auto portable = layout(definition.type);
+    const bool modelAgrees = portable.size == entrySize &&
+            (unit(key) || layout(key).size == size(key)) &&
+            (unit(value) || layout(value).alignment == alignment(value));
+    if (placed->getElementOffset(1) != valueOffset || placed->getSizeInBytes() != entrySize || !modelAgrees) {
         report(DiagnosticId::invalidModule, {}, "dictionary entry '" + definition.name +
                 "' is laid out at value offset " + std::to_string(placed->getElementOffset(1)) + ", size " +
                 std::to_string(placed->getSizeInBytes()) + ", but the runtime's entry formula gives " +
@@ -293,12 +298,17 @@ void Builder::defineTypes() {
             for (const auto& field : found->second->fields) fields.push_back(llvmType(field.type));
             aggregate->setBody(fields);
             layout(id);
-            if (found->second->role == ir::StructureRole::dictEntry) checkDictionaryEntryLayout(*found->second,
-                    aggregate, targetLayout);
         } else {
             const auto valueLayout = layout(id);
             aggregate->setBody({builder.getInt32Ty(),
                     llvm::ArrayType::get(builder.getInt64Ty(), (valueLayout.size - 8) / 8)});
+        }
+    }
+    // Once every body is set: a key or value type may have a larger id than its entry.
+    for (const auto& [id, aggregate] : aggregates) {
+        if (const auto found = structures.find(id);
+            found != structures.end() && found->second->role == ir::StructureRole::dictEntry) {
+            checkDictionaryEntryLayout(*found->second, aggregate, targetLayout);
         }
     }
 }

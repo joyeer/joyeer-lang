@@ -708,8 +708,10 @@ bool TypeCheckedModel::isLinear(
             const auto structure = structureDeclaration(id);
             if (structure == nullptr) break;
             if (isCollectionRoleType(id)) {
-                // Owns its elements through an address, so they decide (decisions 0025, 0027).
-                for (const auto argument : type->arguments) {
+                // Owns its elements through an address, so they decide (decisions 0025, 0027). The arguments are
+                // copied first: the recursion can intern types and invalidate `type`.
+                const auto arguments = type->arguments;
+                for (const auto argument : arguments) {
                     if (isLinear(argument, visiting, clean)) { linear = true; break; }
                 }
                 break;
@@ -836,7 +838,9 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
             if (structure == nullptr) break;
             if (isCollectionRoleType(id)) {
                 // Copyable exactly when the owned types are, although it declares `deinit` (decisions 0025, 0027).
-                for (const auto argument : type->arguments) {
+                // The arguments are copied first: the recursion can intern types and invalidate `type`.
+                const auto arguments = type->arguments;
+                for (const auto argument : arguments) {
                     if (noncopyableReason(argument, visiting, clean).has_value()) {
                         reason = name + " holds the noncopyable type '" + typeContext.displayName(argument) + "'";
                         break;
@@ -1181,8 +1185,9 @@ private:
             case semantic::LibraryRole::dictGet: {
                 // The one public method role: user code calls it as `d.get(key: k)`.
                 const auto optional = model->semanticModelValue->roleSymbol(semantic::LibraryRole::optional);
-                if (symbol.visibility == syntax::Visibility::public_ && receiver == syntax::AccessEffect::borrowing &&
-                    labelled({ "key" }) && accesses(syntax::AccessEffect::borrowing) &&
+                if (symbol.name == "get" && symbol.visibility == syntax::Visibility::public_ &&
+                    receiver == syntax::AccessEffect::borrowing && labelled({ "key" }) &&
+                    accesses(syntax::AccessEffect::borrowing) &&
                     signature.parameters == std::vector<TypeId> { key } && result != nullptr &&
                     result->kind == TypeKind::enumeration && optional.has_value() && result->symbol == *optional &&
                     result->arguments == std::vector<TypeId> { value }) {
@@ -1407,6 +1412,11 @@ private:
                         roleFailure = "the " + roleName + " role requires a public struct";
                         break;
                     }
+                    if (isDict && symbol.acceptsLinearArguments) {
+                        // The dictionary owns no linear key or value (decision 0027): no transfer marker.
+                        roleFailure = "the dict_type role's type parameters take no linear marker";
+                        break;
+                    }
                     const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
                     if (structure->deinitializer == nullptr) {
                         roleFailure = "the " + roleName + " role requires a deinit that destroys the " +
@@ -1480,6 +1490,7 @@ private:
                     }
                     const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
                     bool shaped = parameters != nullptr && parameters->size() == 2 &&
+                            !symbol.acceptsLinearArguments &&
                             std::none_of(parameters->begin(), parameters->end(), [&](const auto parameter) {
                                 return !model->constraints(parameter).empty();
                             }) &&
@@ -1497,7 +1508,7 @@ private:
                     matches = shaped;
                     if (!matches) {
                         roleFailure = "the dict_entry role requires exactly the fields 'key: K' then 'value: V' of "
-                                "its two unconstrained type parameters, no methods and no deinit";
+                                "its two unconstrained, unmarked type parameters, no methods and no deinit";
                     }
                     break;
                 }
@@ -3034,7 +3045,8 @@ private:
                         required.push_back(*copy);
                     }
                     // The entry has no `deinit`, so this loop would not intern it; a literal packs it.
-                    const auto found = model->collectionRoles.find(record->symbol);
+                    // `record` may be stale: `isCopyable` above can intern types and grow the type table.
+                    const auto found = model->collectionRoles.find(symbol->id);
                     if (!model->dictEntryTypes.contains(id) && found != model->collectionRoles.end() &&
                         found->second.entry.has_value()) {
                         if (const auto entry = model->typeContext.typeForSymbol(*found->second.entry, arguments)) {
@@ -5221,6 +5233,23 @@ private:
                                     "' is noncopyable: " + *reason,
                             "a noncopyable element cannot be read without removing it, which "
                             "is not supported yet");
+                }
+            }
+        }
+        // `d.get(key:)` of a library dictionary returns a copy of the stored value (decision 0027): keyed on the
+        // callee's role, a noncopyable value is rejected here, before any instance of the method is demanded.
+        if (semanticTarget != nullptr && semanticTarget->libraryRole == semantic::LibraryRole::dictGet &&
+            expression->callee->kind == syntax::Kind::memberExpr) {
+            const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+            const auto base = model->typeOf(member->base);
+            const auto* baseType = base.has_value() ? model->typeContext.type(*base) : nullptr;
+            if (baseType != nullptr && baseType->arguments.size() == 2) {
+                const auto valueType = baseType->arguments[1];
+                if (const auto reason = model->noncopyableReason(valueType)) {
+                    report(TypeCheckingDiagnosticId::copyOfNoncopyable, expression->span,
+                           "'get' returns a copy of the stored value, and '" +
+                                   model->typeContext.displayName(valueType) + "' is noncopyable: " + *reason,
+                           "a noncopyable element cannot be read without removing it, which is not supported yet");
                 }
             }
         }

@@ -58,6 +58,11 @@ void Builder::emitOwnership() {
     for (const auto& type : source.types) {
         if (source.isRuntimeObject && !usedTypes.contains(type.id)) continue;
         if (!destruction->requiresDestruction(type.id)) continue;
+        // A dictionary entry is never a value (decision 0027), so nothing clones or destroys one.
+        if (const auto found = structures.find(type.id);
+            found != structures.end() && found->second->role == ir::StructureRole::dictEntry) {
+            continue;
+        }
         auto* cloneType = llvm::FunctionType::get(builder.getVoidTy(), {pointer(), pointer()}, false);
         auto* destroyType = llvm::FunctionType::get(builder.getVoidTy(), {pointer()}, false);
         const auto linkage = llvm::GlobalValue::InternalLinkage;
