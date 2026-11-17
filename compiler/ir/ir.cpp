@@ -240,6 +240,75 @@ bool requiresDestruction(const Module& module, TypeId type) {
     return DestructionAnalysis(module).requiresDestruction(type);
 }
 
+DominanceAnalysis::DominanceAnalysis(const Function& function) {
+    std::unordered_map<BlockId, const BasicBlock*> blocks;
+    for (const auto& block : function.blocks) blocks.emplace(block.id, &block);
+    std::unordered_map<BlockId, std::unordered_set<BlockId>> predecessors;
+    for (const auto& block : function.blocks) {
+        if (block.instructions.empty()) continue;
+        for (const auto target : block.instructions.back().targets) {
+            if (blocks.contains(target)) predecessors[target].insert(block.id);
+        }
+        if (block.instructions.back().opcode == Opcode::switchPattern) {
+            for (const auto& switchCase : block.instructions.back().switchCases) {
+                if (blocks.contains(switchCase.target)) {
+                    predecessors[switchCase.target].insert(block.id);
+                }
+            }
+        }
+    }
+    std::unordered_set<BlockId> allBlocks;
+    for (const auto& [blockId, block] : blocks) allBlocks.insert(blockId);
+    for (const auto& [blockId, block] : blocks) {
+        dominators[blockId] = blockId == function.entry
+                ? std::unordered_set<BlockId> { blockId }
+                : allBlocks;
+        steps += dominators[blockId].size();
+    }
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (const auto& [blockId, block] : blocks) {
+            if (blockId == function.entry) continue;
+            std::unordered_set<BlockId> next = allBlocks;
+            steps += next.size();
+            const auto incoming = predecessors.find(blockId);
+            if (incoming == predecessors.end() || incoming->second.empty()) {
+                next.clear();
+            } else {
+                bool first = true;
+                for (const auto predecessor : incoming->second) {
+                    if (first) {
+                        next = dominators[predecessor];
+                        steps += next.size();
+                        first = false;
+                    } else {
+                        for (auto candidate = next.begin(); candidate != next.end();) {
+                            ++steps;
+                            if (!dominators[predecessor].contains(*candidate)) {
+                                candidate = next.erase(candidate);
+                            } else {
+                                ++candidate;
+                            }
+                        }
+                    }
+                }
+            }
+            next.insert(blockId);
+            steps += next.size();
+            if (next != dominators[blockId]) {
+                dominators[blockId] = std::move(next);
+                changed = true;
+            }
+        }
+    }
+}
+
+bool DominanceAnalysis::dominates(BlockId dominator, BlockId block) const {
+    const auto found = dominators.find(block);
+    return found != dominators.end() && found->second.contains(dominator);
+}
+
 VerificationResult Verifier::verify(const Module& module) const {
     VerificationResult result;
     auto report = [&result](
@@ -1317,61 +1386,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                 }
             }
         }
-        std::unordered_map<BlockId, std::unordered_set<BlockId>> predecessors;
-        for (const auto& block : function.blocks) {
-            if (block.instructions.empty()) continue;
-            for (const auto target : block.instructions.back().targets) {
-                if (blocks.contains(target)) predecessors[target].insert(block.id);
-            }
-            if (block.instructions.back().opcode == Opcode::switchPattern) {
-                for (const auto& switchCase : block.instructions.back().switchCases) {
-                    if (blocks.contains(switchCase.target)) {
-                        predecessors[switchCase.target].insert(block.id);
-                    }
-                }
-            }
-        }
-        std::unordered_map<BlockId, std::unordered_set<BlockId>> dominators;
-        std::unordered_set<BlockId> allBlocks;
-        for (const auto& [blockId, block] : blocks) allBlocks.insert(blockId);
-        for (const auto& [blockId, block] : blocks) {
-            dominators[blockId] = blockId == function.entry
-                    ? std::unordered_set<BlockId> { blockId }
-                    : allBlocks;
-        }
-        bool changed = true;
-        while (changed) {
-            changed = false;
-            for (const auto& [blockId, block] : blocks) {
-                if (blockId == function.entry) continue;
-                std::unordered_set<BlockId> next = allBlocks;
-                const auto incoming = predecessors.find(blockId);
-                if (incoming == predecessors.end() || incoming->second.empty()) {
-                    next.clear();
-                } else {
-                    bool first = true;
-                    for (const auto predecessor : incoming->second) {
-                        if (first) {
-                            next = dominators[predecessor];
-                            first = false;
-                        } else {
-                            for (auto candidate = next.begin(); candidate != next.end();) {
-                                if (!dominators[predecessor].contains(*candidate)) {
-                                    candidate = next.erase(candidate);
-                                } else {
-                                    ++candidate;
-                                }
-                            }
-                        }
-                    }
-                }
-                next.insert(blockId);
-                if (next != dominators[blockId]) {
-                    dominators[blockId] = std::move(next);
-                    changed = true;
-                }
-            }
-        }
+        const DominanceAnalysis dominance(function);
         // The escape rule of a library array's element place (decision 0025): an element address is
         // used only in blocks its definition dominates, and only to load, store, take, destroy, project
         // or pass as a call argument, never converted back to an Int, returned, stored as a value or
@@ -1457,7 +1472,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                         if (definition != valueDefinitions.end() &&
                             (definition->second.first == block.id
                                      ? definition->second.second >= index
-                                     : !dominators[block.id].contains(definition->second.first))) {
+                                     : !dominance.dominates(definition->second.first, block.id))) {
                             report(VerificationErrorId::invalidInstruction, functionId, block.id, index,
                                    "an element address is used where its definition does not dominate");
                         }
@@ -1583,7 +1598,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                      ((definition->second.first == *block &&
                        definition->second.second < *instruction) ||
                       (definition->second.first != *block &&
-                       dominators[*block].contains(definition->second.first))));
+                       dominance.dominates(definition->second.first, *block))));
                 if (!definedEarlier) {
                     report(
                             VerificationErrorId::invalidReference,

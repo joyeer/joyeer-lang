@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace joyeer::ir {
@@ -399,6 +400,27 @@ public:
 
 private:
     std::unordered_map<TypeId, bool> required;
+};
+
+// Snapshot of one function's block dominance, as the verifier checks it. Rebuild after changing the
+// function's blocks or terminators. The entry block, and every other block without predecessors, roots
+// the graph; a block's dominators are the maximal fixed point of Dom(b) = {b} + the intersection of
+// Dom(p) over its predecessors p, with Dom(root) = {root}. A block that no root reaches (it is reached
+// only around a cycle of such blocks) is therefore dominated by every block.
+class DominanceAnalysis {
+public:
+    explicit DominanceAnalysis(const Function& function);
+    // Whether `dominator` dominates `block`; a block dominates itself. False when either is not a
+    // block of the function.
+    [[nodiscard]] bool dominates(BlockId dominator, BlockId block) const;
+    // The elementary steps the construction took, so tests can bound its growth without timing it.
+    [[nodiscard]] size_t work() const {
+        return steps;
+    }
+
+private:
+    std::unordered_map<BlockId, std::unordered_set<BlockId>> dominators;
+    size_t steps = 0;
 };
 
 [[nodiscard]] bool requiresDestruction(const Module& module, TypeId type);

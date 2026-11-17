@@ -809,6 +809,90 @@ TEST(IRModelTest, ConservativelyClassifiesRecursiveDestructionDependencies) {
     EXPECT_FALSE(analysis.requiresDestruction(100));
 }
 
+BasicBlock terminatorBlock(BlockId id, Opcode opcode, std::vector<BlockId> targets = {}) {
+    BasicBlock block;
+    block.id = id;
+    block.instructions.push_back(Instruction { opcode, std::nullopt, {}, std::move(targets) });
+    return block;
+}
+
+BasicBlock switchBlock(BlockId id, const std::vector<BlockId>& targets) {
+    BasicBlock block = terminatorBlock(id, Opcode::switchPattern);
+    for (const auto target : targets) {
+        SwitchCase switchCase;
+        switchCase.target = target;
+        block.instructions.back().switchCases.push_back(switchCase);
+    }
+    return block;
+}
+
+TEST(IRModelTest, DominanceFollowsBranchesSwitchesAndBackEdges) {
+    Function function;
+    function.entry = 4;
+    function.blocks = {
+        terminatorBlock(1, Opcode::branch, {3}),
+        terminatorBlock(2, Opcode::branch, {3}),
+        terminatorBlock(3, Opcode::conditionalBranch, {5, 4}),
+        switchBlock(5, {6, 7}),
+        terminatorBlock(6, Opcode::branch, {8}),
+        terminatorBlock(7, Opcode::branch, {8, 77}),
+        terminatorBlock(8, Opcode::returnVoid),
+        // The entry is last in the vector and is a back-edge target; a target that is not a block is ignored.
+        terminatorBlock(4, Opcode::conditionalBranch, {1, 2}),
+    };
+    const DominanceAnalysis dominance(function);
+    EXPECT_TRUE(dominance.dominates(4, 8));
+    EXPECT_TRUE(dominance.dominates(3, 8));
+    EXPECT_TRUE(dominance.dominates(5, 8));
+    EXPECT_TRUE(dominance.dominates(8, 8));
+    EXPECT_FALSE(dominance.dominates(1, 3));
+    EXPECT_FALSE(dominance.dominates(2, 3));
+    EXPECT_FALSE(dominance.dominates(6, 8));
+    EXPECT_FALSE(dominance.dominates(7, 8));
+    EXPECT_FALSE(dominance.dominates(3, 4));
+    EXPECT_FALSE(dominance.dominates(8, 5));
+    EXPECT_FALSE(dominance.dominates(77, 8));
+    EXPECT_FALSE(dominance.dominates(4, 77));
+}
+
+TEST(IRModelTest, DominanceTreatsBlocksWithoutPredecessorsAsRootsAndUnrootedCyclesAsTop) {
+    Function function;
+    function.entry = 0;
+    function.blocks = {
+        terminatorBlock(0, Opcode::conditionalBranch, {1, 6}),
+        terminatorBlock(1, Opcode::branch, {10}),
+        // 5 has no predecessors, so it roots its own region; 6 joins it with the entry's region.
+        terminatorBlock(5, Opcode::conditionalBranch, {6, 7}),
+        terminatorBlock(6, Opcode::returnVoid),
+        terminatorBlock(7, Opcode::returnVoid),
+        // 8 and 9 reach each other but no root reaches them; 10 joins them with the entry.
+        terminatorBlock(8, Opcode::conditionalBranch, {9, 10}),
+        terminatorBlock(9, Opcode::branch, {8}),
+        terminatorBlock(10, Opcode::returnVoid),
+        terminatorBlock(11, Opcode::branch, {10}),
+        terminatorBlock(12, Opcode::branch, {12}),
+    };
+    const DominanceAnalysis dominance(function);
+    EXPECT_TRUE(dominance.dominates(5, 5));
+    EXPECT_TRUE(dominance.dominates(5, 7));
+    EXPECT_FALSE(dominance.dominates(0, 7));
+    EXPECT_FALSE(dominance.dominates(0, 6));
+    EXPECT_FALSE(dominance.dominates(5, 6));
+    EXPECT_TRUE(dominance.dominates(6, 6));
+    EXPECT_FALSE(dominance.dominates(0, 5));
+    // An unrooted cycle, and a block that only loops to itself, are dominated by every block.
+    EXPECT_TRUE(dominance.dominates(0, 8));
+    EXPECT_TRUE(dominance.dominates(7, 9));
+    EXPECT_TRUE(dominance.dominates(10, 8));
+    EXPECT_TRUE(dominance.dominates(1, 12));
+    EXPECT_FALSE(dominance.dominates(99, 8));
+    // 10 is reached from the entry through 1, from the unrooted cycle, and from the root 11.
+    EXPECT_FALSE(dominance.dominates(0, 10));
+    EXPECT_FALSE(dominance.dominates(11, 10));
+    EXPECT_FALSE(dominance.dominates(8, 10));
+    EXPECT_TRUE(dominance.dominates(10, 10));
+}
+
 TEST(IRModelTest, VerifiesExplicitCopyTakeAndDestroyOperations) {
     Module module;
     module.sourceName = "ownership.joyeer";
