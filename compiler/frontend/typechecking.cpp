@@ -6131,9 +6131,14 @@ private:
         // The place is the `count` of a library array or dictionary, read-only outside the collection's own file.
         bool libraryReadOnly = false;
         bool dictionaryCount = false;
+        // The place is a byte of a String, which `s[i]` only reads (spec 2.2).
+        bool stringByte = false;
     };
 
     static std::optional<std::string> readOnlyHelp(const StorageAccess& storage) {
+        if (storage.stringByte) {
+            return "a String's bytes are read-only (spec 2.2): build a new String instead";
+        }
         if (!storage.libraryReadOnly) return std::nullopt;
         if (storage.dictionaryCount) {
             return "a dictionary's 'count' changes only by inserting with '&d[key] = value'";
@@ -6183,6 +6188,11 @@ private:
                         std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
                 auto result = analyzeStorage(subscript->base);
                 result.requiresMarker = true;
+                if (const auto base = model->typeOf(subscript->base);
+                    result.writable && base.has_value() && *base == model->typeContext.stringType()) {
+                    result.writable = false;
+                    result.stringByte = true;
+                }
                 return result;
             }
             case syntax::Kind::accessExpr:
@@ -6241,8 +6251,9 @@ private:
             report(
                     TypeCheckingDiagnosticId::assignmentToImmutable,
                     target == nullptr ? SourceSpan {} : target->span,
-                    "cannot assign through immutable binding or field '" +
-                            storage.immutableName + "'",
+                    storage.stringByte ? std::string("cannot assign to a byte of a String")
+                                       : "cannot assign through immutable binding or field '" +
+                                                 storage.immutableName + "'",
                     readOnlyHelp(storage));
             return;
         }

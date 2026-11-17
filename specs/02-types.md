@@ -35,6 +35,11 @@ either type an address type.
 `i` in **O(1)**, and `s.count` is the **byte length**. Integer subscripts do
 not provide code-point (`Char`) indexing; `.chars()` iterates code points.
 
+A byte is read-only: no subscript writes into a `String`, so `&s[i] = b`, a
+compound assignment to `s[i]` and `&s[i]` as an `inout` argument are
+`type-checking.assignment-to-immutable` (the argument form is
+`type-checking.invalid-inout-argument`). Build a new `String` instead.
+
 ```joyeer
 let s = "héllo"      // 'é' is 2 UTF-8 bytes
 s.count               // 6 (bytes), not 5
