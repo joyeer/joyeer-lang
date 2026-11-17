@@ -716,3 +716,13 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   carry the same cost otherwise; (2) the dictionary role wrappers join the always-inline policy (already in 0027,
   "Cost mechanism"). The remaining `-O0` cost of nested destroy (about 3%) is `at` returning `V` by copy, which
   `d[k]` through the role addressor does not do.
+- 2026-11-17: Switch condition (1) of the stage 3 verdict landed: the `String` destroy helper
+  (`compiler/backend/native_ownership.cpp`) tests `data` inline and calls `joyeer_string_destroy_abi` only when it is
+  not null. Behavior-preserving: a null `data` owns no block (every allocating producer stores a non-null block;
+  `release` ignores 0). Tests first (caea1bc, observed failing: the helper was a bare call):
+  `StringDestroyHelperCallsTheRuntimeOnlyForANonNullBlock` (the non-null edge reaches the call) and the
+  `string_moved_drop` fixture at O0-O3 (empty Strings freed directly, through an array and through a dictionary's
+  stored callback; moved-from parameters, locals, a struct field, array elements and enum payloads). Two
+  debug-location tests count one more `br i1`, the helper's, which carries `!dbg`. IR/backend review: accept, no
+  high or medium findings; its low findings applied (the invariant's wording, the fixture's true moves, the branch
+  shape); the count tests stay module-wide.

@@ -620,13 +620,20 @@ print(value: take(text: consume text))
         if (body.find("call void @joyeer_string_destroy_abi") != std::string::npos) helper = body;
     }
     ASSERT_FALSE(helper.empty()) << result.text;
-    const auto test = helper.find("icmp ne ptr");
-    const auto branch = helper.find("br i1");
+    // The non-null edge leads to the runtime call; the null edge skips it.
+    const auto test = helper.find("icmp ne ptr %data, null");
+    const auto branch = helper.find(", label %release, label %done");
+    const auto release = helper.find("\nrelease:");
     const auto call = helper.find("call void @joyeer_string_destroy_abi");
+    const auto done = helper.find("\ndone:");
     ASSERT_NE(test, std::string::npos) << helper;
     ASSERT_NE(branch, std::string::npos) << helper;
+    ASSERT_NE(release, std::string::npos) << helper;
+    ASSERT_NE(done, std::string::npos) << helper;
     EXPECT_LT(test, branch) << helper;
-    EXPECT_LT(branch, call) << helper;
+    EXPECT_LT(branch, release) << helper;
+    EXPECT_LT(release, call) << helper;
+    EXPECT_LT(call, done) << helper;
 }
 
 TEST_F(LLVMBackendTest, KeepsHelperAndImplicitCleanupLocationsArtificial) {
@@ -1013,7 +1020,8 @@ return left / right % right
             }
         }
         EXPECT_EQ(labels, 8u);
-        EXPECT_EQ(checkedInstructions, 22u);
+        // One of these is the String destroy helper's null-block branch.
+        EXPECT_EQ(checkedInstructions, 23u);
     }
 }
 
@@ -1049,7 +1057,8 @@ return values[index] + 1
             }
         }
         EXPECT_EQ(labels, 2u);
-        EXPECT_EQ(checkedInstructions, 12u);
+        // One of these is the String destroy helper's null-block branch.
+        EXPECT_EQ(checkedInstructions, 13u);
     }
 }
 

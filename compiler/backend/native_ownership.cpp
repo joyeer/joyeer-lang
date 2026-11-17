@@ -161,10 +161,22 @@ void Builder::emitDestroy(ir::TypeId id) {
     auto* address = activeFunction->getArg(0);
     address->setName("value");
     const auto kind = type(id).kind;
-    if (kind == typing::TypeKind::string || kind == typing::TypeKind::dictionary) {
-        const auto name = kind == typing::TypeKind::string ? "joyeer_string_destroy_abi"
-                : "joyeer_dictionary_destroy_abi";
-        call(name, builder.getVoidTy(), {address});
+    if (kind == typing::TypeKind::string) {
+        // A String with a null `data` owns no block: every allocating producer stores a non-null block,
+        // and the zero value (moved-from, zero-initialized, or an unassigned native output) owns nothing.
+        // Test it inline so dropping a moved-from String costs no runtime call.
+        auto* data = builder.CreateLoad(builder.getPtrTy(), address, "data");
+        auto* release = llvm::BasicBlock::Create(context(), "release", activeFunction);
+        auto* done = llvm::BasicBlock::Create(context(), "done", activeFunction);
+        builder.CreateCondBr(builder.CreateIsNotNull(data), release, done);
+        builder.SetInsertPoint(release);
+        call("joyeer_string_destroy_abi", builder.getVoidTy(), {address});
+        builder.CreateBr(done);
+        builder.SetInsertPoint(done);
+        return;
+    }
+    if (kind == typing::TypeKind::dictionary) {
+        call("joyeer_dictionary_destroy_abi", builder.getVoidTy(), {address});
         return;
     }
     if (kind == typing::TypeKind::structure) {

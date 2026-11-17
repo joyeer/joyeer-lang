@@ -1,10 +1,31 @@
 // Drops of Strings in every state the String destroy helper distinguishes (plan 0011, decision 0027 stage 3): the
-// helper calls the runtime only for a non-null block. The empty String still owns a block and must be freed;
-// moved-from Strings (a consumed parameter, a consumed local, a value moved into an array or out of an Optional) are
-// the zero value and need no call. A missed free fails the program with the runtime's leak report.
+// helper calls the runtime only for a non-null block. The empty String still owns a block and must be freed, also
+// through an array's element destruction and a dictionary's stored destroy callback. Moved-from Strings are the zero
+// value and need no call: a consumed parameter and local, a field consumed out of a struct that is dropped later,
+// Strings consumed into an array, and payloads moved out of an enum by a consuming match. A missed free fails the
+// program with the runtime's leak report.
+struct Holder {
+    var name: String
+    var tag: String
+}
+
+enum Slot {
+    Text(String),
+    Pair(String, String),
+    Empty,
+}
+
 func length(text: consuming String): Int {
     let kept = consume text
     return kept.utf8().count
+}
+
+func pick(slot: consuming Slot): String {
+    return match consume slot {
+        .Text(text) => text,
+        .Pair(_, second) => second,
+        .Empty => "",
+    }
 }
 
 func main() {
@@ -34,4 +55,22 @@ func main() {
     print(value: last)
     print(value: parts[3])
     print(value: empty.utf8().count)
+
+    var holder = Holder(name: "", tag: "x" + "y")
+    print(value: length(text: consume holder.name))
+    print(value: holder.tag)
+    let moved = "m" + "n"
+    &parts.append(element: consume moved)
+    &parts.append(element: "")
+    &parts.append(element: "" + "")
+    print(value: parts.count)
+    print(value: parts[4])
+    print(value: pick(slot: consume Slot.Pair("", "z" + "w")))
+    print(value: pick(slot: consume Slot.Text("t" + "u")))
+    let nothing: Slot = .Empty
+    print(value: pick(slot: consume nothing).utf8().count)
+    var table: [String: Int] = ["": 1, "k": 2, "": 5]
+    &table[""] = 3
+    &table["k" + ""] = 4
+    print(value: table[""] + table["k"] + table.count)
 }
