@@ -788,3 +788,14 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   layout probe of the baseline (one unused function) gives 1.000 [0.985, 1.009]; split variants give strict reads
   0.990 [0.980, 1.016] and `get` 1.014 [1.006, 1.020], which do not add up to the whole. Per 0026's rule the switch is
   blocked on this row until it is optimized or the user decides. Raw reports in `out/perf-gate/dict-switch`.
+- 2026-11-17: Machine-code investigation of the `String` lookup -O2 miss (user's choice). The two executables' hot
+  loops are the same instructions (the `at` and `find` call sequences, the 16-byte key spill, the checked add; only
+  the spill's stack slot differs), confirmed by disassembling the real executables against `clang -O2` of each
+  compiler's `--emit-llvm` output. What differs is placement: the candidate's larger user code puts the runtime library
+  0x90 bytes later, so `joyeer_dictionary_find_abi` sits at offset 0x50 instead of 0xc0 within its 256-byte block,
+  and the runtime's comparison scan with it. Unused user functions shift that placement exactly (`layout.py`).
+  E1, the builtin baseline padded so its runtime lands at the candidate's addresses, against the unpadded baseline:
+  1.042 [1.013, 1.057], the miss itself. E2, the candidate padded so the runtime has the baseline's offsets within a
+  64-byte line, against the baseline: 0.990 [0.981, 1.001], within the gate (50 repetitions each). So the row's
+  difference is the runtime's code placement, which any change in user code size moves; the library dictionary
+  itself costs nothing measurable there. Raw reports in `out/perf-gate/dict-switch/layout2`.
