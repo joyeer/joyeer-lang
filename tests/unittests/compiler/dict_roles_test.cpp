@@ -323,10 +323,11 @@ TEST_F(DictRoleTest, EachMalformedDictTypeShapeIsRejected) {
     EXPECT_TRUE(rejectedAsInvalidPrelude(withFields(
             "public var address: Int\nprivate var count: Int\nprivate var capacity: Int\n"), "dict_type"));
     // Exactly two unconstrained type parameters.
+    // (The struct's own rule: with a third parameter every method role is also rejected, so match its text.)
     EXPECT_TRUE(rejectedAsInvalidPrelude(withHead(replaced(tableHead, "Table<K, V>", "Table<K, V: Copyable>")),
-                                         "dict_type"));
+                                         "exactly two unconstrained type parameters"));
     EXPECT_TRUE(rejectedAsInvalidPrelude(withHead(replaced(tableHead, "Table<K, V>", "Table<K, V, W>")),
-                                         "dict_type"));
+                                         "exactly two unconstrained type parameters"));
     // A public struct with a deinit.
     EXPECT_TRUE(rejectedAsInvalidPrelude(withHead(replaced(tableHead, "public struct", "internal struct")),
                                          "public"));
@@ -917,7 +918,7 @@ TEST_F(DictRoleTest, TheVerifierRejectsEachMalformedPackingAndNamesTheRule) {
               again.result->id = 9000;
               body.insert(body.begin() + static_cast<std::ptrdiff_t>(call), again);
           } },
-        { "a cross-block store", "rule 4", [&](auto& module, auto& body) {
+        { "a cross-block store and transfer", "rule 6", [&](auto& module, auto& body) {
               // The last value store, the transfer and the return move to a second block.
               auto& function = functionExactly(module, "make");
               const auto from = nth(body, Opcode::fieldAddress, 1, value) + 1;
@@ -982,6 +983,226 @@ TEST_F(DictRoleTest, TheVerifierRejectsEachMalformedPackingAndNamesTheRule) {
         copy.functions[literal.factory].literalFactory = false;
         EXPECT_FALSE(joyeer::ir::Verifier().verify(copy).succeeded());
     }
+}
+
+TEST_F(DictRoleTest, MorePackingFormsAreRejectedByTheirRule) {
+    using joyeer::ir::Opcode;
+    load(literalProgram);
+    const auto lowered = lower();
+    ASSERT_NE(lowered, nullptr);
+    auto base = *lowered;
+    const auto literal = packLiteral(base, "make", 2);
+    packLiteral(base, "makeEmpty", 0);
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(base).succeeded());
+    const auto key = literal.keyField;
+    const auto value = literal.valueField;
+    struct Case {
+        const char* name;
+        const char* function;
+        const char* rule;
+        std::function<void(std::vector<joyeer::ir::Instruction>&)> mutate;
+    };
+    const std::vector<Case> cases {
+        { "two stores through one field address", "make", "rule 4", [&](auto& body) {
+              const auto store = nth(body, Opcode::fieldAddress, 0, key) + 1;
+              body.insert(body.begin() + static_cast<std::ptrdiff_t>(store), body[store]);
+          } },
+        { "two slots at one offset", "make", "rule 5", [&](auto& body) {
+              body[nth(body, Opcode::slotAddress, 1)].operands[1] = body[nth(body, Opcode::slotAddress, 0)].operands[1];
+          } },
+        { "a value projected twice", "make", "rule 3", [&](auto& body) {
+              const auto at = nth(body, Opcode::fieldAddress, 0, value);
+              auto again = body[at];
+              again.result->id = 9000;
+              body.insert(body.begin() + static_cast<std::ptrdiff_t>(at + 2), again);
+          } },
+        { "a projection after the transfer", "make", "rule 3", [&](auto& body) {
+              auto late = body[nth(body, Opcode::fieldAddress, 0, key)];
+              late.result->id = 9000;
+              body.insert(body.begin() + static_cast<std::ptrdiff_t>(nth(body, Opcode::call) + 1), late);
+          } },
+        { "a key evaluated inside the window", "make", "rule 4", [&](auto& body) {
+              const auto constant = body.front();
+              body.erase(body.begin());
+              body.insert(body.begin() + static_cast<std::ptrdiff_t>(nth(body, Opcode::fieldAddress, 0, key) + 1),
+                          constant);
+          } },
+        { "one value stored as two keys", "make", "rule 4", [&](auto& body) {
+              body[nth(body, Opcode::fieldAddress, 1, key) + 1].operands[0] =
+                      body[nth(body, Opcode::fieldAddress, 0, key) + 1].operands[0];
+          } },
+        { "an empty literal with a stray slot", "makeEmpty", "rule 3", [&](auto& body) {
+              const auto block = nth(body, Opcode::stackBlock);
+              joyeer::ir::Instruction offset { Opcode::integerConstant };
+              offset.result = joyeer::ir::Value { 9000, body[block].result->type, joyeer::ir::ValueCategory::value };
+              joyeer::ir::Instruction slot { Opcode::slotAddress };
+              slot.operands = { body[block].result->id, 9000 };
+              slot.integerValue = body[block].integerValue;
+              slot.result = joyeer::ir::Value { 9001, body[block].result->type, joyeer::ir::ValueCategory::value };
+              body.insert(body.begin() + static_cast<std::ptrdiff_t>(block + 1), { offset, slot });
+          } },
+    };
+    for (const auto& mutation : cases) {
+        SCOPED_TRACE(mutation.name);
+        auto copy = base;
+        mutation.mutate(bodyOf(copy, mutation.function));
+        const auto messages = joyeer::ir::dump(joyeer::ir::Verifier().verify(copy));
+        EXPECT_NE(messages.find(std::string("dictionary literal ") + mutation.rule), std::string::npos) << messages;
+    }
+}
+
+TEST_F(DictRoleTest, AnEntryIsNeverAValue) {
+    // Only the packing of a verified literal reaches an entry, through addresses (0027 Decision 3): nothing holds,
+    // passes, clones or destroys one.
+    using joyeer::ir::Opcode;
+    load(std::string(literalProgram) + "struct Holder { var count: Int }\n"
+                                       "func hold(holder: Holder): Int { return holder.count }\n");
+    const auto lowered = lower();
+    ASSERT_NE(lowered, nullptr);
+    auto base = *lowered;
+    const auto literal = packLiteral(base, "make", 2);
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(base).succeeded());
+    const auto integer = checking.model->types().intType();
+    const std::vector<std::pair<const char*, std::function<void(joyeer::ir::Module&)>>> cases {
+        { "a stack entry loaded as a value", [&](auto& module) {
+              auto& body = bodyOf(module, "make");
+              joyeer::ir::Instruction storage { Opcode::stackAllocate };
+              storage.result = joyeer::ir::Value { 9000, literal.entry, joyeer::ir::ValueCategory::address };
+              joyeer::ir::Instruction load { Opcode::load };
+              load.operands = { 9000 };
+              load.result = joyeer::ir::Value { 9001, literal.entry, joyeer::ir::ValueCategory::value };
+              body.insert(body.begin(), { storage, load });
+          } },
+        { "an entry field", [&](auto& module) {
+              structureWithRole(module, joyeer::ir::StructureRole::none, "Holder")->fields[0].type = literal.entry;
+          } },
+        { "an entry parameter", [&](auto& module) {
+              functionExactly(module, "hold").parameters[0].value.type = literal.entry;
+          } },
+        { "an entry's clone callback", [&](auto& module) {
+              auto& body = bodyOf(module, "make");
+              joyeer::ir::Instruction callback { Opcode::cloneCallback };
+              callback.integerValue = static_cast<int64_t>(literal.entry);
+              callback.result = joyeer::ir::Value { 9000, integer, joyeer::ir::ValueCategory::value };
+              body.insert(body.begin(), callback);
+          } },
+        { "an entry as a type argument", [&](auto& module) {
+              auto table = *typeOf(module, literal.table);
+              table.id = static_cast<joyeer::ir::TypeId>(module.types.size() + 100);
+              table.name = "nested";
+              table.arguments = { integer, literal.entry };
+              module.types.push_back(table);
+          } },
+    };
+    for (const auto& [name, mutate] : cases) {
+        SCOPED_TRACE(name);
+        auto copy = base;
+        mutate(copy);
+        const auto messages = joyeer::ir::dump(joyeer::ir::Verifier().verify(copy));
+        EXPECT_NE(messages.find("a dictionary entry is never a value"), std::string::npos) << messages;
+    }
+}
+
+TEST_F(DictRoleTest, APackedLiteralReachesLLVMInBothProfiles) {
+    load(literalProgram);
+    auto module = lower();
+    ASSERT_NE(module, nullptr);
+    packLiteral(*module, "make", 2);
+    packLiteral(*module, "makeUnit", 2);
+    packLiteral(*module, "makeEmpty", 0);
+    for (const auto level : { joyeer::OptimizationLevel::O0, joyeer::OptimizationLevel::O2 }) {
+        SCOPED_TRACE(static_cast<int>(level));
+        joyeer::llvmbackend::EmitOptions options;
+        options.optimizationLevel = level;
+        const auto emitted = joyeer::llvmbackend::Emitter().emit(*module, options);
+        EXPECT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    }
+}
+
+TEST_F(DictRoleTest, MoreDictionaryRoleShapesAreClosed) {
+    const auto with = [](std::string TableParts::*part, const std::string& from, const std::string& to) {
+        TableParts parts;
+        parts.*part = replaced(parts.*part, from, to);
+        return parts.text();
+    };
+    // dict_get is `get`, unique, and returns exactly Optional<V>.
+    EXPECT_TRUE(rejectedAsInvalidPrelude(with(&TableParts::get, "func get(", "func lookup("), "dict_get"));
+    {
+        TableParts parts;
+        parts.get += replaced(parts.get, "func get(", "func again(");
+        EXPECT_TRUE(rejectedAsInvalidPrelude(parts.text(), "dict_get"));
+    }
+    const auto plainGet = [](const std::string& result, const std::string& body) {
+        TableParts parts;
+        parts.get = "\n    @compiler_role(dict_get)\n    public borrowing func get(key: K): " + result + " {\n        " +
+                    body + "\n    }\n";
+        return parts.text();
+    };
+    EXPECT_TRUE(rejectedAsInvalidPrelude(plainGet("V", "return joyeer_intrinsic_move_out<V>(address: 0)"), "dict_get"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(plainGet("Optional<Optional<V>>", "return .None"), "dict_get"));
+    // dict_copy takes no parameter; dict_element is borrowing; dict_literal returns exactly Self.
+    EXPECT_TRUE(rejectedAsInvalidPrelude(with(&TableParts::copy, "duplicate()", "duplicate(extra: Int)"), "dict_copy"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(with(&TableParts::element, "private borrowing func element",
+                                              "private mutating func element"),
+                                         "dict_element"));
+    {
+        TableParts parts;
+        parts.literal = "\n    @compiler_role(dict_literal)\n    private consuming func literal(address: Int, count: Int): "
+                        "Table<V, K> {\n        return joyeer_intrinsic_move_out<Table<V, K>>(address: address)\n    }\n";
+        EXPECT_TRUE(rejectedAsInvalidPrelude(parts.text(), "dict_literal"));
+    }
+    // An array method role on the dictionary.
+    {
+        TableParts parts;
+        parts.extra = "";
+        parts.tail = replaced(parts.tail, "deinit()",
+                              "@compiler_role(container_end)\n    public consuming func finish() {}\n    deinit()");
+        EXPECT_TRUE(rejectedAsInvalidPrelude(parts.text(), "container_end"));
+    }
+    // The entry: no methods, exactly two unconstrained type parameters.
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            with(&TableParts::entry, "var value: V\n", "var value: V\n    func touch(): Int { return 0 }\n"),
+            "dict_entry"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(with(&TableParts::entry, "TableEntry<K, V>", "TableEntry<K, V: Copyable>"),
+                                         "dict_entry"));
+    // Neither struct takes the transfer marker: the dictionary is affine-only.
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            with(&TableParts::head, "@compiler_role(dict_type)", "@compiler_transfer()\n@compiler_role(dict_type)"),
+            "dict_type"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            with(&TableParts::entry, "@compiler_role(dict_entry)", "@compiler_transfer()\n@compiler_role(dict_entry)"),
+            "dict_entry"));
+}
+
+TEST_F(DictRoleTest, GetOfANoncopyableValueIsRejectedAtTheCall) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    load("struct Resource { var value: Int\n deinit() {} }\n"
+         "func bad(table: borrowing Table<Int, Resource>): Resource? { return table.get(key: 1) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(Id::copyOfNoncopyable)) << diagnostics();
+    load("func good(table: borrowing Table<Int, [String]>): [String]? { return table.get(key: 1) }\n");
+    EXPECT_TRUE(checks()) << diagnostics();
+}
+
+TEST_F(DictRoleTest, UserCodeCannotConstructTheRoleType) {
+    load("func bad(): Table<Int, Int> { return Table(address: 0, count: 0, capacity: 0) }\n");
+    EXPECT_FALSE(checks());
+}
+
+TEST_F(DictRoleTest, TheEntryIsInternedForADictionaryReachedOnlyThroughSubstitution) {
+    load("struct Pair<A, B> { var first: A\n var second: B }\n"
+         "struct Box<T> { var pair: Pair<T, T> }\n"
+         "func probe<T>(value: T): Int { let none: Optional<Table<Int, Box<T> > > = .None\n return 0 }\n"
+         "func main() { let answer = probe(value: 1)\n print(value: answer) }\n");
+    const auto module = lower();
+    ASSERT_NE(module, nullptr);
+    size_t tables = 0;
+    size_t entries = 0;
+    for (const auto& definition : module->structures) {
+        tables += definition.role == dictRole;
+        entries += definition.role == entryRole;
+    }
+    EXPECT_EQ(tables, 1u);
+    EXPECT_EQ(entries, tables);
 }
 
 TEST_F(DictRoleTest, TheBackendEmitsTheHandleAndTheEntryLayoutForASpreadOfTypes) {
