@@ -596,6 +596,39 @@ TEST_F(LLVMBackendTest, RejectsLineTablesWithoutSourceInfo) {
             joyeer::llvmbackend::DiagnosticId::invalidModule);
 }
 
+// A moved-from String is the zero value, and every owned String has a block, so the destroy helper tests `data`
+// inline and calls the runtime only for a live String: dropping a moved-from String costs no call (decision 0027,
+// stage 3 measurement; plan 0011).
+TEST_F(LLVMBackendTest, StringDestroyHelperCallsTheRuntimeOnlyForANonNullBlock) {
+    emit(
+            R"JOYEER(func take(text: consuming String): Int { return 1 }
+func main() {
+let text = "value" + "!"
+print(value: take(text: consume text))
+}
+)JOYEER",
+            true,
+            joyeer::llvmbackend::EmitOptions { false, joyeer::DebugInfoFormat::dwarf, joyeer::OptimizationLevel::O0 });
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    std::string helper;
+    for (auto start = result.text.find("define internal void @joyeer_destroy_type_"); start != std::string::npos;
+         start = result.text.find("define internal void @joyeer_destroy_type_", start + 1)) {
+        const auto end = result.text.find("\n}\n", start);
+        ASSERT_NE(end, std::string::npos);
+        const auto body = result.text.substr(start, end - start);
+        if (body.find("call void @joyeer_string_destroy_abi") != std::string::npos) helper = body;
+    }
+    ASSERT_FALSE(helper.empty()) << result.text;
+    const auto test = helper.find("icmp ne ptr");
+    const auto branch = helper.find("br i1");
+    const auto call = helper.find("call void @joyeer_string_destroy_abi");
+    ASSERT_NE(test, std::string::npos) << helper;
+    ASSERT_NE(branch, std::string::npos) << helper;
+    EXPECT_LT(test, branch) << helper;
+    EXPECT_LT(branch, call) << helper;
+}
+
 TEST_F(LLVMBackendTest, KeepsHelperAndImplicitCleanupLocationsArtificial) {
     emit(
             R"JOYEER(func main() {

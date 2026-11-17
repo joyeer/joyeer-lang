@@ -1097,6 +1097,11 @@ if(JOYEER_CLANG_EXECUTABLE)
             E2EDictLibraryEdges dict_library_edges
             "2\n2\nsome\nnone\n32\nb\n1\n2\n"
             0 1 2 3)
+    # The String destroy helper skips the runtime for the zero value only (plan 0011, 0027 stage 3).
+    add_joyeer_native_regression(
+            E2EStringMovedDrop string_moved_drop
+            "0\n14\nacccc\nreplaced\naccc\n0\n"
+            0 1 2 3)
     add_joyeer_native_regression(
             E2EArrayDivergingArgument array_diverging_argument
             "7\n10\n10\n11\n12\n42\n"

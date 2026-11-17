@@ -1,0 +1,37 @@
+// Drops of Strings in every state the String destroy helper distinguishes (plan 0011, decision 0027 stage 3): the
+// helper calls the runtime only for a non-null block. The empty String still owns a block and must be freed;
+// moved-from Strings (a consumed parameter, a consumed local, a value moved into an array or out of an Optional) are
+// the zero value and need no call. A missed free fails the program with the runtime's leak report.
+func length(text: consuming String): Int {
+    let kept = consume text
+    return kept.utf8().count
+}
+
+func main() {
+    let empty = ""
+    let alsoEmpty = empty
+    print(value: length(text: consume alsoEmpty))
+    var total = 0
+    var index = 0
+    var text = "a"
+    var parts: [String] = []
+    while index < 4 {
+        let piece = text + "b"
+        total = total + length(text: consume piece)
+        &parts.append(element: text)
+        text = text + "c"
+        index = index + 1
+    }
+    print(value: total)
+    let maybe: Optional<String> = .Some(text)
+    let unwrapped = match maybe {
+        .Some(value) => value,
+        .None => "",
+    }
+    print(value: unwrapped)
+    var last: String = ""
+    last = "replaced"
+    print(value: last)
+    print(value: parts[3])
+    print(value: empty.utf8().count)
+}
