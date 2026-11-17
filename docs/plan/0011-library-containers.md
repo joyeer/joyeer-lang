@@ -762,3 +762,29 @@ redesign. No prerequisite is considered accepted merely because this plan names 
 - 2026-11-17: `scripts/validate.py` on a4cff1b (stage 5 with its review fixes) passes: Windows AMD64 Debug and Release
   `ctest` 1932/1932 (`Fern.Workspace` in Release passed only on rerun), `fern test` 7/7; Linux x86_64 (fresh WSL
   clone) 1908/1908 and 7/7, no reruns.
+- 2026-11-17: 0027 stage 6 (the switch), in progress. Debug-scope prerequisite (593e049 tests observed failing,
+  be7bd70): a test build verifies the optimized module and its debug info after the LLVM pipeline (0026 known gap
+  (a)), proven by a test-build fault injection; `dict_debug_scopes` runs at -O1 and -O2 with `-gfull`. Key admission
+  (4360528 observed failing, 733f2ed test fix, 939d210): keys outside `Int`, `Bool`, `UInt8`, `String` are rejected at
+  the type, once per mistake. A pre-existing gap found on the way, not fixed: a parenthesized function-type key
+  (`[((Int): Int): Int]`) escapes the key checks. The switch (c6420f2 tests observed failing, d20be37 test fixes,
+  2593f55): `[K: V]`, literals and `Dict` bind to the bundled library `Dict<K, V>`; subscripts, `dict_set` (value
+  before the base address), literals through the packing protocol and `get` lower through the roles; the visible
+  changes of 0027 are pinned. Spec and docs ddaecf7. Evidence: Windows x64 Debug `ctest` 1940/1940.
+  Differential against the builtin baseline (939d210, same build options, Debug compilers at -O0/-O1 and Release at
+  -O2/-O3): 23 fixtures that mention a dictionary, 92 runs, identical exit codes, stdout and stderr except the
+  documented `dict_nested_missing_trap` (`rhs` before the trap); live-allocation counts identical at every checkpoint
+  and level (ceb3c07 pins them, and that a lookup never copies its key).
+- 2026-11-17: 0027 stage 6 cost gate, Windows x64, baseline 939d210 against the candidate, both built with the same
+  options; 25 interleaved repetitions, paired bootstrap. Sizes pass (at most +2048 bytes at -O0, +512 at -O2; `hello`
+  +0 at -O2); `hello` compile time 0.994 [0.951, 1.009]; every -O0 row passes (at most 1.074). First run at -O2:
+  lookup 1.063 [1.054, 1.087] failed, insert growth 1.007 [1.004, ...] and literal 1.014 [1.006, ...] failed the
+  interval rule. The lookup cost was the library `get`: its two returns left an aggregate phi after inlining that a
+  caller's `match` did not fold; 051274b returns one local, which SROA splits (the builtin's shape). Second run, all
+  rows: -O0 within 1.006-1.060; -O2 lookup 1.020 [0.999, 1.040], insert growth 1.004 [0.999, 1.019], literal 1.022
+  [1.000, 1.030], nested destroy 0.975, and `String` lookup 1.039 [1.027, 1.068] (1.002 in the first run). Rerun
+  rule (50 repetitions): `String` lookup -O2 1.038 [1.029, 1.050], **the gate is missed**. Attribution: the optimized
+  hot loops are the builtin's at the IR level (same runtime calls and key spill, plus lifetime markers); an A/A
+  layout probe of the baseline (one unused function) gives 1.000 [0.985, 1.009]; split variants give strict reads
+  0.990 [0.980, 1.016] and `get` 1.014 [1.006, 1.020], which do not add up to the whole. Per 0026's rule the switch is
+  blocked on this row until it is optimized or the user decides. Raw reports in `out/perf-gate/dict-switch`.
