@@ -19,6 +19,12 @@ separate_arguments(JOYEER_LLVM_DEFINITIONS NATIVE_COMMAND
 target_compile_definitions(JoyeerBackend PRIVATE
         JOYEER_BACKEND_BUILD
 )
+# Test builds verify the optimized module again, debug info included (decisions 0026, 0027).
+if(BUILD_TESTING)
+        target_compile_definitions(JoyeerBackend PRIVATE
+                JOYEER_VERIFY_OPTIMIZED_IR
+        )
+endif()
 target_compile_options(JoyeerBackend PRIVATE
         ${JOYEER_LLVM_DEFINITIONS}
 )

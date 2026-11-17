@@ -14,6 +14,7 @@
 #include "lld/Common/ErrorHandler.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -34,6 +35,7 @@
 #include "llvm/WindowsDriver/MSVCPaths.h"
 #endif
 
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -105,6 +107,25 @@ llvm::CodeGenOptLevel codeGenerationLevel(
     }
     return llvm::CodeGenOptLevel::Default;
 }
+
+#if defined(JOYEER_VERIFY_OPTIMIZED_IR)
+// A test-build fault injection for the post-optimization verification: gives one located instruction a location
+// whose scope is a subprogram of no function, the corruption an inlining bug would leave.
+void corruptDebugLocation(llvm::Module& module) {
+    for (auto& function : module) {
+        auto* subprogram = function.getSubprogram();
+        if (subprogram == nullptr) continue;
+        for (auto& block : function) {
+            for (auto& instruction : block) {
+                if (!instruction.getDebugLoc()) continue;
+                auto* stranger = llvm::MDNode::replaceWithDistinct(subprogram->clone());
+                instruction.setDebugLoc(llvm::DILocation::get(module.getContext(), 1, 1, stranger));
+                return;
+            }
+        }
+    }
+}
+#endif
 
 std::string sourceDiagnostic(const llvm::SMDiagnostic& diagnostic) {
     std::string message;
@@ -238,6 +259,26 @@ JoyeerBackendStatus emitObject(
             ? passBuilder.buildO0DefaultPipeline(requestedOptimization)
             : passBuilder.buildPerModuleDefaultPipeline(requestedOptimization);
     optimizationPipeline.run(*module, moduleAnalyses);
+#if defined(JOYEER_VERIFY_OPTIMIZED_IR)
+    // Test builds verify the module again after the pipeline, debug info included (0026 known gap (a), decision
+    // 0027): an inlining that leaves a location outside its function's subprogram fails the compile here instead of
+    // reaching the object file.
+    if (const char* corrupt = std::getenv("JOYEER_BACKEND_TEST_CORRUPT_DEBUG_INFO");
+        corrupt != nullptr && std::string_view(corrupt) == "1") {
+        corruptDebugLocation(*module);
+    }
+    std::string optimizedMessage;
+    llvm::raw_string_ostream optimizedStream(optimizedMessage);
+    bool brokenDebugInfo = false;
+    if (llvm::verifyModule(*module, &optimizedStream, &brokenDebugInfo) || brokenDebugInfo) {
+        report(
+                diagnosticCallback,
+                diagnosticContext,
+                JOYEER_BACKEND_INVALID_IR,
+                "LLVM verification failed after optimization: " + optimizedMessage);
+        return JOYEER_BACKEND_INVALID_IR;
+    }
+#endif
 
     std::error_code fileError;
     llvm::raw_fd_ostream objectStream(options.outputPath, fileError, llvm::sys::fs::OF_None);
