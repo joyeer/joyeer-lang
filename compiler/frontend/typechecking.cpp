@@ -26,19 +26,49 @@ semantic::LibraryRole collectionOwnerRole(semantic::LibraryRole method) {
         case semantic::LibraryRole::containerEnd:
         case semantic::LibraryRole::arrayLiteral:
             return semantic::LibraryRole::arrayType;
+        case semantic::LibraryRole::dictElement:
+        case semantic::LibraryRole::dictSet:
+        case semantic::LibraryRole::dictGet:
+        case semantic::LibraryRole::dictCopy:
+        case semantic::LibraryRole::dictLiteral:
+            return semantic::LibraryRole::dictType;
         default:
             return semantic::LibraryRole::none;
     }
 }
 
-// The method roles a collection structure role requires exactly once, with their annotation names.
-std::vector<std::pair<semantic::LibraryRole, const char*>> requiredCollectionMethodRoles(
-        semantic::LibraryRole collection) {
-    if (collection != semantic::LibraryRole::arrayType) return {};
-    return { { semantic::LibraryRole::arrayElement, "array_element" },
-             { semantic::LibraryRole::arrayCopy, "array_copy" },
-             { semantic::LibraryRole::containerEnd, "container_end" },
-             { semantic::LibraryRole::arrayLiteral, "array_literal" } };
+// The annotation name of a collection role (decisions 0025-0027).
+const char* collectionRoleName(semantic::LibraryRole role) {
+    switch (role) {
+        case semantic::LibraryRole::arrayType: return "array_type";
+        case semantic::LibraryRole::arrayElement: return "array_element";
+        case semantic::LibraryRole::arrayCopy: return "array_copy";
+        case semantic::LibraryRole::containerEnd: return "container_end";
+        case semantic::LibraryRole::arrayLiteral: return "array_literal";
+        case semantic::LibraryRole::dictType: return "dict_type";
+        case semantic::LibraryRole::dictElement: return "dict_element";
+        case semantic::LibraryRole::dictSet: return "dict_set";
+        case semantic::LibraryRole::dictGet: return "dict_get";
+        case semantic::LibraryRole::dictCopy: return "dict_copy";
+        case semantic::LibraryRole::dictLiteral: return "dict_literal";
+        case semantic::LibraryRole::dictEntry: return "dict_entry";
+        default: return "unknown";
+    }
+}
+
+// The method roles a collection structure role requires exactly once.
+std::vector<semantic::LibraryRole> requiredCollectionMethodRoles(semantic::LibraryRole collection) {
+    switch (collection) {
+        case semantic::LibraryRole::arrayType:
+            return { semantic::LibraryRole::arrayElement, semantic::LibraryRole::arrayCopy,
+                     semantic::LibraryRole::containerEnd, semantic::LibraryRole::arrayLiteral };
+        case semantic::LibraryRole::dictType:
+            return { semantic::LibraryRole::dictElement, semantic::LibraryRole::dictSet,
+                     semantic::LibraryRole::dictGet, semantic::LibraryRole::dictCopy,
+                     semantic::LibraryRole::dictLiteral };
+        default:
+            return {};
+    }
 }
 
 void combineHash(size_t& seed, size_t value) {
@@ -537,8 +567,7 @@ bool TypeCheckedModel::isOwnedArgumentContext(semantic::SymbolId function, size_
             ? semanticModelValue->symbol(*method->containingSymbol) : nullptr;
     const auto* signature = callable(function);
     const auto record = owner != nullptr ? collectionRoles.find(owner->id) : collectionRoles.end();
-    if (method == nullptr || method->kind != semantic::SymbolKind::method ||
-        owner == nullptr || owner->libraryRole != semantic::LibraryRole::arrayType ||
+    if (method == nullptr || method->kind != semantic::SymbolKind::method || owner == nullptr ||
         record == collectionRoles.end() ||
         !method->callable.has_value() || parameter >= method->callable->parameters.size() ||
         method->callable->parameters[parameter].access != syntax::AccessEffect::consuming ||
@@ -557,6 +586,25 @@ std::optional<semantic::SymbolId> TypeCheckedModel::arrayRoleMethod(
         TypeId type, semantic::LibraryRole role) const {
     if (!isArrayRoleType(type)) return std::nullopt;
     return collectionRoleMethod(type, role);
+}
+
+bool TypeCheckedModel::isCollectionRoleType(TypeId type) const {
+    if (isArrayRoleType(type)) return true;
+    const auto* record = typeContext.type(type);
+    return record != nullptr && record->kind == TypeKind::structure && collectionRoles.contains(record->symbol);
+}
+
+bool TypeCheckedModel::isDictRoleType(TypeId type) const {
+    const auto* record = typeContext.type(type);
+    if (record == nullptr || record->kind != TypeKind::structure) return false;
+    const auto found = collectionRoles.find(record->symbol);
+    return found != collectionRoles.end() && found->second.kind == semantic::LibraryRole::dictType;
+}
+
+std::optional<TypeId> TypeCheckedModel::dictEntryType(TypeId dictionary) const {
+    const auto found = dictEntryTypes.find(dictionary);
+    if (found == dictEntryTypes.end()) return std::nullopt;
+    return found->second;
 }
 
 std::optional<semantic::SymbolId> TypeCheckedModel::collectionRoleMethod(
@@ -659,9 +707,11 @@ bool TypeCheckedModel::isLinear(
         case TypeKind::structure: {
             const auto structure = structureDeclaration(id);
             if (structure == nullptr) break;
-            if (isArrayRoleType(id)) {
-                // Owns its element through an address, so the element decides (decision 0025).
-                linear = isLinear(type->arguments[0], visiting, clean);
+            if (isCollectionRoleType(id)) {
+                // Owns its elements through an address, so they decide (decisions 0025, 0027).
+                for (const auto argument : type->arguments) {
+                    if (isLinear(argument, visiting, clean)) { linear = true; break; }
+                }
                 break;
             }
             if (structure->isLinear) { linear = true; break; }
@@ -784,11 +834,13 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
             }
             const auto structure = structureDeclaration(id);
             if (structure == nullptr) break;
-            if (isArrayRoleType(id)) {
-                // Copyable exactly when the owned type is, although it declares `deinit` (decision 0025).
-                if (noncopyableReason(type->arguments[0], visiting, clean).has_value()) {
-                    reason = name + " holds the noncopyable type '" +
-                            typeContext.displayName(type->arguments[0]) + "'";
+            if (isCollectionRoleType(id)) {
+                // Copyable exactly when the owned types are, although it declares `deinit` (decisions 0025, 0027).
+                for (const auto argument : type->arguments) {
+                    if (noncopyableReason(argument, visiting, clean).has_value()) {
+                        reason = name + " holds the noncopyable type '" + typeContext.displayName(argument) + "'";
+                        break;
+                    }
                 }
                 break;
             }
@@ -1074,6 +1126,96 @@ private:
         });
     }
 
+    // The closed shape of a dictionary method role (decision 0027, Decision 3). Every role but `dict_get` is private:
+    // only the compiler calls it.
+    [[nodiscard]] bool dictMethodRoleMatches(const semantic::Symbol& symbol, const TypedCallableSignature& signature,
+                                             const semantic::Symbol& owner, std::string& failure) {
+        const auto* ownerParameters = model->genericParameters(owner.id);
+        if (ownerParameters == nullptr || ownerParameters->size() != 2) {
+            failure = std::string("the ") + collectionRoleName(symbol.libraryRole) +
+                    " role requires a method of a dict_type struct with two type parameters";
+            return false;
+        }
+        const auto key = model->typeContext.typeParameterType((*ownerParameters)[0]);
+        const auto value = model->typeContext.typeParameterType((*ownerParameters)[1]);
+        const auto receiver = symbol.callable->receiver->access;
+        const auto& written = symbol.callable->parameters;
+        const auto* result = model->typeContext.type(signature.result);
+        const bool returnsSelf = result != nullptr && result->kind == TypeKind::structure &&
+                result->symbol == owner.id && result->arguments == std::vector<TypeId> { key, value };
+        const bool isPrivate = symbol.visibility == syntax::Visibility::private_;
+        const auto labelled = [&](std::initializer_list<const char*> labels) {
+            if (written.size() != labels.size()) return false;
+            size_t index = 0;
+            for (const auto* label : labels) {
+                if (written[index++].label != std::optional<std::string>(label)) return false;
+            }
+            return true;
+        };
+        const auto accesses = [&](syntax::AccessEffect access) {
+            return std::all_of(written.begin(), written.end(),
+                               [access](const auto& parameter) { return parameter.access == access; });
+        };
+        switch (symbol.libraryRole) {
+            case semantic::LibraryRole::dictElement:
+                // The one addressor: read, borrow, consume and mutate a stored value; traps on a missing key.
+                if (isPrivate && receiver == syntax::AccessEffect::borrowing && labelled({ "key" }) &&
+                    accesses(syntax::AccessEffect::borrowing) &&
+                    signature.parameters == std::vector<TypeId> { key } &&
+                    signature.result == model->typeContext.intType()) {
+                    return true;
+                }
+                failure = "the dict_element role requires 'private borrowing func name(key: K): Int'";
+                return false;
+            case semantic::LibraryRole::dictSet:
+                // Insert-or-replace: the runtime adopts the owned key and value.
+                if (isPrivate && receiver == syntax::AccessEffect::inout && labelled({ "key", "value" }) &&
+                    accesses(syntax::AccessEffect::consuming) &&
+                    signature.parameters == std::vector<TypeId> { key, value } &&
+                    signature.result == model->typeContext.voidType()) {
+                    return true;
+                }
+                failure = "the dict_set role requires 'private mutating func name(key: consuming K, value: "
+                        "consuming V): Void'";
+                return false;
+            case semantic::LibraryRole::dictGet: {
+                // The one public method role: user code calls it as `d.get(key: k)`.
+                const auto optional = model->semanticModelValue->roleSymbol(semantic::LibraryRole::optional);
+                if (symbol.visibility == syntax::Visibility::public_ && receiver == syntax::AccessEffect::borrowing &&
+                    labelled({ "key" }) && accesses(syntax::AccessEffect::borrowing) &&
+                    signature.parameters == std::vector<TypeId> { key } && result != nullptr &&
+                    result->kind == TypeKind::enumeration && optional.has_value() && result->symbol == *optional &&
+                    result->arguments == std::vector<TypeId> { value }) {
+                    return true;
+                }
+                failure = "the dict_get role requires 'public borrowing func get(key: K): Optional<V>'";
+                return false;
+            }
+            case semantic::LibraryRole::dictCopy:
+                if (isPrivate && receiver == syntax::AccessEffect::borrowing && written.empty() && returnsSelf) {
+                    return true;
+                }
+                failure = "the dict_copy role requires 'private borrowing func name(): Self' returning the declaring "
+                        "type";
+                return false;
+            case semantic::LibraryRole::dictLiteral:
+                // Called on an inert zero value with the packed entries.
+                if (isPrivate && receiver == syntax::AccessEffect::consuming && labelled({ "address", "count" }) &&
+                    accesses(syntax::AccessEffect::borrowing) &&
+                    signature.parameters == std::vector<TypeId> { model->typeContext.intType(),
+                                                                  model->typeContext.intType() } &&
+                    returnsSelf) {
+                    return true;
+                }
+                failure = "the dict_literal role requires 'private consuming func name(address: Int, count: Int): "
+                        "Self' returning the declaring type";
+                return false;
+            default:
+                failure = "not a dictionary method role";
+                return false;
+        }
+    }
+
     void validatePreludeContracts() {
         const auto isRoleType = [&](TypeId id, semantic::LibraryRole role) {
             const auto* type = model->typeContext.type(id);
@@ -1238,30 +1380,37 @@ private:
                     }
                     break;
                 }
-                case semantic::LibraryRole::arrayType: {
-                    // The library array (decisions 0025, 0026): three private Int words, one owned type parameter
-                    // and the four method roles the compiler calls.
+                case semantic::LibraryRole::arrayType:
+                case semantic::LibraryRole::dictType: {
+                    // The library array (decisions 0025, 0026) and dictionary (decision 0027): three private Int
+                    // words, the owned type parameters (the element, or the key and the value) and the method roles
+                    // the compiler calls.
+                    const bool isDict = symbol.libraryRole == semantic::LibraryRole::dictType;
+                    const std::string roleName = collectionRoleName(symbol.libraryRole);
+                    const size_t owned = isDict ? 2 : 1;
                     if (node->kind != syntax::Kind::structDecl) {
-                        roleFailure = "the array_type role requires a struct";
+                        roleFailure = "the " + roleName + " role requires a struct";
                         break;
                     }
                     if (++roleDeclarations[symbol.libraryRole] > 1) {
                         report(TypeCheckingDiagnosticId::invalidPrelude, symbol.span,
-                               "the compiler prelude declares a second struct for the array_type role");
+                               "the compiler prelude declares a second struct for the " + roleName + " role");
                     }
-                    if (parameters == nullptr || parameters->size() != 1 ||
-                        !model->constraints(parameters->front()).empty()) {
-                        roleFailure = "the array_type role requires exactly one unconstrained type parameter";
+                    if (parameters == nullptr || parameters->size() != owned ||
+                        std::any_of(parameters->begin(), parameters->end(),
+                                    [&](const auto parameter) { return !model->constraints(parameter).empty(); })) {
+                        roleFailure = "the " + roleName + " role requires exactly " + (isDict ? "two" : "one") +
+                                " unconstrained type parameter" + (isDict ? "s" : "");
                         break;
                     }
                     if (symbol.visibility != syntax::Visibility::public_) {
-                        roleFailure = "the array_type role requires a public struct";
+                        roleFailure = "the " + roleName + " role requires a public struct";
                         break;
                     }
                     const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
                     if (structure->deinitializer == nullptr) {
-                        roleFailure = "the array_type role requires a deinit that destroys the elements and "
-                                "frees the storage";
+                        roleFailure = "the " + roleName + " role requires a deinit that destroys the " +
+                                (isDict ? "entries" : "elements") + " and frees the storage";
                         break;
                     }
                     static const char* const wordNames[3] = { "address", "count", "capacity" };
@@ -1276,12 +1425,13 @@ private:
                                 fieldType == model->typeContext.intType();
                     }
                     if (!shaped) {
-                        roleFailure = "the array_type role requires the private Int fields address, count and "
-                                "capacity, in that order";
+                        roleFailure = "the " + roleName + " role requires the private Int fields address, count "
+                                "and capacity, in that order";
                         break;
                     }
                     // Every method role the collection requires, each exactly once (decision 0026's four for an
-                    // array); the record keeps them for lowering and instance discovery.
+                    // array, decision 0027's five for a dictionary); the record keeps them for lowering and
+                    // instance discovery.
                     std::unordered_map<semantic::LibraryRole, int> methodRoles;
                     TypeCheckedModel::CollectionRole record;
                     record.kind = symbol.libraryRole;
@@ -1293,26 +1443,74 @@ private:
                             record.methods[member.libraryRole] = member.id;
                         }
                     }
-                    for (const auto& [role, roleName] : requiredCollectionMethodRoles(symbol.libraryRole)) {
+                    for (const auto role : requiredCollectionMethodRoles(symbol.libraryRole)) {
                         if (methodRoles[role] != 1) {
-                            roleFailure = std::string("the array_type role requires exactly one method with the role ") +
-                                    roleName;
+                            roleFailure = "the " + roleName + " role requires exactly one method with the role " +
+                                    collectionRoleName(role);
                             break;
+                        }
+                    }
+                    if (roleFailure.empty() && isDict) {
+                        // The entry struct a literal packs; its own role checks its shape.
+                        const auto entry = model->semanticModelValue->roleSymbol(semantic::LibraryRole::dictEntry);
+                        if (!entry.has_value()) {
+                            roleFailure = "the dict_type role requires a private dict_entry struct";
+                        } else {
+                            record.entry = *entry;
                         }
                     }
                     matches = roleFailure.empty();
                     if (matches) model->collectionRoles[symbol.id] = std::move(record);
                     break;
                 }
+                case semantic::LibraryRole::dictEntry: {
+                    // The entry a dictionary literal packs (decision 0027): its ordinary struct layout is the
+                    // runtime's entry layout, so the shape is closed, and it is never a value.
+                    if (node->kind != syntax::Kind::structDecl) {
+                        roleFailure = "the dict_entry role requires a struct";
+                        break;
+                    }
+                    if (++roleDeclarations[symbol.libraryRole] > 1) {
+                        report(TypeCheckingDiagnosticId::invalidPrelude, symbol.span,
+                               "the compiler prelude declares a second struct for the dict_entry role");
+                    }
+                    if (symbol.visibility != syntax::Visibility::private_) {
+                        roleFailure = "the dict_entry role requires a private struct";
+                        break;
+                    }
+                    const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
+                    bool shaped = parameters != nullptr && parameters->size() == 2 &&
+                            std::none_of(parameters->begin(), parameters->end(), [&](const auto parameter) {
+                                return !model->constraints(parameter).empty();
+                            }) &&
+                            structure->fields.size() == 2 && structure->deinitializer == nullptr &&
+                            structure->methods.empty() && !structure->isLinear;
+                    static const char* const entryFieldNames[2] = { "key", "value" };
+                    for (size_t index = 0; shaped && index < 2; ++index) {
+                        const auto& field = structure->fields[index];
+                        const auto fieldSymbol = model->semanticModelValue->declaredSymbol(field);
+                        const auto fieldType = fieldSymbol.has_value() ? model->typeOf(*fieldSymbol)
+                                                                       : std::optional<TypeId>();
+                        shaped = field->name != nullptr && field->name->rawValue == entryFieldNames[index] &&
+                                fieldType == model->typeContext.typeParameterType((*parameters)[index]);
+                    }
+                    matches = shaped;
+                    if (!matches) {
+                        roleFailure = "the dict_entry role requires exactly the fields 'key: K' then 'value: V' of "
+                                "its two unconstrained type parameters, no methods and no deinit";
+                    }
+                    break;
+                }
                 case semantic::LibraryRole::arrayElement:
                 case semantic::LibraryRole::arrayCopy:
                 case semantic::LibraryRole::arrayLiteral:
-                case semantic::LibraryRole::containerEnd: {
-                    const std::string roleName = symbol.libraryRole == semantic::LibraryRole::arrayElement
-                            ? "array_element"
-                            : symbol.libraryRole == semantic::LibraryRole::arrayCopy ? "array_copy"
-                            : symbol.libraryRole == semantic::LibraryRole::arrayLiteral ? "array_literal"
-                                                                                       : "container_end";
+                case semantic::LibraryRole::containerEnd:
+                case semantic::LibraryRole::dictElement:
+                case semantic::LibraryRole::dictSet:
+                case semantic::LibraryRole::dictGet:
+                case semantic::LibraryRole::dictCopy:
+                case semantic::LibraryRole::dictLiteral: {
+                    const std::string roleName = collectionRoleName(symbol.libraryRole);
                     const auto* owner = symbol.containingSymbol.has_value() ? symbolOf(*symbol.containingSymbol)
                                                                             : nullptr;
                     // Fails closed: a method role missing from `collectionOwnerRole` has no owner role and is rejected.
@@ -1321,13 +1519,19 @@ private:
                         ownerRole == semantic::LibraryRole::none || owner->libraryRole != ownerRole ||
                         !symbol.callable.has_value() ||
                         !symbol.callable->receiver.has_value() || signature == nullptr) {
-                        roleFailure = "the " + roleName + " role requires a method of an array_type struct";
+                        roleFailure = "the " + roleName + " role requires a method of " +
+                                (ownerRole == semantic::LibraryRole::dictType ? "a dict_type" : "an array_type") +
+                                " struct";
                         break;
                     }
                     const auto receiver = symbol.callable->receiver->access;
                     const auto& written = symbol.callable->parameters;
                     const auto* ownerParameters = model->genericParameters(owner->id);
                     const auto* result = model->typeContext.type(signature->result);
+                    if (ownerRole == semantic::LibraryRole::dictType) {
+                        matches = dictMethodRoleMatches(symbol, *signature, *owner, roleFailure);
+                        break;
+                    }
                     if (symbol.libraryRole == semantic::LibraryRole::arrayElement) {
                         matches = receiver == syntax::AccessEffect::borrowing && written.size() == 1 &&
                                 written[0].label == std::optional<std::string>("index") &&
@@ -2818,6 +3022,26 @@ private:
                         required.push_back(*literal);
                     }
                 }
+                if (model->isDictRoleType(id)) {
+                    // The role-lowered uses of a dictionary reach its addressor, `dict_set`, its literal method and,
+                    // when copyable, its copy method; `dict_get` only through user calls (decision 0027).
+                    for (const auto role : { semantic::LibraryRole::dictElement, semantic::LibraryRole::dictSet,
+                                             semantic::LibraryRole::dictLiteral }) {
+                        if (const auto method = model->collectionRoleMethod(id, role)) required.push_back(*method);
+                    }
+                    if (const auto copy = model->collectionRoleMethod(id, semantic::LibraryRole::dictCopy);
+                        copy.has_value() && model->isCopyable(id)) {
+                        required.push_back(*copy);
+                    }
+                    // The entry has no `deinit`, so this loop would not intern it; a literal packs it.
+                    const auto found = model->collectionRoles.find(record->symbol);
+                    if (!model->dictEntryTypes.contains(id) && found != model->collectionRoles.end() &&
+                        found->second.entry.has_value()) {
+                        if (const auto entry = model->typeContext.typeForSymbol(*found->second.entry, arguments)) {
+                            model->dictEntryTypes[id] = *entry;
+                        }
+                    }
+                }
                 for (const auto method : required) {
                     if (model->genericParameters(method) == nullptr ||
                         model->instanceIndex(method, arguments).has_value()) {
@@ -3262,7 +3486,9 @@ private:
         if (ownerSymbol != nullptr &&
             (ownerSymbol->libraryRole == semantic::LibraryRole::optional ||
              ownerSymbol->libraryRole == semantic::LibraryRole::result ||
-             ownerSymbol->libraryRole == semantic::LibraryRole::arrayType) &&
+             ownerSymbol->libraryRole == semantic::LibraryRole::arrayType ||
+             ownerSymbol->libraryRole == semantic::LibraryRole::dictType ||
+             ownerSymbol->libraryRole == semantic::LibraryRole::dictEntry) &&
             model->semanticModelValue->isPreludeSource(declaration->span)) {
             // The role enums are closed: an extension would add members the role's shape rules never saw.
             report(TypeCheckingDiagnosticId::invalidPrelude, declaration->span,

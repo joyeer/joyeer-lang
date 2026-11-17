@@ -426,6 +426,12 @@ public:
     [[nodiscard]] std::optional<semantic::SymbolId> arrayRoleMethod(TypeId type, semantic::LibraryRole role) const;
     // The method of `role` of the role-bound collection `type` is an instance of, if any.
     [[nodiscard]] std::optional<semantic::SymbolId> collectionRoleMethod(TypeId type, semantic::LibraryRole role) const;
+    // Whether `type` is an instance of a validated role-bound collection (an array or a dictionary role).
+    [[nodiscard]] bool isCollectionRoleType(TypeId type) const;
+    // Whether `type` is an instance of the validated `dict_type` struct (decision 0027).
+    [[nodiscard]] bool isDictRoleType(TypeId type) const;
+    // The interned `dict_entry` instance of a concrete dictionary role instance (decision 0027), if any.
+    [[nodiscard]] std::optional<TypeId> dictEntryType(TypeId dictionary) const;
     // Consuming parameters declared with exactly the role's owned type parameter accept owned arguments.
     [[nodiscard]] bool isOwnedArgumentContext(semantic::SymbolId function, size_t parameter) const;
     // The consuming method that ends a linear value of `type`. With `leaf`, arrays are looked through and the
@@ -487,8 +493,12 @@ private:
         semantic::LibraryRole kind = semantic::LibraryRole::none;
         std::vector<semantic::SymbolId> ownedParameters;
         std::unordered_map<semantic::LibraryRole, semantic::SymbolId> methods;
+        // A dictionary's `dict_entry` struct, whose instance over the key and value a literal packs.
+        std::optional<semantic::SymbolId> entry;
     };
     std::unordered_map<semantic::SymbolId, CollectionRole> collectionRoles;
+    // Each concrete dictionary role instance's interned entry instance.
+    std::unordered_map<TypeId, TypeId> dictEntryTypes;
     std::vector<Conformance> conformanceList;
     std::vector<Instance> instanceList;
     std::map<std::pair<semantic::SymbolId, std::vector<TypeId>>, size_t> instanceIndices;

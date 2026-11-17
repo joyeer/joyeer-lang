@@ -79,6 +79,15 @@ enum class LibraryRole {
     containerEnd,
     // The method a literal calls on an inert zero value to build the array (decision 0026).
     arrayLiteral,
+    // The library dictionary (decision 0027): the struct, the methods the compiler calls, the public `get`, and
+    // the private entry struct whose layout a literal packs.
+    dictType,
+    dictElement,
+    dictSet,
+    dictGet,
+    dictCopy,
+    dictLiteral,
+    dictEntry,
 };
 
 enum class CallableKind {
@@ -224,6 +233,10 @@ private:
     std::optional<SymbolId> optionalSymbol_;
     std::optional<SymbolId> resultSymbol_;
     std::optional<SymbolId> arraySymbol_;
+    // The dictionary role and its entry struct, when the collections prelude declares them (decision 0027). Until
+    // the switch `[K: V]` stays builtin, so a prelude without them is valid.
+    std::optional<SymbolId> dictSymbol_;
+    std::optional<SymbolId> dictEntrySymbol_;
     ScopeId fileScope_ = invalidScopeId;
 
     std::vector<syntax::NodePtr> nodes_;

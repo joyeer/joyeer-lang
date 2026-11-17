@@ -680,6 +680,14 @@ private:
                         else if (name == "array_copy") value.libraryRole = LibraryRole::arrayCopy;
                         else if (name == "container_end") value.libraryRole = LibraryRole::containerEnd;
                         else if (name == "array_literal") value.libraryRole = LibraryRole::arrayLiteral;
+                        // The dictionary roles own no linear key or value: the role is affine-only (decision 0027).
+                        else if (name == "dict_type") value.libraryRole = LibraryRole::dictType;
+                        else if (name == "dict_element") value.libraryRole = LibraryRole::dictElement;
+                        else if (name == "dict_set") value.libraryRole = LibraryRole::dictSet;
+                        else if (name == "dict_get") value.libraryRole = LibraryRole::dictGet;
+                        else if (name == "dict_copy") value.libraryRole = LibraryRole::dictCopy;
+                        else if (name == "dict_literal") value.libraryRole = LibraryRole::dictLiteral;
+                        else if (name == "dict_entry") value.libraryRole = LibraryRole::dictEntry;
                         else report(NameResolutionDiagnosticId::invalidPrelude, attribute.span,
                                     "unknown compiler prelude role '" + name + "'");
                     }
@@ -744,11 +752,14 @@ private:
         return id;
     }
 
-    // The second field of an array role struct is readable everywhere (decision 0025). The shape check
-    // in the type checker guarantees it is `count`.
+    // The second field of an array or dictionary role struct is readable everywhere (decisions 0025, 0027). The
+    // shape check in the type checker guarantees it is `count`.
     void markReadOnlyCounts() {
         for (const auto& candidate : model->symbols_) {
-            if (candidate.kind != SymbolKind::structure || candidate.libraryRole != LibraryRole::arrayType) continue;
+            if (candidate.kind != SymbolKind::structure || (candidate.libraryRole != LibraryRole::arrayType &&
+                                                            candidate.libraryRole != LibraryRole::dictType)) {
+                continue;
+            }
             for (auto& field : model->symbols_) {
                 if (field.kind == SymbolKind::structureField && field.containingSymbol == candidate.id &&
                     field.name == "count") {
@@ -773,6 +784,12 @@ private:
             } else if (candidate.kind == SymbolKind::structure &&
                        candidate.libraryRole == LibraryRole::arrayType && !model->arraySymbol_.has_value()) {
                 model->arraySymbol_ = candidate.id;
+            } else if (candidate.kind == SymbolKind::structure &&
+                       candidate.libraryRole == LibraryRole::dictType && !model->dictSymbol_.has_value()) {
+                model->dictSymbol_ = candidate.id;
+            } else if (candidate.kind == SymbolKind::structure &&
+                       candidate.libraryRole == LibraryRole::dictEntry && !model->dictEntrySymbol_.has_value()) {
+                model->dictEntrySymbol_ = candidate.id;
             }
         }
         if (!model->optionalSymbol_.has_value() || !model->resultSymbol_.has_value()) {
