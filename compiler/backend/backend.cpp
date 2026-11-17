@@ -274,9 +274,9 @@ JoyeerBackendStatus emitObject(
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_BACKEND_INVALID_IR,
+                JOYEER_BACKEND_CODE_GENERATION_FAILED,
                 "LLVM verification failed after optimization: " + optimizedMessage);
-        return JOYEER_BACKEND_INVALID_IR;
+        return JOYEER_BACKEND_CODE_GENERATION_FAILED;
     }
 #endif
 

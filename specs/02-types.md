@@ -250,7 +250,10 @@ an early exit in a later element destroys earlier affine temporaries in reverse 
 read-only `count` and `get(key:)` (§2.6.1); `d[k]` reads, borrows, consumes or mutates a stored value in
 place and traps `dictionary key not found` for a missing key, and `&d[k] = v` inserts or replaces. In
 `&d[k] = v` the base's index operands, the key and the value are evaluated, in that order, before the base
-is addressed (§4.4.3), so the value is evaluated before a missing outer key traps. The address and
+is addressed (§4.4.3), so the value is evaluated before a missing outer key traps, and a value that
+exits early (`&d[missing][k] = f()?` when `f` fails) leaves without trapping. The evaluated keys are kept
+as they were read: a value that consumes or reassigns the key's binding does not change which entry is
+addressed. The address and
 capacity fields and the compiler-called methods are private. A literal evaluates every key and value
 left to right before any entry is stored; a duplicate key keeps the last value.
 

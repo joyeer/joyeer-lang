@@ -99,11 +99,10 @@ ambiguous.
 The current prelude declares:
 
 - types: `Void`, `Never`, `Bool`, `String`, `Int`/`UInt`, signed/unsigned
-  8/16/32/64-bit integers, `Float`, `Double`, `Dict`,
+  8/16/32/64-bit integers, `Float`, `Double`,
   `IOError`, `FileSystemError`, `FileKind`,
   `ProcessStatus`, and `ProcessError`;
-- `String.count`, `Dict.count` and `String.utf8()`;
-- borrowing `Dict.get(key:)`, with concrete key/result types supplied by typing;
+- `String.count` and `String.utf8()`;
 - `Optional` and `Result`, declared as ordinary enums in the always-loaded role prelude
   `lib/Runtime/roles.joyeer` and bound by `@compiler_role(optional_type)` / `@compiler_role(result_type)`
   ([0024](../decisions/0024-library-optional-and-result.md)); `T?` and `nil` bind to the role, not the name;

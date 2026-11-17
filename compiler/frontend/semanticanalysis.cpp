@@ -1149,8 +1149,18 @@ private:
         }
         auto assigned = storagePath(expression->target);
         if (assigned.has_value()) activePaths.push_back(&*assigned);
-        analyzeAssignmentTarget(expression->target, state);
-        analyzeExpression(expression->value, state);
+        // Spec 4.4.3: the target's index operands, then the right side, and only then the access to the target, so
+        // a right side that consumes the target's root leaves nothing to assign into.
+        if (!assigned.has_value() || !state.reachable) {
+            analyzeAssignmentTarget(expression->target, state);
+            analyzeExpression(expression->value, state);
+        } else {
+            analyzeStorageOperands(expression->target, state);
+            analyzeExpression(expression->value, state);
+            if (state.reachable && !assigned->projections.empty()) {
+                analyzeProjectionTarget(expression->target, state);
+            }
+        }
         if (assigned.has_value()) activePaths.pop_back();
         if (state.reachable && assigned.has_value() && tracked.contains(assigned->root)) {
             checkLinearOverwrite(expression->target, *assigned, state);

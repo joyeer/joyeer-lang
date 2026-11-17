@@ -1862,6 +1862,24 @@ private:
                             break;
                         }
                     }
+                    // `Dict<Never, V>` and `Dict<K, Never>` read the same as `[Never: V]` and `[K: Never]`.
+                    if (arguments.size() == 2 && nominal->arguments.size() == 2 &&
+                        (arguments[0] == model->typeContext.neverType() ||
+                         arguments[1] == model->typeContext.neverType())) {
+                        if (const auto* dictionaryDeclaration = model->semanticModelValue->symbol(*symbol);
+                            dictionaryDeclaration != nullptr &&
+                            dictionaryDeclaration->libraryRole == semantic::LibraryRole::dictType) {
+                            const auto key = rejectNeverDictionaryPart(arguments[0], nominal->arguments[0]->span,
+                                                                       "key");
+                            const auto value = rejectNeverDictionaryPart(arguments[1], nominal->arguments[1]->span,
+                                                                         "value");
+                            if (!genericLibraryKey(key, syntaxType->span)) {
+                                rejectInvalidDictionaryKey(key, nominal->arguments[0]->span);
+                            }
+                            result = model->typeContext.dictionaryType(key, value);
+                            break;
+                        }
+                    }
                     if (!arguments.empty()) {
                         if (const auto* generic = model->semanticModelValue->symbol(*symbol);
                             generic != nullptr && !generic->typeParameters.empty() &&
@@ -1871,7 +1889,7 @@ private:
                         }
                     }
                     const auto* record = model->typeContext.type(result);
-                    if (model->typeContext.isDictionary(record) &&
+                    if (model->typeContext.isDictionary(record) && !nominal->arguments.empty() &&
                         !genericLibraryKey(record->arguments[0], syntaxType->span)) {
                         rejectInvalidDictionaryKey(record->arguments[0], nominal->arguments[0]->span);
                     }
@@ -4717,16 +4735,37 @@ private:
     }
 
     // The library dictionary's own generic body writes `Dict<K, V>` over its type parameters (decision 0027, Decision 4):
-    // the key rules do not apply to a type-parameter key in a bundled prelude.
+    // the key rules do not apply to the dictionary's own key parameter in a bundled prelude, and to nothing else.
     bool genericLibraryKey(TypeId key, SourceSpan span) const {
-        return model->typeContext.mentionsTypeParameter(key) && model->semanticModelValue->isPreludeSource(span);
+        const auto* record = model->typeContext.type(key);
+        const auto dictionary = model->semanticModelValue->roleSymbol(semantic::LibraryRole::dictType);
+        if (record == nullptr || record->kind != TypeKind::typeParameter || !dictionary.has_value() ||
+            !model->semanticModelValue->isPreludeSource(span)) {
+            return false;
+        }
+        const auto* declaration = model->semanticModelValue->symbol(*dictionary);
+        return declaration != nullptr && std::find(declaration->typeParameters.begin(),
+                                                   declaration->typeParameters.end(),
+                                                   record->symbol) != declaration->typeParameters.end();
     }
 
-    // `admission`: also reject a key outside the four admitted types (decision 0027, Decision 4), unless the key type
-    // came from a context (an annotation or a parameter) that already reported it.
-    void rejectInvalidDictionaryKey(TypeId key, SourceSpan span, bool admission = true) {
+    // The first type parameter `type` mentions, for a diagnostic.
+    std::optional<TypeId> firstTypeParameter(TypeId type) const {
+        const auto* record = model->typeContext.type(type);
+        if (record == nullptr) return std::nullopt;
+        if (record->kind == TypeKind::typeParameter) return type;
+        for (const auto argument : record->arguments) {
+            if (const auto found = firstTypeParameter(argument); found.has_value()) return found;
+        }
+        return std::nullopt;
+    }
+
+    // A key outside the four admitted types (decision 0027, Decision 4), a function-type key and a type-parameter key
+    // are rejected where the dictionary type is written; a literal whose key type came from a context is not checked
+    // again.
+    void rejectInvalidDictionaryKey(TypeId key, SourceSpan span) {
         // A function-type, type-parameter or Never key has its own diagnostic, so each mistake reports once.
-        if (admission && key != model->typeContext.errorType() && key != model->typeContext.neverType() &&
+        if (key != model->typeContext.errorType() && key != model->typeContext.neverType() &&
             !containsFunctionType(key) && !model->typeContext.mentionsTypeParameter(key) && !admittedKeyKind(key)) {
             report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
                    "'" + model->typeContext.displayName(key) + "' cannot be a dictionary key",
@@ -4737,10 +4776,14 @@ private:
                    "a function type cannot be a dictionary key: function values have no equality",
                    "key the dictionary by a name or a number and store the function value as the value");
         }
-        if (model->typeContext.mentionsTypeParameter(key)) {
+        if (const auto parameter = firstTypeParameter(key); parameter.has_value()) {
             report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
-                   "a dictionary key cannot be the type parameter type '" +
-                           model->typeContext.displayName(key) + "'",
+                   *parameter == key
+                           ? "a dictionary key cannot be the type parameter type '" +
+                                     model->typeContext.displayName(key) + "'"
+                           : "'" + model->typeContext.displayName(key) +
+                                     "' cannot be a dictionary key: it depends on the type parameter '" +
+                                     model->typeContext.displayName(*parameter) + "'",
                    "keys are restricted to Int, Bool, UInt8 and String, and no protocol states that "
                    "yet (spec 20.5)");
         }
@@ -6097,12 +6140,16 @@ private:
         bool writable = true;
         bool requiresMarker = false;
         std::string immutableName;
-        // The place is the `count` of a library array, read-only outside the array's own file.
+        // The place is the `count` of a library array or dictionary, read-only outside the collection's own file.
         bool libraryReadOnly = false;
+        bool dictionaryCount = false;
     };
 
     static std::optional<std::string> readOnlyHelp(const StorageAccess& storage) {
         if (!storage.libraryReadOnly) return std::nullopt;
+        if (storage.dictionaryCount) {
+            return "a dictionary's 'count' changes only by inserting with '&d[key] = value'";
+        }
         return "an array's 'count' changes only through the array's own methods, such as append or removeLast";
     }
 
@@ -6137,6 +6184,9 @@ private:
                     result.writable = false;
                     result.immutableName = symbol->name;
                     result.libraryReadOnly = true;
+                    if (const auto base = model->typeOf(member->base); base.has_value()) {
+                        result.dictionaryCount = model->typeContext.isDictionary(model->typeContext.type(*base));
+                    }
                 }
                 return result;
             }
@@ -7252,7 +7302,11 @@ private:
         std::optional<TypeId> keyType;
         std::optional<TypeId> valueType;
         if (expected.has_value()) {
+            // An optional context (`[K: V]?`) gives the literal its key and value types too.
             const auto* expectedType = model->typeContext.type(*expected);
+            while (model->typeContext.isOptional(expectedType) && !expectedType->arguments.empty()) {
+                expectedType = model->typeContext.type(expectedType->arguments[0]);
+            }
             if (model->typeContext.isDictionary(expectedType)) {
                 keyType = expectedType->arguments[0];
                 valueType = expectedType->arguments[1];
@@ -7292,8 +7346,10 @@ private:
         }
         const auto key = rejectNeverDictionaryPart(*keyType, expression->span, "key", true);
         const auto value = rejectNeverDictionaryPart(*valueType, expression->span, "value", true);
-        rejectInvalidDictionaryKey(key, expression->entries.empty()
-                ? expression->span : expression->entries.front()->key->span, !contextualKey);
+        if (!contextualKey) {
+            rejectInvalidDictionaryKey(key, expression->entries.empty()
+                    ? expression->span : expression->entries.front()->key->span);
+        }
         return model->typeContext.dictionaryType(key, value);
     }
 };

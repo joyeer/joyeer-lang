@@ -149,12 +149,15 @@ The native linker lives in `compiler/codegen/linker.h` and
 `compiler/backend/backend.h` on every platform. The
 native-backend library verifies the constructed module, runs the selected LLVM
 optimization pipeline, emits a COFF, Mach-O, or ELF object, and invokes the
-corresponding LLD driver in-process. A build with `BUILD_TESTING` (every build the
-tests and `validate.py` run) verifies the module again after the pipeline, debug info
+corresponding LLD driver in-process. A backend built with `JOYEER_BACKEND_TEST_HOOKS`
+(the Debug presets and `validate.py`; off by default and in the Release presets, so
+packages never carry it) verifies the module again after the pipeline, debug info
 included, so an inlining that leaves a location outside its function's subprogram
-fails the compile ([0027](../decisions/0027-library-dict.md), closing 0026's known gap
-(a)); `E2EOptimizedDebugInfoIsVerified` proves the check runs through a test-only fault
-injection (`JOYEER_BACKEND_TEST_CORRUPT_DEBUG_INFO=1`). A mutex serializes LLD because its library
+fails the compile with `JOYEER_BACKEND_CODE_GENERATION_FAILED`
+([0027](../decisions/0027-library-dict.md), closing 0026's known gap (a));
+`E2EOptimizedDebugInfoIsVerified`, registered only with that option, proves the check
+runs through a test-only fault injection (`JOYEER_BACKEND_TEST_CORRUPT_DEBUG_INFO=1`).
+A mutex serializes LLD because its library
 entry point has global process state. LLVM/LLD remain private backend
 dependencies; the compiler never launches Clang or an LLD executable for
 native output.

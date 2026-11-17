@@ -339,7 +339,7 @@ private:
 
     SemanticModel::Ptr model;
     std::vector<NameResolutionDiagnostic> diagnostics;
-    // The builtin Dict's `get` returns the optional role enum.
+    // Where the missing `dict_type` role is reported: the collections prelude.
     SourceSpan collectionsPreludeSpan {};
     // Whether the missing `dict_type` role was reported: it is required only once a program mentions a dictionary
     // (decision 0027, Decision 7), and reported once.
@@ -2049,6 +2049,8 @@ private:
                 break;
             }
             case syntax::Kind::dictionaryExpr: {
+                // A literal mentions a dictionary even without an annotation: a missing role is reported here once.
+                dictionaryRole();
                 const auto dictionary = std::static_pointer_cast<syntax::DictionaryExprSyntax>(expression);
                 for (const auto& entry : dictionary->entries) {
                     setContainingScope(entry, currentScope);

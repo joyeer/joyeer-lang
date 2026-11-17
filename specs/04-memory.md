@@ -364,7 +364,14 @@ var a = [1, 2, 3]
 ```
 
 Only the right-hand side's own calls are checked for exclusivity (§4.4), not
-against the assignment target.
+against the assignment target. A right-hand side that consumes the target's
+root, or the part of it the target projects through, is rejected
+(`use-after-consume`): nothing is left to assign into at step 3.
+
+```joyeer
+&d["b"] = take(d: consume d)   // ❌ error: 'd' is consumed before the element is assigned
+d = pass(d: consume d)         // ✅ the whole binding is reinitialized
+```
 
 ### 4.5 Subscripts & projection
 

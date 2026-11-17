@@ -1600,11 +1600,20 @@ VerificationResult Verifier::verify(const Module& module) const {
             const bool unitValue = types.contains(valueField.type) &&
                     types.at(valueField.type)->kind == typing::TypeKind::voidType;
             // A stored value is used once in the packing window, so one owned value never fills two slots. Its other
-            // uses are elsewhere, such as its cleanup on an early exit before the storage.
+            // uses are only on paths that never reach the packing and that the packing never reaches, such as its
+            // cleanup on an early exit of a later entry: a block the packing block neither dominates nor is dominated
+            // by. Anything else would use the value before it is stored or after it was transferred.
             const auto usedOnceInWindow = [&](ValueId value) {
-                return std::count_if(literalUses[value].begin(), literalUses[value].end(), [&](const auto& use) {
-                    return use.block == block.id && use.index > index && use.index < transfer.index;
-                }) == 1;
+                size_t inWindow = 0;
+                for (const auto& use : literalUses[value]) {
+                    if (use.block == block.id && use.index > index && use.index < transfer.index) {
+                        ++inWindow;
+                    } else if (use.block == block.id || dominators[use.block].contains(block.id) ||
+                               dominators[block.id].contains(use.block)) {
+                        return false;
+                    }
+                }
+                return inWindow == 1;
             };
             std::unordered_set<int64_t> keys;
             std::unordered_set<int64_t> storedValues;
@@ -1662,8 +1671,8 @@ VerificationResult Verifier::verify(const Module& module) const {
                     }
                     if (!stored) {
                         return "rule 4: each field address must have exactly one use, a store in its block before "
-                               "the transfer of a value of the field's type evaluated before the storage and used only "
-                               "there";
+                               "the transfer of a value of the field's type evaluated before the storage, used once in "
+                               "the packing and otherwise only on paths that never reach it";
                     }
                     (isKey ? keys : storedValues).insert(offset->integerValue);
                     admittedFields.push_back(field.result->id);

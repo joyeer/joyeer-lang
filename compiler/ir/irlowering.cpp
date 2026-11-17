@@ -1883,7 +1883,8 @@ private:
                 return lowerDictionarySet(expression, subscript, *baseType);
             }
         }
-        const auto deferredAddress = prepareAddress(expression->target);
+        const auto deferredAddress = prepareAddress(expression->target,
+                !targetIndexesCannotDisturb(expression->target) || !cannotDisturb(expression->value));
         if (!deferredAddress.has_value() || currentBlockTerminated()) return std::nullopt;
         auto value = lowerExpression(expression->value);
         if (!value.has_value() || currentBlockTerminated()) return std::nullopt;
@@ -1907,7 +1908,8 @@ private:
     // combined with the right side, and stored back.
     std::optional<ir::Value> lowerCompoundAssignment(
             const syntax::AssignmentExprSyntax::Ptr& expression) {
-        const auto deferredAddress = prepareAddress(expression->target);
+        const auto deferredAddress = prepareAddress(expression->target,
+                !targetIndexesCannotDisturb(expression->target) || !cannotDisturb(expression->value));
         if (!deferredAddress.has_value() || currentBlockTerminated()) return std::nullopt;
         const auto right = lowerExpression(expression->value);
         if (!right.has_value() || currentBlockTerminated()) return std::nullopt;
@@ -1941,10 +1943,55 @@ private:
         return emitUnit(expression->span);
     }
 
+    // Whether evaluating `expression` provably runs no code that could change storage read earlier in the same
+    // expression: a name, a literal, or a field or element read of such operands. Anything else (a call, `&`,
+    // `consume`, an operator, a block) may disturb, so operands evaluated before it are owned and element addresses
+    // are taken after it (spec 4.4.3's order).
+    static bool cannotDisturb(const syntax::ExprPtr& expression) {
+        if (expression == nullptr) return true;
+        switch (expression->kind) {
+            case syntax::Kind::nameExpr:
+            case syntax::Kind::literalExpr:
+            case syntax::Kind::unitExpr:
+                return true;
+            case syntax::Kind::parenthesizedExpr:
+                return cannotDisturb(std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+            case syntax::Kind::memberExpr:
+                return cannotDisturb(std::static_pointer_cast<syntax::MemberExprSyntax>(expression)->base);
+            case syntax::Kind::subscriptExpr: {
+                const auto subscript = std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
+                return cannotDisturb(subscript->base) && cannotDisturb(subscript->index);
+            }
+            default:
+                return false;
+        }
+    }
+
+    // Whether every index operand along an assignment target's path cannot disturb (see `cannotDisturb`).
+    static bool targetIndexesCannotDisturb(const syntax::ExprPtr& target) {
+        if (target == nullptr) return true;
+        switch (target->kind) {
+            case syntax::Kind::accessExpr:
+                return targetIndexesCannotDisturb(std::static_pointer_cast<syntax::AccessExprSyntax>(target)->operand);
+            case syntax::Kind::parenthesizedExpr:
+                return targetIndexesCannotDisturb(
+                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(target)->expression);
+            case syntax::Kind::memberExpr:
+                return targetIndexesCannotDisturb(std::static_pointer_cast<syntax::MemberExprSyntax>(target)->base);
+            case syntax::Kind::subscriptExpr: {
+                const auto subscript = std::static_pointer_cast<syntax::SubscriptExprSyntax>(target);
+                return targetIndexesCannotDisturb(subscript->base) && cannotDisturb(subscript->index);
+            }
+            default:
+                return true;
+        }
+    }
+
     // `&d[k] = v` on a library dictionary (decision 0027): insert or replace through `dict_set`. The base's own
-    // index operands, then the key, then the value are evaluated to owned temporaries (spec 4.4.3); only then is
-    // the base addressed, so the right side cannot leave that address dangling, and a missing outer key traps after
-    // the value was evaluated. A trap in the right side inserts nothing.
+    // index operands, then the key, then the value are evaluated (spec 4.4.3); a base key is owned when a later
+    // operand may disturb the binding it was read from. Only then is the base addressed, so the right side cannot
+    // leave that address dangling, and a missing outer key traps after the value was evaluated. A trap in the right
+    // side inserts nothing.
     std::optional<ir::Value> lowerDictionarySet(
             const syntax::AssignmentExprSyntax::Ptr& expression,
             const syntax::SubscriptExprSyntax::Ptr& subscript,
@@ -1960,7 +2007,8 @@ private:
         }
         const auto keyType = record->arguments[0];
         const auto valueType = record->arguments[1];
-        auto base = prepareAddress(subscript->base);
+        const bool ownKeys = !targetIndexesCannotDisturb(subscript) || !cannotDisturb(expression->value);
+        auto base = prepareAddress(subscript->base, ownKeys);
         if (!base.has_value() || currentBlockTerminated()) return std::nullopt;
         auto key = prepareOperand(subscript->index, keyType);
         if (!key.has_value() || currentBlockTerminated()) return std::nullopt;
@@ -2013,6 +2061,13 @@ private:
         if (expression->kind == syntax::Kind::subscriptExpr) {
             const auto subscript = std::static_pointer_cast<syntax::SubscriptExprSyntax>(
                     expression);
+            if (!cannotDisturb(subscript->index)) {
+                // The index may reallocate the base's storage or reassign a key: evaluate every index first (spec
+                // 4.4.3's order), then address.
+                const auto deferred = prepareAddress(expression, true);
+                if (!deferred.has_value() || currentBlockTerminated()) return std::nullopt;
+                return (*deferred)();
+            }
             const auto base = lowerAddress(subscript->base);
             const auto index = lowerExpression(subscript->index);
             const auto type = typeOf(subscript);
@@ -2040,24 +2095,28 @@ private:
     // whose element address is not yet computed. Element addresses point into
     // storage the right-hand side may reallocate (for example by appending to
     // the same array), so they are taken only after the right side is lowered.
+    // With `ownKeys`, an index that needs destruction is held as an owned
+    // temporary, so a later operand that consumes or reassigns the binding it
+    // was read from cannot leave the deferred lookup with a dangling key.
     using DeferredAddress = std::function<std::optional<ir::Value>()>;
 
-    std::optional<DeferredAddress> prepareAddress(const syntax::ExprPtr& expression) {
+    std::optional<DeferredAddress> prepareAddress(const syntax::ExprPtr& expression, bool ownKeys = false) {
         if (expression == nullptr) return std::nullopt;
         if (expression->kind == syntax::Kind::accessExpr) {
             return prepareAddress(
-                    std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand);
+                    std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand, ownKeys);
         }
         if (expression->kind == syntax::Kind::parenthesizedExpr) {
             return prepareAddress(
-                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression, ownKeys);
         }
         if (expression->kind == syntax::Kind::subscriptExpr) {
             const auto subscript = std::static_pointer_cast<syntax::SubscriptExprSyntax>(
                     expression);
-            auto base = prepareAddress(subscript->base);
+            auto base = prepareAddress(subscript->base, ownKeys);
             if (!base.has_value()) return std::nullopt;
-            const auto index = lowerExpression(subscript->index);
+            auto index = lowerExpression(subscript->index);
+            if (index.has_value() && ownKeys) index = prepareOwned(*index, subscript->index->span);
             const auto type = typeOf(subscript);
             if (!index.has_value() || !type.has_value()) return std::nullopt;
             std::optional<typing::TypeId> roleBase;
@@ -2089,7 +2148,7 @@ private:
             if (semanticSymbol != nullptr &&
                 semanticSymbol->kind == semantic::SymbolKind::structureField &&
                 type.has_value()) {
-                auto base = prepareAddress(member->base);
+                auto base = prepareAddress(member->base, ownKeys);
                 if (!base.has_value()) return std::nullopt;
                 return DeferredAddress([this, base = std::move(*base), type = *type, symbol,
                                         span = member->span]() -> std::optional<ir::Value> {
@@ -2243,6 +2302,20 @@ private:
             const syntax::SubscriptExprSyntax::Ptr& expression) {
         if (const auto baseType = typeOf(expression->base); baseType.has_value() && isRoleSubscriptBase(*baseType)) {
             std::optional<ir::Value> baseAddress;
+            if (isAddressable(expression->base) && !cannotDisturb(expression->index)) {
+                // The index may reallocate the base's storage or reassign one of its keys: the base's indexes are
+                // evaluated (and owned), then this index, and only then is the base addressed.
+                const auto deferred = prepareAddress(expression->base, true);
+                if (!deferred.has_value() || currentBlockTerminated()) return std::nullopt;
+                const auto index = lowerExpression(expression->index);
+                const auto type = typeOf(expression);
+                if (!index.has_value() || !type.has_value() || currentBlockTerminated()) return std::nullopt;
+                baseAddress = (*deferred)();
+                if (!baseAddress.has_value()) return std::nullopt;
+                const auto place = emitRoleElementAddress(*baseType, *baseAddress, *index, *type, expression->span);
+                if (!place.has_value()) return std::nullopt;
+                return emitValue(ir::Opcode::load, *type, ir::ValueCategory::value, { place->id }, expression->span);
+            }
             if (isAddressable(expression->base)) {
                 baseAddress = lowerAddress(expression->base);
             } else {

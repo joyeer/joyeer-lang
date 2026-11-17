@@ -37,7 +37,8 @@
             "displayName": "x64 Debug",
             "inherits": "windows-x64-base",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug"
+                "CMAKE_BUILD_TYPE": "Debug",
+                "JOYEER_BACKEND_TEST_HOOKS": "ON"
             }
         },
         {
@@ -66,7 +67,8 @@
             "displayName": "ARM64 Debug",
             "inherits": "windows-arm64-base",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug"
+                "CMAKE_BUILD_TYPE": "Debug",
+                "JOYEER_BACKEND_TEST_HOOKS": "ON"
             }
         },
         {
@@ -113,6 +115,7 @@
             "inherits": "linux-base",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
+                "JOYEER_BACKEND_TEST_HOOKS": "ON",
                 "JOYEER_BUILD_UNITTESTS": "ON"
             }
         },
@@ -131,6 +134,7 @@
             "inherits": "macos-base",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
+                "JOYEER_BACKEND_TEST_HOOKS": "ON",
                 "JOYEER_BUILD_UNITTESTS": "ON"
             }
         },

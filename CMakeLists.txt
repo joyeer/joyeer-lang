@@ -49,6 +49,8 @@ option(JOYEER_BUILD_UNITTESTS "Build Joyeer C++ unit tests" ON)
 option(JOYEER_BUILD_FERN "Bootstrap the Joyeer-written fern project tool" ON)
 option(JOYEER_BUILD_COMPRESSION "Build the miniz-backed Compression standard module (needed by the root workspace for moss)" ON)
 option(JOYEER_BUILD_MOSS "Build the Joyeer-written moss JVM inspection tool (needs fern and Compression)" ON)
+option(JOYEER_BACKEND_TEST_HOOKS
+    "Re-verify optimized IR in the backend and accept test fault injection (test builds only, never packages)" OFF)
 
 if(JOYEER_BUILD_FERN AND CMAKE_CROSSCOMPILING)
     message(FATAL_ERROR
