@@ -4749,43 +4749,31 @@ private:
                                                    record->symbol) != declaration->typeParameters.end();
     }
 
-    // The first type parameter `type` mentions, for a diagnostic.
-    std::optional<TypeId> firstTypeParameter(TypeId type) const {
-        const auto* record = model->typeContext.type(type);
-        if (record == nullptr) return std::nullopt;
-        if (record->kind == TypeKind::typeParameter) return type;
-        for (const auto argument : record->arguments) {
-            if (const auto found = firstTypeParameter(argument); found.has_value()) return found;
-        }
-        return std::nullopt;
-    }
-
     // A key outside the four admitted types (decision 0027, Decision 4), a function-type key and a type-parameter key
     // are rejected where the dictionary type is written; a literal whose key type came from a context is not checked
     // again.
     void rejectInvalidDictionaryKey(TypeId key, SourceSpan span) {
-        // A function-type, type-parameter or Never key has its own diagnostic, so each mistake reports once.
-        if (key != model->typeContext.errorType() && key != model->typeContext.neverType() &&
-            !containsFunctionType(key) && !model->typeContext.mentionsTypeParameter(key) && !admittedKeyKind(key)) {
-            report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
-                   "'" + model->typeContext.displayName(key) + "' cannot be a dictionary key",
-                   "keys are restricted to Int, Bool, UInt8 and String, closed until plan 0012 (spec 2.6, 20.5)");
-        }
+        // One diagnostic per key: a function type, then a bare type parameter, then any other key outside the
+        // admitted four (a type built from a parameter is outside them whatever the parameter is).
+        if (key == model->typeContext.errorType() || key == model->typeContext.neverType()) return;
         if (containsFunctionType(key)) {
             report(TypeCheckingDiagnosticId::invalidFunctionType, span,
                    "a function type cannot be a dictionary key: function values have no equality",
                    "key the dictionary by a name or a number and store the function value as the value");
+            return;
         }
-        if (const auto parameter = firstTypeParameter(key); parameter.has_value()) {
+        if (const auto* record = model->typeContext.type(key);
+            record != nullptr && record->kind == TypeKind::typeParameter) {
             report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
-                   *parameter == key
-                           ? "a dictionary key cannot be the type parameter type '" +
-                                     model->typeContext.displayName(key) + "'"
-                           : "'" + model->typeContext.displayName(key) +
-                                     "' cannot be a dictionary key: it depends on the type parameter '" +
-                                     model->typeContext.displayName(*parameter) + "'",
+                   "a dictionary key cannot be the type parameter type '" + model->typeContext.displayName(key) + "'",
                    "keys are restricted to Int, Bool, UInt8 and String, and no protocol states that "
                    "yet (spec 20.5)");
+            return;
+        }
+        if (!admittedKeyKind(key)) {
+            report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
+                   "'" + model->typeContext.displayName(key) + "' cannot be a dictionary key",
+                   "keys are restricted to Int, Bool, UInt8 and String, closed until plan 0012 (spec 2.6, 20.5)");
         }
     }
 
@@ -7257,7 +7245,12 @@ private:
             std::optional<TypeId> expected) {
         std::optional<TypeId> elementType;
         if (expected.has_value()) {
+            // An optional context (`[T]?`) gives the literal its element type too: one layer, as the value is
+            // promoted through one.
             const auto* expectedType = model->typeContext.type(*expected);
+            if (model->typeContext.isOptional(expectedType) && !expectedType->arguments.empty()) {
+                expectedType = model->typeContext.type(expectedType->arguments[0]);
+            }
             if (model->typeContext.isArray(expectedType)) {
                 elementType = expectedType->arguments[0];
             }
@@ -7302,9 +7295,10 @@ private:
         std::optional<TypeId> keyType;
         std::optional<TypeId> valueType;
         if (expected.has_value()) {
-            // An optional context (`[K: V]?`) gives the literal its key and value types too.
+            // An optional context (`[K: V]?`) gives the literal its key and value types too: one layer, as the value
+            // is promoted through one.
             const auto* expectedType = model->typeContext.type(*expected);
-            while (model->typeContext.isOptional(expectedType) && !expectedType->arguments.empty()) {
+            if (model->typeContext.isOptional(expectedType) && !expectedType->arguments.empty()) {
                 expectedType = model->typeContext.type(expectedType->arguments[0]);
             }
             if (model->typeContext.isDictionary(expectedType)) {

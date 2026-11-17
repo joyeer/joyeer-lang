@@ -373,6 +373,15 @@ root, or the part of it the target projects through, is rejected
 d = pass(d: consume d)         // ✅ the whole binding is reinitialized
 ```
 
+For the same reason a right-hand side may initialize the target's root, on
+every path, before step 3 assigns into it; the element it replaces is
+destroyed once:
+
+```joyeer
+var d: [String: Res]
+&d["k"] = fill(out: &d)        // ✅ fill initializes d; then d["k"] is replaced
+```
+
 ### 4.5 Subscripts & projection
 
 #### 4.5.1 Accessor blocks

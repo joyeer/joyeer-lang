@@ -349,6 +349,8 @@ private:
     // that position knows its tail value is dropped rather than used.
     bool statementPosition = false;
     std::vector<InitializationState::ProjectionPath*> activePaths;
+    // Set while an assignment's target is checked after its right side, for the use-after-consume help.
+    bool analyzingAssignmentTarget = false;
     std::vector<std::vector<semantic::SymbolId>> localScopes;
     struct LoopFlow {
         size_t scopeDepth;
@@ -1158,7 +1160,9 @@ private:
             analyzeStorageOperands(expression->target, state);
             analyzeExpression(expression->value, state);
             if (state.reachable && !assigned->projections.empty()) {
+                analyzingAssignmentTarget = true;
                 analyzeProjectionTarget(expression->target, state);
+                analyzingAssignmentTarget = false;
             }
         }
         if (assigned.has_value()) activePaths.pop_back();
@@ -1491,8 +1495,10 @@ private:
                                 ? "' is used after all or part of its ownership was consumed"
                                 : "' is used before being initialized"),
                 consumed
-                        ? std::optional<std::string>(
-                                "reinitialize the consumed storage before reading it")
+                        ? std::optional<std::string>(analyzingAssignmentTarget
+                                ? "the right side runs before the target is assigned (spec 4.4.3): assign the whole "
+                                  "binding instead, or do not consume it in the right side"
+                                : "reinitialize the consumed storage before reading it")
                         : std::optional<std::string>(
                                 "initialize this binding on every continuing path before reading it"),
             });

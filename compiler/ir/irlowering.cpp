@@ -2333,8 +2333,24 @@ private:
             if (!place.has_value()) return std::nullopt;
             return emitValue(ir::Opcode::load, *type, ir::ValueCategory::value, { place->id }, expression->span);
         }
-        const auto base = lowerExpression(expression->base);
-        const auto index = lowerExpression(expression->index);
+        std::optional<ir::Value> base;
+        std::optional<ir::Value> index;
+        if (isAddressable(expression->base) && !cannotDisturb(expression->index)) {
+            // A String byte read whose index may reassign the string: the base's own indexes, then this index, and
+            // only then is the string loaded (spec 4.4.3's order), so the read never sees a freed buffer.
+            const auto deferred = prepareAddress(expression->base, true);
+            const auto baseType = typeOf(expression->base);
+            if (!deferred.has_value() || !baseType.has_value() || currentBlockTerminated()) return std::nullopt;
+            index = lowerExpression(expression->index);
+            if (!index.has_value() || currentBlockTerminated()) return std::nullopt;
+            const auto address = (*deferred)();
+            if (!address.has_value()) return std::nullopt;
+            base = emitValue(ir::Opcode::load, *baseType, ir::ValueCategory::value, { address->id },
+                             expression->base->span);
+        } else {
+            base = lowerExpression(expression->base);
+            index = lowerExpression(expression->index);
+        }
         const auto type = typeOf(expression);
         if (!base.has_value() || !index.has_value() || !type.has_value()) {
             return std::nullopt;

@@ -1550,6 +1550,27 @@ VerificationResult Verifier::verify(const Module& module) const {
         std::unordered_map<ValueId, TypeId> literalPlaces;
         // The key and value field addresses of a verified dictionary literal: the only field addresses of an entry.
         std::unordered_set<ValueId> literalEntryFields;
+        std::unordered_map<BlockId, std::unordered_set<BlockId>> successors;
+        for (const auto& [target, sources] : predecessors) {
+            for (const auto source : sources) successors[source].insert(target);
+        }
+        // The blocks reached from `from` along successor (or predecessor) edges without entering `barrier`; `from`
+        // itself is included only when a cycle avoiding the barrier returns to it.
+        const auto reachedAvoiding = [&](BlockId from, std::optional<BlockId> barrier, bool forward) {
+            const auto& edges = forward ? successors : predecessors;
+            std::unordered_set<BlockId> reached;
+            std::vector<BlockId> work { from };
+            while (!work.empty()) {
+                const auto current = work.back();
+                work.pop_back();
+                const auto next = edges.find(current);
+                if (next == edges.end()) continue;
+                for (const auto block : next->second) {
+                    if (block != barrier && reached.insert(block).second) work.push_back(block);
+                }
+            }
+            return reached;
+        };
         // A value stored into a literal slot is evaluated before the storage: earlier in its block, in a block that
         // dominates it, or a parameter.
         const auto evaluatedBefore = [&](ValueId value, BlockId blockId, size_t storageIndex) {
@@ -1600,16 +1621,23 @@ VerificationResult Verifier::verify(const Module& module) const {
             const bool unitValue = types.contains(valueField.type) &&
                     types.at(valueField.type)->kind == typing::TypeKind::voidType;
             // A stored value is used once in the packing window, so one owned value never fills two slots. Its other
-            // uses are only on paths that never reach the packing and that the packing never reaches, such as its
-            // cleanup on an early exit of a later entry: a block the packing block neither dominates nor is dominated
-            // by. Anything else would use the value before it is stored or after it was transferred.
+            // uses are only on paths that never reach the packing and that the packing never reaches before the value
+            // is evaluated again, such as its cleanup on an early exit of a later entry. Paths are followed from the
+            // packing block, forward and backward, stopping at the value's defining block; a cycle that returns to
+            // the packing without evaluating the value again would transfer it twice.
             const auto usedOnceInWindow = [&](ValueId value) {
+                const auto definition = valueDefinitions.find(value);
+                const auto defined = definition == valueDefinitions.end()
+                        ? std::optional<BlockId>() : std::optional<BlockId>(definition->second.first);
+                const auto after = reachedAvoiding(block.id, defined, true);
+                const auto before = reachedAvoiding(block.id, defined, false);
+                if (defined != block.id && after.contains(block.id)) return false;
                 size_t inWindow = 0;
                 for (const auto& use : literalUses[value]) {
                     if (use.block == block.id && use.index > index && use.index < transfer.index) {
                         ++inWindow;
-                    } else if (use.block == block.id || dominators[use.block].contains(block.id) ||
-                               dominators[block.id].contains(use.block)) {
+                    } else if (use.block == block.id || use.block == defined || after.contains(use.block) ||
+                               before.contains(use.block)) {
                         return false;
                     }
                 }

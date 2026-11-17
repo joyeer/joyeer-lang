@@ -67,7 +67,9 @@ filtered CTest runs are only for focused iteration.
 The Debug presets also set `JOYEER_BACKEND_TEST_HOOKS=ON`: the backend verifies
 the optimized module again and accepts a test fault injection. It is off by
 default and in the Release presets, which build the packages; never enable it
-for a package.
+for a package. A local Debug installation carries it, as a developer build.
+Configuring without a preset leaves it off, so add `-DJOYEER_BACKEND_TEST_HOOKS=ON`
+to run `E2EOptimizedDebugInfoIsVerified`.
 
 ### Full platform validation
 
