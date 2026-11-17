@@ -270,12 +270,12 @@ TEST_F(DictRoleTest, AWellShapedDictRoleIsAccepted) {
 TEST_F(DictRoleTest, TheLiteralMethodMayLeaveItsZeroSelfUnconsumed) {
     load("func main() {}\n");
     EXPECT_EQ(analyze(), "") << "the dict_literal method's self is an inert zero value";
-    // Another consuming method of the declaration still has to consume self.
+    // The role owns no linear key or value, so the table is affine and any consuming method may drop its self
+    // (unlike an array of a linear element, decision 0026).
     TableParts parts;
-    parts.extra = "";
-    parts.tail = replaced(parts.tail, "deinit()", "public consuming func leak() {}\n    deinit()");
+    parts.tail = replaced(parts.tail, "deinit()", "public consuming func drop() {}\n    deinit()");
     load("func main() {}\n", parts.text());
-    EXPECT_NE(analyze().find("linear-not-consumed"), std::string::npos);
+    EXPECT_EQ(analyze(), "");
 }
 
 // ---- dict_type ----
@@ -362,7 +362,7 @@ TEST_F(DictRoleTest, EachMalformedDictMethodRoleIsRejected) {
                                          "dict_element"));
     EXPECT_TRUE(rejectedAsInvalidPrelude(with(element, "private borrowing", "public borrowing"), "dict_element"));
     EXPECT_TRUE(rejectedAsInvalidPrelude(with(element, "element(key: K)", "element(at key: K)"), "dict_element"));
-    EXPECT_TRUE(rejectedAsInvalidPrelude(with(element, "element(key: K)", "element(index: K)"), "dict_element"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(with(element, "element(key: K)", "element(index key: K)"), "dict_element"));
     EXPECT_TRUE(rejectedAsInvalidPrelude(with(element, "element(key: K)", "element(key: V)"), "dict_element"));
     EXPECT_TRUE(rejectedAsInvalidPrelude(with(element, "element(key: K)", "element(key: consuming K)"),
                                          "dict_element"));
@@ -375,7 +375,7 @@ TEST_F(DictRoleTest, EachMalformedDictMethodRoleIsRejected) {
     EXPECT_TRUE(rejectedAsInvalidPrelude(with(set, "private mutating", "public mutating"), "dict_set"));
     EXPECT_TRUE(rejectedAsInvalidPrelude(with(set, "private mutating func", "private borrowing func"), "dict_set"));
     EXPECT_TRUE(rejectedAsInvalidPrelude(
-            with(set, "insert(key: consuming K, value: consuming V)", "insert(key: consuming K, item: consuming V)"),
+            with(set, "insert(key: consuming K, value: consuming V)", "insert(key: consuming K, item value: consuming V)"),
             "dict_set"));
     EXPECT_TRUE(rejectedAsInvalidPrelude(
             with(set, "insert(key: consuming K, value: consuming V)", "insert(value: consuming K, key: consuming V)"),
@@ -436,8 +436,9 @@ TEST_F(DictRoleTest, TheEntryRoleHasAClosedShape) {
         return parts.text();
     };
     const auto entry = std::string(tableEntry);
-    // Required, and unique.
-    EXPECT_TRUE(rejectedAsInvalidPrelude(withEntry(""), "dict_entry"));
+    // Required (the struct stays, so the literal still names it), and unique.
+    EXPECT_TRUE(rejectedAsInvalidPrelude(withEntry(replaced(entry, "@compiler_role(dict_entry)\n", "")),
+                                         "dict_entry"));
     EXPECT_TRUE(rejectedAsInvalidPrelude(withEntry(entry + replaced(entry, "TableEntry", "OtherEntry")),
                                          "dict_entry"));
     // Private, exactly the fields `key: K` then `value: V`, and no deinit.
