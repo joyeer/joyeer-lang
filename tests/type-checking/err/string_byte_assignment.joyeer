@@ -1,0 +1,6 @@
+// A String's bytes are read-only (spec 2.2): `s[i]` reads one, nothing writes one.
+func main() {
+    var text = "abc"
+    &text[0] = 98
+    print(value: text)
+}

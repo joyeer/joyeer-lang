@@ -1552,6 +1552,32 @@ TEST_F(TypeCheckingTest, KeepsWidePayloadProductsSymbolic) {
                             joyeer::typing::TypeCheckingDiagnosticId::invalidAccessMarker);
                     }
 
+TEST_F(TypeCheckingTest, AStringByteIsReadOnly) {
+    // `s[i]` reads a byte (spec 2.2); there is no byte store, so writing one is a type error, not a
+    // backend failure.
+    check(R"JOYEER(func bump(byte: inout UInt8) { &byte = 1 }
+func main() {
+var text = "abc"
+&text[0] = 1
+&text[1] += 1
+bump(byte: &text[2])
+let first: UInt8 = text[0]
+print(value: first)
+}
+)JOYEER");
+
+    ASSERT_EQ(checking.diagnostics.size(), 3u) << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_EQ(checking.diagnostics[0].id, joyeer::typing::TypeCheckingDiagnosticId::assignmentToImmutable);
+    EXPECT_EQ(checking.diagnostics[1].id, joyeer::typing::TypeCheckingDiagnosticId::assignmentToImmutable);
+    EXPECT_EQ(checking.diagnostics[2].id, joyeer::typing::TypeCheckingDiagnosticId::invalidInoutArgument);
+    for (const auto& diagnostic : checking.diagnostics) {
+        ASSERT_TRUE(diagnostic.help.has_value()) << diagnostic.message;
+        EXPECT_NE(diagnostic.help->find("a String's bytes are read-only"), std::string::npos) << *diagnostic.help;
+    }
+    EXPECT_NE(checking.diagnostics[0].message.find("a byte of a String"), std::string::npos)
+            << checking.diagnostics[0].message;
+}
+
                     TEST_F(TypeCheckingTest, EnforcesInoutCallArgumentConventions) {
                         check(R"JOYEER(func update(value: inout Int) { &value = 1 }
                     func inspect(value: Int) { }
