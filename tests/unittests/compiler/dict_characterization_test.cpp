@@ -107,9 +107,14 @@ TEST(DictCharacterization, OtherKeyTypesAreRejectedAtTheType) {
         const auto text = diagnose(program);
         EXPECT_EQ(occurrences(text, needle), 1u) << text;
     }
-    // An empty literal takes its key and value types from an optional context.
+    // An empty literal takes its key and value types from an optional context, as an empty array literal takes its
+    // element type.
     EXPECT_EQ(diagnose("func main() { let o: [String: Int]? = [:] }\n").find(
                       "missing-contextual-type"), std::string::npos);
+    EXPECT_EQ(diagnose("func main() { let o: [Int]? = [] }\n").find("missing-contextual-type"), std::string::npos);
+    // A function-type key that mentions a type parameter is one mistake, reported once.
+    const auto functionOfParameter = diagnose("func h<T>(d: [(T): Int: Int]) {}\nfunc main() {}\n");
+    EXPECT_EQ(occurrences(functionOfParameter, "dictionary key"), 1u) << functionOfParameter;
     // The four admitted keys, by type kind.
     EXPECT_EQ(diagnose("func f(a: [Int: Int], b: [Bool: Int], c: [UInt8: Int], d: [String: Int]) {}\n"
                        "func main() {}\n"), "");
@@ -132,10 +137,18 @@ TEST(DictCharacterization, TypeParameterKeysAreRejected) {
     EXPECT_TRUE(contains(parameter, "keys are restricted to Int, Bool, UInt8 and String")) << parameter;
     const auto nominal = diagnose("func f<K>(d: Dict<K, Int>) {}\nfunc main() {}\n");
     EXPECT_TRUE(contains(nominal, "a dictionary key cannot be the type parameter type 'K'")) << nominal;
-    // A key that only mentions a type parameter names the type and the parameter it depends on.
-    const auto mentions = diagnose("func f<T>(d: [[T]: Int]) {}\nfunc main() {}\n");
-    EXPECT_TRUE(contains(mentions, "'[T]' cannot be a dictionary key: it depends on the type parameter 'T'"))
-            << mentions;
+    // A key built from a type parameter is outside the admitted keys whatever the parameter is, so it reads like any
+    // other non-admitted key and does not point at the parameter.
+    for (const auto* program : {
+            "func f<T>(d: [[T]: Int]) {}\nfunc main() {}\n",
+            "func f<T>(d: [T?: Int]) {}\nfunc main() {}\n",
+            "struct G<T> { var t: T\n func m(d: [Self: Int]) {} }\nfunc main() {}\n" }) {
+        SCOPED_TRACE(program);
+        const auto mentions = diagnose(program);
+        EXPECT_EQ(occurrences(mentions, "' cannot be a dictionary key"), 1u) << mentions;
+        EXPECT_TRUE(contains(mentions, "closed until plan 0012")) << mentions;
+        EXPECT_FALSE(contains(mentions, "type parameter")) << mentions;
+    }
 }
 
 TEST(DictCharacterization, LinearAndNeverKeysAndValuesAreRejected) {
@@ -165,12 +178,21 @@ TEST(DictCharacterization, ARightSideThatConsumesTheTargetsRootIsRejected) {
             "struct S { var d: [String: Int] }\nfunc take(d: consuming [String: Int]): Int { return d.count }\n"
             "func main() { var s = S(d: [\"a\": 1])\n &s.d[\"b\"] = take(d: consume s.d) }\n" }) {
         SCOPED_TRACE(program);
-        EXPECT_TRUE(contains(diagnose(program), "semantic-analysis.use-after-consume")) << diagnose(program);
+        const auto text = diagnose(program);
+        EXPECT_TRUE(contains(text, "semantic-analysis.use-after-consume")) << text;
+        // Nothing is read: the help says how to write the assignment instead.
+        EXPECT_TRUE(contains(text, "the right side runs before the target is assigned (spec 4.4.3)")) << text;
+        EXPECT_FALSE(contains(text, "before reading it")) << text;
     }
     // Reinitializing the whole root from its own consumed value stays valid.
     EXPECT_EQ(diagnose("func pass(d: consuming [String: Int]): [String: Int] { return d }\n"
                        "func main() { var d: [String: Int] = [\"a\": 1]\n d = pass(d: consume d)\n"
                        " print(value: d.count) }\n"), "");
+    // A right side may initialize the root (tests/e2e/assignment_initializing_rhs), but only on every path.
+    const auto oneBranch = diagnose("func fill(out: initializing [String: Int]): Int {\n &out = [\"x\": 0]\n"
+                                    " return 1 }\nfunc main() { var d: [String: Int]\n let c = true\n"
+                                    " &d[\"a\"] = if c { fill(out: &d) } else { 2 }\n print(value: d.count) }\n");
+    EXPECT_TRUE(contains(oneBranch, "semantic-analysis.use-before-initialization")) << oneBranch;
 }
 
 TEST(DictCharacterization, ItsCountIsReadOnlyWithDictionaryHelp) {
