@@ -455,6 +455,7 @@ TEST(IRModelTest, RemovedArrayWireSlotsAreRejectedAndNeverReused) {
 // The builtin dictionary's operations (39-41), `subscript_addr` (50) and its type kind (11) were removed when the
 // library `Dict` replaced it (decision 0027, wire 25); their slots stay rejected and are never reused.
 TEST(IRModelTest, RemovedDictionaryWireSlotsAreRejectedAndNeverReused) {
+    EXPECT_EQ(static_cast<unsigned>(Opcode::subscript), 49u);
     for (const unsigned slot : { 39u, 40u, 41u, 50u }) {
         auto module = validAddModule();
         module.functions[0].blocks[0].instructions[0].opcode = static_cast<Opcode>(slot);
@@ -554,6 +555,75 @@ TEST(IRModelTest, VerifierRejectsMalformedRoleEnumerations) {
     });
     rejects("type and definition name different declarations", [](auto& m) {
         m.types[m.types.size() - 1].symbol = 99;
+    });
+    rejects("two declarations bound to the optional role", [](auto& m) {
+        m.types.push_back(TypeName { 7, "Int?", joyeer::typing::TypeKind::enumeration, 30, { 1 } });
+        m.enumerations.push_back(EnumerationDefinition {
+            30, 7, "Int?",
+            { EnumCaseDefinition { 31, "Some", { 1 } }, EnumCaseDefinition { 32, "None", {} } },
+            EnumerationRole::optional, 0, 1,
+        });
+    });
+}
+
+// `subscript` and `count` are String-only since the builtin dictionary went (decision 0027): the backend reads the
+// handle's fields without checking the base kind, so the verifier is their only guard.
+TEST(IRModelTest, StringByteAndCountAcceptOnlyAStringValue) {
+    auto module = validAddModule();
+    module.types.push_back(TypeName { 3, "String", joyeer::typing::TypeKind::string });
+    module.types.push_back(TypeName { 4, "UInt8", joyeer::typing::TypeKind::uint8 });
+    auto& function = module.functions[0];
+    function.name = "byte";
+    function.parameters = {
+        Parameter { Value { 0, 3, ValueCategory::value }, std::nullopt, "text", false, {} },
+        Parameter { Value { 1, 1, ValueCategory::value }, std::nullopt, "index", false, {} },
+    };
+    function.resultType = 4;
+    function.blocks[0].instructions = {
+        Instruction { Opcode::count, Value { 2, 1, ValueCategory::value }, { 0 } },
+        Instruction { Opcode::subscript, Value { 3, 4, ValueCategory::value }, { 0, 1 } },
+        Instruction { Opcode::returnValue, std::nullopt, { 3 } },
+    };
+    const auto valid = Verifier().verify(module);
+    ASSERT_TRUE(valid.succeeded()) << dump(valid);
+
+    const auto rejects = [&](const char* what, const char* message, const auto& mutate) {
+        auto invalid = module;
+        mutate(invalid);
+        const auto verification = Verifier().verify(invalid);
+        EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch)) << what;
+        EXPECT_NE(dump(verification).find(message), std::string::npos) << what << ": " << dump(verification);
+    };
+    constexpr auto subscriptMessage = "subscript index/result types do not match its base type";
+    constexpr auto countMessage = "count requires String and produces Int";
+    rejects("a subscript of a non-String base", subscriptMessage, [](Module& m) {
+        m.functions[0].parameters[0].value.type = 2;
+        m.functions[0].blocks[0].instructions.erase(m.functions[0].blocks[0].instructions.begin());
+    });
+    rejects("a subscript of an address base", subscriptMessage, [](Module& m) {
+        m.functions[0].parameters[0].value.category = ValueCategory::address;
+        m.functions[0].blocks[0].instructions.erase(m.functions[0].blocks[0].instructions.begin());
+    });
+    rejects("a subscript with a non-Int index", subscriptMessage, [](Module& m) {
+        m.functions[0].parameters[1].value.type = 2;
+    });
+    rejects("a subscript producing a non-UInt8 result", subscriptMessage, [](Module& m) {
+        m.functions[0].blocks[0].instructions[1].result->type = 1;
+        m.functions[0].resultType = 1;
+    });
+    rejects("a subscript producing an address", subscriptMessage, [](Module& m) {
+        m.functions[0].blocks[0].instructions[1].result->category = ValueCategory::address;
+    });
+    rejects("a subscript in a module without UInt8", subscriptMessage, [](Module& m) {
+        m.types.pop_back();
+        m.functions[0].blocks[0].instructions[1].result->type = 1;
+        m.functions[0].resultType = 1;
+    });
+    rejects("a count of a non-String base", countMessage, [](Module& m) {
+        m.functions[0].blocks[0].instructions[0].operands = { 1 };
+    });
+    rejects("a count producing a non-Int result", countMessage, [](Module& m) {
+        m.functions[0].blocks[0].instructions[0].result->type = 4;
     });
 }
 

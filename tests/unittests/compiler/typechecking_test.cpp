@@ -1578,6 +1578,64 @@ print(value: first)
             << checking.diagnostics[0].message;
 }
 
+TEST_F(TypeCheckingTest, AStringByteCannotBeConsumed) {
+    // Consuming would move the byte out of the String; a byte is copyable, so it is read without 'consume'.
+    check(R"JOYEER(func eat(value: consuming UInt8) { print(value: value) }
+func main() {
+var text = "abc"
+let first = consume text[0]
+eat(value: consume text[1])
+let f: (consuming UInt8): () = eat
+f(consume (text)[2])
+print(value: first)
+eat(value: text[0])
+}
+)JOYEER");
+
+    ASSERT_EQ(checking.diagnostics.size(), 3u) << joyeer::typing::dump(checking.diagnostics);
+    for (const auto& diagnostic : checking.diagnostics) {
+        EXPECT_EQ(diagnostic.id, joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument)
+                << diagnostic.message;
+        EXPECT_NE(diagnostic.message.find("cannot consume a byte of a String"), std::string::npos)
+                << diagnostic.message;
+        ASSERT_TRUE(diagnostic.help.has_value()) << diagnostic.message;
+        EXPECT_NE(diagnostic.help->find("without 'consume'"), std::string::npos) << *diagnostic.help;
+    }
+}
+
+TEST_F(TypeCheckingTest, AStringByteIsReadOnlyThroughEveryBaseAndBinding) {
+    // Nested bases, an inout parameter, a parenthesized target, and `let` bindings: making the binding mutable would
+    // not help, so every one reports the String byte, once, with its help. Reading a byte of a `var` is fine.
+    check(R"JOYEER(struct Box {
+var text: String
+}
+func edit(text: inout String, texts: inout [String], box: inout Box, table: inout [String: String]) {
+&text[0] = 1
+&texts[0][1] = 2
+&box.text[0] = 3
+&table["k"][0] = 4
+&(text)[0] = 5
+}
+func main() {
+let fixed = "abc"
+&fixed[0] = 6
+let frozen = Box(text: "abc")
+&frozen.text[0] = 7
+var open = "abc"
+let byte: UInt8 = open[1]
+print(value: byte)
+}
+)JOYEER");
+
+    ASSERT_EQ(checking.diagnostics.size(), 7u) << joyeer::typing::dump(checking.diagnostics);
+    for (const auto& diagnostic : checking.diagnostics) {
+        EXPECT_EQ(diagnostic.id, joyeer::typing::TypeCheckingDiagnosticId::assignmentToImmutable) << diagnostic.message;
+        EXPECT_NE(diagnostic.message.find("a byte of a String"), std::string::npos) << diagnostic.message;
+        ASSERT_TRUE(diagnostic.help.has_value()) << diagnostic.message;
+        EXPECT_NE(diagnostic.help->find("spec 2.1.1"), std::string::npos) << *diagnostic.help;
+    }
+}
+
                     TEST_F(TypeCheckingTest, EnforcesInoutCallArgumentConventions) {
                         check(R"JOYEER(func update(value: inout Int) { &value = 1 }
                     func inspect(value: Int) { }

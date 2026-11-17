@@ -1752,6 +1752,8 @@ add_joyeer_rejected_regression(TypeDictionaryGetArguments type-checking
         dictionary_get_arguments type-checking.invalid-call-arguments)
 add_joyeer_rejected_regression(TypeStringByteAssignment type-checking
         string_byte_assignment type-checking.assignment-to-immutable)
+add_joyeer_rejected_regression(TypeStringByteConsume type-checking
+        string_byte_consume type-checking.invalid-consume-argument)
 add_joyeer_rejected_regression(TypeLoopControlOutside type-checking
         loop_control_outside type-checking.invalid-loop-control)
 add_joyeer_rejected_regression(TypeForInNotIterable type-checking
