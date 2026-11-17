@@ -807,7 +807,6 @@ TEST_F(IRLoweringTest, DictionaryGetBorrowsInputsAndOwnsItsResultWithoutExtraCop
     const auto& lookup = function("lookup");
     EXPECT_EQ(callsTo(lookup, ".get"), 1u);
     EXPECT_EQ(opcodeCount(lookup, joyeer::ir::Opcode::copyValue), 0u);
-    EXPECT_EQ(opcodeCount(lookup, joyeer::ir::Opcode::dictionaryGet), 0u);
     EXPECT_EQ(callsTo(function("propagate"), ".get"), 1u);
     EXPECT_EQ(opcodeCount(function("propagate"), joyeer::ir::Opcode::copyValue), 0u);
 }
@@ -1477,7 +1476,6 @@ return values[0] + lookup["answer"]
     // subscripts go through an addressor.
     const auto& build = function("build");
     EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::stackBlock), 2u);
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::constructDictionary), 0u);
     EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::subscript), 0u);
     EXPECT_EQ(callsTo(build, ".literal"), 2u);
     EXPECT_EQ(callsTo(build, ".element"), 2u);
@@ -1535,7 +1533,6 @@ return lookup
     // Each `&d[k] = v` calls the library's `dict_set` with an owned key and value (decision 0027): the unmarked `let`
     // key and value are copied.
     const auto& build = function("build");
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::dictionarySet), 0u);
     EXPECT_EQ(callsTo(build, ".insert"), 2u);
     EXPECT_GE(opcodeCount(build, joyeer::ir::Opcode::copyValue), 2u);
     EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::returnValue), 1u);

@@ -1272,8 +1272,7 @@ return values.get(key: key)
 }
 
 // Since the dictionary switch (decision 0027) `get` is the library's `dict_get` method: a lookup, then `clone_at` of the
-// found value. The builtin lowering's branch-shape tests went with it; the hand-built tests below still cover that
-// backend path until the cleanup stage removes it.
+// found value.
 TEST_F(LLVMBackendTest, LibraryDictionaryGetLooksUpWithDebugLocationsAndNoUnitPayloadAccess) {
     ASSERT_NO_FATAL_FAILURE(emit(
             "func text(values: borrowing [Int: String], key: Int): String? {\n"
@@ -1296,66 +1295,6 @@ TEST_F(LLVMBackendTest, LibraryDictionaryGetLooksUpWithDebugLocationsAndNoUnitPa
         EXPECT_NE(line.find(", !dbg !"), std::string::npos) << line;
     }
     EXPECT_EQ(lookups, 2u);
-}
-
-TEST(LLVMOwnershipBackendTest, DictionaryGetUsesConcreteOptionalCaseTags) {
-    for (const bool someFirst : { false, true }) {
-        SCOPED_TRACE(someFirst);
-        joyeer::ir::Module module;
-        module.sourceName = "dictionary-get.joyeer";
-        module.types = {
-            { 0, "Int", joyeer::typing::TypeKind::integer },
-            { 1, "[Int: Int]", joyeer::typing::TypeKind::dictionary,
-              joyeer::semantic::invalidSymbolId, { 0, 0 } },
-            { 2, "Int?", joyeer::typing::TypeKind::enumeration, 10, { 0 } },
-        };
-        const joyeer::ir::EnumCaseDefinition some { 11, "Some", { 0 } };
-        const joyeer::ir::EnumCaseDefinition none { 12, "None", {} };
-        module.enumerations = {
-            { 10, 2, "Int?", { someFirst ? some : none, someFirst ? none : some },
-              joyeer::ir::EnumerationRole::optional, someFirst ? 0u : 1u, someFirst ? 1u : 0u },
-        };
-        joyeer::ir::Function function;
-        function.id = 0;
-        function.name = "lookup";
-        function.resultType = 2;
-        function.returnsValue = true;
-        function.entry = 0;
-        function.parameters = {
-            { { 0, 1, joyeer::ir::ValueCategory::value }, std::nullopt, "dictionary" },
-            { { 1, 0, joyeer::ir::ValueCategory::value }, std::nullopt, "key" },
-        };
-        function.blocks = {
-            {
-                0, "entry",
-                {
-                    {
-                        joyeer::ir::Opcode::dictionaryGet,
-                        joyeer::ir::Value { 2, 2, joyeer::ir::ValueCategory::value },
-                        { 0, 1 },
-                    },
-                    { joyeer::ir::Opcode::returnValue, std::nullopt, { 2 } },
-                },
-            },
-        };
-        module.functions.push_back(std::move(function));
-        const auto result = joyeer::llvmbackend::Emitter().emit(module);
-        ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
-        const auto sourceStart = result.text.find("define %joyeer.enum.2");
-        ASSERT_NE(sourceStart, std::string::npos);
-        const auto body = result.text.substr(sourceStart);
-        const auto someBranch = body.find("\ndictionary.get.some.");
-        const auto doneBranch = body.find("\ndictionary.get.done.");
-        ASSERT_NE(someBranch, std::string::npos);
-        ASSERT_NE(doneBranch, std::string::npos);
-        EXPECT_NE(body.substr(0, someBranch).find(
-                "store i32 " + std::to_string(someFirst ? 1 : 0) + ", ptr "),
-                std::string::npos);
-        EXPECT_NE(body.substr(someBranch, doneBranch - someBranch).find(
-                "store i32 " + std::to_string(someFirst ? 0 : 1) + ", ptr "),
-                std::string::npos);
-        EXPECT_EQ(body.find("call void @joyeer_clone_type_"), std::string::npos);
-    }
 }
 
 TEST_F(LLVMBackendTest, EmitsZeroInitializationForDeferredOwnedStorage) {

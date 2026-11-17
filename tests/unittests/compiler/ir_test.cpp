@@ -435,9 +435,9 @@ TEST(IRModelTest, RejectsZeroInitializationOfNonAddressValues) {
 }
 
 TEST(IRModelTest, RemovedArrayWireSlotsAreRejectedAndNeverReused) {
-    EXPECT_EQ(static_cast<unsigned>(Opcode::constructDictionary), 39u);
+    EXPECT_EQ(static_cast<unsigned>(Opcode::fieldAddress), 42u);
     EXPECT_EQ(static_cast<unsigned>(Opcode::branch), 51u);
-    EXPECT_EQ(static_cast<unsigned>(joyeer::typing::TypeKind::dictionary), 11u);
+    EXPECT_EQ(static_cast<unsigned>(joyeer::typing::TypeKind::int8), 12u);
     for (unsigned slot = 35; slot <= 38; ++slot) {
         auto module = validAddModule();
         module.functions[0].blocks[0].instructions[0].opcode = static_cast<Opcode>(slot);
@@ -452,117 +452,23 @@ TEST(IRModelTest, RemovedArrayWireSlotsAreRejectedAndNeverReused) {
     EXPECT_NE(dump(verification).find("unknown or removed type kind"), std::string::npos);
 }
 
-TEST(IRModelTest, VerifiesDictionarySetStorageKeyAndValueTypes) {
+// The builtin dictionary's operations (39-41), `subscript_addr` (50) and its type kind (11) were removed when the
+// library `Dict` replaced it (decision 0027, wire 25); their slots stay rejected and are never reused.
+TEST(IRModelTest, RemovedDictionaryWireSlotsAreRejectedAndNeverReused) {
+    for (const unsigned slot : { 39u, 40u, 41u, 50u }) {
+        auto module = validAddModule();
+        module.functions[0].blocks[0].instructions[0].opcode = static_cast<Opcode>(slot);
+        const auto verification = Verifier().verify(module);
+        EXPECT_FALSE(verification.succeeded()) << slot;
+        EXPECT_NE(dump(verification).find("unknown or removed opcode"), std::string::npos) << slot;
+    }
     auto module = validAddModule();
     module.types.push_back(TypeName {
-        3,
-        "[Int: Bool]",
-        joyeer::typing::TypeKind::dictionary,
-        joyeer::semantic::invalidSymbolId,
-        { 1, 2 },
+        3, "[Int: Bool]", static_cast<joyeer::typing::TypeKind>(11), joyeer::semantic::invalidSymbolId, { 1, 2 },
     });
-    auto& function = module.functions[0];
-    function.name = "set";
-    function.parameters.clear();
-    function.resultType = 0;
-    function.returnsValue = false;
-    function.blocks[0].instructions = {
-        Instruction {
-            Opcode::stackAllocate,
-            Value { 0, 3, ValueCategory::address },
-        },
-        Instruction {
-            Opcode::integerConstant,
-            Value { 1, 1, ValueCategory::value },
-            {}, {}, std::nullopt, std::nullopt, 42,
-        },
-        Instruction {
-            Opcode::booleanConstant,
-            Value { 2, 2, ValueCategory::value },
-            {}, {}, std::nullopt, std::nullopt, 1,
-        },
-        Instruction { Opcode::dictionarySet, std::nullopt, { 0, 1, 2 } },
-        Instruction { Opcode::returnVoid },
-    };
-
-    const auto valid = Verifier().verify(module);
-    EXPECT_TRUE(valid.succeeded()) << dump(valid);
-
-    function.blocks[0].instructions[3].operands = { 0, 2, 1 };
-    const auto invalid = Verifier().verify(module);
-    EXPECT_TRUE(hasError(invalid, VerificationErrorId::typeMismatch));
-}
-
-TEST(IRModelTest, VerifiesDictionaryGetKeyAndExactOptionalResult) {
-    auto module = validAddModule();
-    module.types.push_back(TypeName {
-        3, "[Int: Bool]", joyeer::typing::TypeKind::dictionary,
-        joyeer::semantic::invalidSymbolId, { 1, 2 },
-    });
-    module.types.push_back(TypeName {
-        4, "Bool?", joyeer::typing::TypeKind::enumeration,
-        10, { 2 },
-    });
-    module.types.push_back(TypeName {
-        5, "Bool??", joyeer::typing::TypeKind::enumeration,
-        10, { 4 },
-    });
-    // Role-bound instances of one declaration (decision 0024): Some is the present case.
-    for (const auto& [type, payload] : std::vector<std::pair<joyeer::typing::TypeId, joyeer::typing::TypeId>> { { 4, 2 }, { 5, 4 } }) {
-        module.enumerations.push_back(EnumerationDefinition {
-            10, type, type == 4 ? "Bool?" : "Bool??",
-            { EnumCaseDefinition { 11, "Some", { payload } }, EnumCaseDefinition { 12, "None", {} } },
-            EnumerationRole::optional, 0, 1,
-        });
-    }
-    auto& function = module.functions[0];
-    function.parameters = {
-        Parameter { Value { 0, 3, ValueCategory::value }, std::nullopt, "values", false, {} },
-        Parameter { Value { 1, 1, ValueCategory::value }, std::nullopt, "key", false, {} },
-    };
-    function.resultType = 4;
-    function.blocks[0].instructions = {
-        Instruction { Opcode::dictionaryGet, Value { 2, 4, ValueCategory::value }, { 0, 1 } },
-        Instruction { Opcode::returnValue, std::nullopt, { 2 } },
-    };
-    const auto valid = Verifier().verify(module);
-    ASSERT_TRUE(valid.succeeded()) << dump(valid);
-    EXPECT_NE(dump(module).find("dictionary_get"), std::string::npos);
-    // A role-bound enum must keep its shape, and one role belongs to one declaration (decision 0024).
-    {
-        auto misshaped = module;
-        misshaped.enumerations[0].secondRoleCase = misshaped.enumerations[0].firstRoleCase;
-        EXPECT_TRUE(hasError(Verifier().verify(misshaped), VerificationErrorId::typeMismatch));
-        auto swapped = module;
-        std::swap(swapped.enumerations[0].firstRoleCase, swapped.enumerations[0].secondRoleCase);
-        EXPECT_TRUE(hasError(Verifier().verify(swapped), VerificationErrorId::typeMismatch));
-        auto otherDeclaration = module;
-        otherDeclaration.enumerations[1].symbol = 99;
-        EXPECT_TRUE(hasError(Verifier().verify(otherDeclaration), VerificationErrorId::typeMismatch));
-        auto unbound = module;
-        unbound.enumerations[0].role = EnumerationRole::none;
-        EXPECT_TRUE(hasError(Verifier().verify(unbound), VerificationErrorId::typeMismatch));
-    }
-    for (const auto badType : { 1u, 2u, 5u }) {
-        auto invalid = module;
-        invalid.functions[0].blocks[0].instructions[0].result->type = badType;
-        EXPECT_TRUE(hasError(Verifier().verify(invalid), VerificationErrorId::typeMismatch));
-    }
-    auto invalid = module;
-    invalid.functions[0].parameters[1].value.type = 2;
-    EXPECT_TRUE(hasError(Verifier().verify(invalid), VerificationErrorId::typeMismatch));
-    invalid = module;
-    invalid.functions[0].parameters[0].value.category = ValueCategory::address;
-    EXPECT_TRUE(hasError(Verifier().verify(invalid), VerificationErrorId::typeMismatch));
-    invalid = module;
-    invalid.functions[0].blocks[0].instructions[0].result->category = ValueCategory::address;
-    EXPECT_TRUE(hasError(Verifier().verify(invalid), VerificationErrorId::typeMismatch));
-    invalid = module;
-    invalid.functions[0].blocks[0].instructions[0].operands.pop_back();
-    EXPECT_FALSE(Verifier().verify(invalid).succeeded());
-    invalid = module;
-    invalid.functions[0].blocks[0].instructions[0].result.reset();
-    EXPECT_FALSE(Verifier().verify(invalid).succeeded());
+    const auto verification = Verifier().verify(module);
+    EXPECT_FALSE(verification.succeeded());
+    EXPECT_NE(dump(verification).find("unknown or removed type kind"), std::string::npos);
 }
 
 // Decision 0024: every malformed role binding is rejected by the verifier, not trusted from lowering.

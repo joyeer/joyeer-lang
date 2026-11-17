@@ -450,16 +450,12 @@ TEST_F(DictRoleTest, EveryDictionaryOperationLowersThroughTheRoles) {
     ASSERT_NE(module, nullptr);
     const auto verification = joyeer::ir::Verifier().verify(*module);
     EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
-    // No builtin dictionary opcode (the extern names in the dump would match a text search).
-    using joyeer::ir::Opcode;
+    // No removed builtin dictionary slot (the extern names in the dump would match a text search).
     for (const auto& function : module->functions) {
         for (const auto& block : function.blocks) {
             for (const auto& instruction : block.instructions) {
-                EXPECT_TRUE(instruction.opcode != Opcode::constructDictionary &&
-                            instruction.opcode != Opcode::dictionarySet &&
-                            instruction.opcode != Opcode::dictionaryGet &&
-                            instruction.opcode != Opcode::subscriptAddress)
-                        << function.name;
+                const auto slot = static_cast<unsigned>(instruction.opcode);
+                EXPECT_TRUE((slot < 39 || slot > 41) && slot != 50) << function.name;
             }
         }
     }
@@ -607,8 +603,9 @@ TEST_F(DictRoleTest, ANoncopyableValueHasNoCopier) {
     EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
 }
 
-TEST_F(DictRoleTest, TheWireCarriesTheDictionaryRolesAtVersion24) {
-    EXPECT_EQ(joyeer::llvmbackend::wire::version, 24u);
+// Wire 24 added the dictionary roles; wire 25 removed the builtin dictionary's slots.
+TEST_F(DictRoleTest, TheWireCarriesTheDictionaryRoles) {
+    EXPECT_EQ(joyeer::llvmbackend::wire::version, 25u);
     load("func size(table: Table<String, [Int]>): Int { return table.count }\n");
     const auto module = lower();
     ASSERT_NE(module, nullptr);

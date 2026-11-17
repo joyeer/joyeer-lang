@@ -41,13 +41,6 @@ int main(int argc, char** argv) {
             "String",
             joyeer::typing::TypeKind::string,
         },
-        joyeer::ir::TypeName {
-            6,
-            "[String: Int]",
-            joyeer::typing::TypeKind::dictionary,
-            joyeer::semantic::invalidSymbolId,
-            { 4, 1 },
-        },
     };
 
     module.structures.push_back(joyeer::ir::StructureDefinition {
@@ -283,34 +276,9 @@ int main(int argc, char** argv) {
                     { 0, 1 },
                 },
                 joyeer::ir::Instruction {
-                    joyeer::ir::Opcode::stringConstant,
-                    joyeer::ir::Value { 4, 4, joyeer::ir::ValueCategory::value },
-                    {}, {}, std::nullopt, std::nullopt, 0, "key",
-                },
-                joyeer::ir::Instruction {
-                    joyeer::ir::Opcode::integerConstant,
-                    joyeer::ir::Value { 5, 1, joyeer::ir::ValueCategory::value },
-                    {}, {}, std::nullopt, std::nullopt, 42,
-                },
-                joyeer::ir::Instruction {
-                    joyeer::ir::Opcode::constructDictionary,
-                    joyeer::ir::Value { 6, 6, joyeer::ir::ValueCategory::value },
-                    { 4, 5 },
-                },
-                joyeer::ir::Instruction {
-                    joyeer::ir::Opcode::subscript,
-                    joyeer::ir::Value { 7, 1, joyeer::ir::ValueCategory::value },
-                    { 6, 4 },
-                },
-                joyeer::ir::Instruction {
-                    joyeer::ir::Opcode::add,
-                    joyeer::ir::Value { 8, 1, joyeer::ir::ValueCategory::value },
-                    { 3, 7 },
-                },
-                joyeer::ir::Instruction {
                     joyeer::ir::Opcode::returnValue,
                     std::nullopt,
-                    { 8 },
+                    { 3 },
                 },
             },
         },
