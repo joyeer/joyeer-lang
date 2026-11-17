@@ -145,18 +145,21 @@ public struct Dict<K, V> {
                 value: valueSlot)
     }
 
-    // An independent copy of the stored value, or `.None` for a missing key.
+    // An independent copy of the stored value, or `.None` for a missing key. One local returned once: after inlining
+    // its stack slot splits into scalars, so the caller's `match` folds (two returns leave an aggregate phi that
+    // LLVM does not split, measurably slower in a lookup loop).
     @compiler_role(dict_get)
     public borrowing func get(key: K): Optional<V> {
         let value = findValue(data: self.address, count: self.count,
                 key: joyeer_intrinsic_borrow_address<K>(value: key), keySize: joyeer_intrinsic_size_of<K>(),
                 keyKind: joyeer_intrinsic_key_kind<K>() as Int32)
-        if value == 0 {
-            return .None
+        var found: Optional<V> = .None
+        if value != 0 {
+            let slot = joyeer_intrinsic_stack_slot<V>()
+            joyeer_intrinsic_clone_at<V>(destination: slot, source: value)
+            found = .Some(joyeer_intrinsic_move_out<V>(address: slot))
         }
-        let slot = joyeer_intrinsic_stack_slot<V>()
-        joyeer_intrinsic_clone_at<V>(destination: slot, source: value)
-        return .Some(joyeer_intrinsic_move_out<V>(address: slot))
+        return found
     }
 
     @compiler_role(dict_copy)
