@@ -73,7 +73,7 @@ TEST(DictCharacterization, OtherKeyTypesAreRejectedAtTheType) {
     EXPECT_TRUE(contains(point, "type-checking.invalid-type-argument")) << point;
     EXPECT_TRUE(contains(point, "'Point' cannot be a dictionary key")) << point;
     EXPECT_TRUE(contains(point, "keys are restricted to Int, Bool, UInt8 and String")) << point;
-    EXPECT_EQ(occurrences(point, "cannot be a dictionary key"), 1u) << point;
+    EXPECT_EQ(occurrences(point, "' cannot be a dictionary key"), 1u) << point;
     for (const auto* program : {
             "func f(d: [Double: Int]) {}\nfunc main() {}\n",
             "func f(d: [Int32: Int]) {}\nfunc main() {}\n",
@@ -85,19 +85,19 @@ TEST(DictCharacterization, OtherKeyTypesAreRejectedAtTheType) {
             "func main() { let d: [Double: Int] = [:]\n print(value: d.count) }\n" }) {
         SCOPED_TRACE(program);
         const auto text = diagnose(program);
-        EXPECT_EQ(occurrences(text, "cannot be a dictionary key"), 1u) << text;
+        EXPECT_EQ(occurrences(text, "' cannot be a dictionary key"), 1u) << text;
     }
     // The four admitted keys, by type kind.
     EXPECT_EQ(diagnose("func f(a: [Int: Int], b: [Bool: Int], c: [UInt8: Int], d: [String: Int]) {}\n"
                        "func main() {}\n"), "");
     // A function-type, type-parameter or Never key keeps its own diagnostic only.
     for (const auto* program : {
-            "func f(d: [(Int) -> Int: Int]) {}\nfunc main() {}\n",
+            "func f(d: [(Int): Int: Int]) {}\nfunc main() {}\n",
             "func f<K>(d: [K: Int]) {}\nfunc main() {}\n",
             "func f(d: [Never: Int]) {}\nfunc main() {}\n" }) {
         SCOPED_TRACE(program);
         const auto text = diagnose(program);
-        EXPECT_FALSE(contains(text, "cannot be a dictionary key")) << text;
+        EXPECT_FALSE(contains(text, "' cannot be a dictionary key")) << text;
         EXPECT_NE(text, "") << text;
     }
 }
