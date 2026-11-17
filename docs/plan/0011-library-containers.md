@@ -696,3 +696,23 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   1.062 [1.057, 1.071] at `-O2`, so about 6% is unexplained; the builtin does clone the dictionary
   (`joyeer_dictionary_clone_abi`), so the copy is like for like. Raw reports in `out/perf-gate/dict-stage3b` (not in
   the repository). Next: attribute the remaining nested-destroy cost before stage 5.
+- 2026-11-17: Stage 3 attribution of the nested-destroy miss (Windows x64, 21 interleaved repetitions each).
+  Cumulative phase pairs of the nested-destroy program (build and drop; plus the copy; reads without the copy) put
+  the whole `-O2` gap and most of the `-O0` gap in building the `[String: [Int]]` table: 109 ns per round at `-O2`
+  (796 at `-O0`), with the copy adding nothing. The optimized IR shows why: each `Table.set` drops two moved-from
+  Strings (the consumed `key` parameter and the caller's `inserted` local). A moved-from String is the zero value,
+  but its destroy is the opaque runtime call `joyeer_string_destroy_abi`, which then calls `release` with address 0,
+  so 32 needless calls per round; a moved-from array costs nothing (its `deinit` is inlined and the zero test
+  folds), which is why the `Int`-keyed rows show no gap. The builtin `&d[k] = v` moves the key into the runtime with
+  no drop. Experiment 1 (reverted; patch kept in `out/perf-gate/dict-stage3b`): the String destroy helper tests
+  `data` inline and calls the runtime only when it is not null (behavior-preserving: every owned String has a block,
+  and `release` ignores 0). The build and copy phases then match the builtin (`-O0` 1.002 and 1.013, `-O2` 1.006 and
+  0.999), and the full program reaches 1.001 [0.984, 1.008] at `-O2`, but stays at 1.059 at `-O0`, the same against a
+  builtin that also copies the values out (1.055). Experiment 2 (reverted): additionally always-inline `Table`'s
+  methods and `emptyTable`, as 0026 A4 does for the role wrappers. At `-O0` with both: lookup 1.012, `String` lookup
+  1.022, insert growth 1.010, nested destroy 1.032 [1.020, 1.039], all inside the 1.05 margin. Verdict: **go**, with
+  two conditions for the switch: (1) the moved-from String drop must cost no runtime call (the inline guard, or
+  static drop elision) — the role's `dict_set` consumes its key exactly as `Table.set` does, so the switch would
+  carry the same cost otherwise; (2) the dictionary role wrappers join the always-inline policy (already in 0027,
+  "Cost mechanism"). The remaining `-O0` cost of nested destroy (about 3%) is `at` returning `V` by copy, which
+  `d[k]` through the role addressor does not do.
