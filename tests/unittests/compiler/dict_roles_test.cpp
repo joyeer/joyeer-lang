@@ -14,6 +14,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <functional>
 #include <string>
 
 namespace {
@@ -705,6 +706,280 @@ TEST_F(DictRoleTest, TheVerifierRejectsForgedDictionaryRoles) {
             // A literal factory consumes a dictionary and returns the same instance.
             case 13: functionNamed(copy, ".literal")->resultType = integer; break;
         }
+        EXPECT_FALSE(joyeer::ir::Verifier().verify(copy).succeeded());
+    }
+}
+
+// ---- The closed literal packing protocol for a dictionary (0027 Decision 3, rules 1-6) ----
+
+joyeer::ir::Function& functionExactly(joyeer::ir::Module& module, const std::string& name) {
+    const auto found = std::find_if(module.functions.begin(), module.functions.end(),
+                                    [&](const auto& function) { return function.name == name; });
+    EXPECT_NE(found, module.functions.end()) << name;
+    return *found;
+}
+
+// The parts of a packed dictionary literal that the mutations change.
+struct PackedLiteral {
+    joyeer::ir::TypeId table = 0;
+    joyeer::ir::TypeId entry = 0;
+    joyeer::semantic::SymbolId keyField = 0;
+    joyeer::semantic::SymbolId valueField = 0;
+    joyeer::ir::FunctionId factory = 0;
+};
+
+// Replaces the body of `name`, a function returning a table, with a literal of `entries` entries packed the way the
+// switch's lowering will pack one: keys and values evaluated first, an inert zero receiver, one stack block of
+// entries, each entry's key and (unless the value is Void) value stored through a field address, then one transfer
+// to the literal method.
+PackedLiteral packLiteral(joyeer::ir::Module& module, const std::string& name, int64_t entries) {
+    using joyeer::ir::Opcode;
+    using joyeer::ir::Value;
+    using joyeer::ir::ValueCategory;
+    using joyeer::ir::ValueId;
+    auto& function = functionExactly(module, name);
+    PackedLiteral literal;
+    literal.table = function.resultType;
+    const auto* tableType = typeOf(module, literal.table);
+    const auto entry = std::find_if(module.structures.begin(), module.structures.end(), [&](const auto& definition) {
+        return definition.role == entryRole && typeOf(module, definition.type)->arguments == tableType->arguments;
+    });
+    EXPECT_NE(entry, module.structures.end());
+    literal.entry = entry->type;
+    literal.keyField = entry->fields[0].symbol;
+    literal.valueField = entry->fields[1].symbol;
+    const auto factory = std::find_if(module.functions.begin(), module.functions.end(), [&](const auto& candidate) {
+        return candidate.literalFactory && candidate.resultType == literal.table;
+    });
+    EXPECT_NE(factory, module.functions.end());
+    literal.factory = factory->id;
+    const auto keyType = tableType->arguments[0];
+    const auto valueType = tableType->arguments[1];
+    const bool unitValue = typeOf(module, valueType)->kind == joyeer::typing::TypeKind::voidType;
+    const auto integer = keyType;
+    const auto prototype = function.blocks[0].instructions.front();
+    std::vector<joyeer::ir::Instruction> body;
+    ValueId next = 5000;
+    const auto emit = [&](Opcode opcode, std::optional<std::pair<joyeer::ir::TypeId, ValueCategory>> result,
+                          std::vector<ValueId> operands, int64_t number = 0,
+                          std::optional<joyeer::semantic::SymbolId> symbol = std::nullopt) -> ValueId {
+        joyeer::ir::Instruction instruction { opcode };
+        if (result.has_value()) instruction.result = Value { next++, result->first, result->second };
+        instruction.operands = std::move(operands);
+        instruction.integerValue = number;
+        instruction.symbol = symbol;
+        instruction.span = prototype.span;
+        instruction.debugLocation = prototype.debugLocation;
+        if (opcode == Opcode::call) instruction.callee = literal.factory;
+        body.push_back(instruction);
+        return instruction.result.has_value() ? instruction.result->id : 0;
+    };
+    const auto value = [](joyeer::ir::TypeId type) { return std::make_pair(type, ValueCategory::value); };
+    const auto address = [](joyeer::ir::TypeId type) { return std::make_pair(type, ValueCategory::address); };
+    std::vector<ValueId> keys;
+    std::vector<ValueId> values;
+    for (int64_t index = 0; index < entries; ++index) {
+        keys.push_back(emit(Opcode::integerConstant, value(integer), {}, index + 1));
+        if (!unitValue) values.push_back(emit(Opcode::booleanConstant, value(valueType), {}, index % 2));
+    }
+    const auto count = emit(Opcode::integerConstant, value(integer), {}, entries);
+    const auto place = emit(Opcode::stackAllocate, address(literal.table), {});
+    emit(Opcode::zeroInitialize, std::nullopt, { place });
+    const auto receiver = emit(Opcode::load, value(literal.table), { place });
+    const auto block = emit(Opcode::stackBlock, value(integer), { count }, static_cast<int64_t>(literal.entry));
+    for (int64_t index = 0; index < entries; ++index) {
+        const auto offset = emit(Opcode::integerConstant, value(integer), {}, index);
+        const auto slot = emit(Opcode::slotAddress, value(integer), { block, offset },
+                               static_cast<int64_t>(literal.entry));
+        const auto at = emit(Opcode::integerAddress, address(literal.entry), { slot });
+        const auto key = emit(Opcode::fieldAddress, address(keyType), { at }, 0, literal.keyField);
+        emit(Opcode::store, std::nullopt, { keys[static_cast<size_t>(index)], key });
+        if (unitValue) continue;
+        const auto stored = emit(Opcode::fieldAddress, address(valueType), { at }, 0, literal.valueField);
+        emit(Opcode::store, std::nullopt, { values[static_cast<size_t>(index)], stored });
+    }
+    const auto result = emit(Opcode::call, value(literal.table), { receiver, block, count });
+    emit(Opcode::returnValue, std::nullopt, { result });
+    function.blocks.resize(1);
+    function.blocks[0].instructions = std::move(body);
+    return literal;
+}
+
+std::vector<joyeer::ir::Instruction>& bodyOf(joyeer::ir::Module& module, const std::string& name) {
+    return functionExactly(module, name).blocks[0].instructions;
+}
+
+// The index of the `nth` instruction of `opcode` (counting from 0), optionally with field `symbol`.
+size_t nth(const std::vector<joyeer::ir::Instruction>& body, joyeer::ir::Opcode opcode, size_t which = 0,
+           std::optional<joyeer::semantic::SymbolId> symbol = std::nullopt) {
+    for (size_t index = 0; index < body.size(); ++index) {
+        if (body[index].opcode != opcode || (symbol.has_value() && body[index].symbol != symbol)) continue;
+        if (which-- == 0) return index;
+    }
+    ADD_FAILURE() << "no such instruction";
+    return 0;
+}
+
+constexpr auto literalProgram =
+        "func make(): Table<Int, Bool> { return make() }\n"
+        "func makeUnit(): Table<Int, Void> { return makeUnit() }\n"
+        "func makeEmpty(): Table<Int, Bool> { return makeEmpty() }\n";
+
+TEST_F(DictRoleTest, TheVerifierAcceptsAPackedDictionaryLiteral) {
+    load(literalProgram);
+    auto module = lower();
+    ASSERT_NE(module, nullptr);
+    packLiteral(*module, "make", 2);
+    packLiteral(*module, "makeUnit", 2);
+    packLiteral(*module, "makeEmpty", 0);
+    const auto verification = joyeer::ir::Verifier().verify(*module);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification) << joyeer::ir::dump(*module);
+}
+
+TEST_F(DictRoleTest, TheVerifierRejectsEachMalformedPackingAndNamesTheRule) {
+    using joyeer::ir::Opcode;
+    load(literalProgram);
+    const auto lowered = lower();
+    ASSERT_NE(lowered, nullptr);
+    auto base = *lowered;
+    const auto literal = packLiteral(base, "make", 2);
+    packLiteral(base, "makeUnit", 2);
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(base).succeeded());
+    const auto key = literal.keyField;
+    const auto value = literal.valueField;
+    struct Case {
+        const char* name;
+        const char* rule;
+        std::function<void(joyeer::ir::Module&, std::vector<joyeer::ir::Instruction>&)> mutate;
+    };
+    const auto eraseFieldStore = [](std::vector<joyeer::ir::Instruction>& body, size_t field) {
+        // A field address is followed by its store.
+        body.erase(body.begin() + static_cast<std::ptrdiff_t>(field), body.begin() + static_cast<std::ptrdiff_t>(field + 2));
+    };
+    const std::vector<Case> cases {
+        { "missing key store", "rule 5", [&](auto&, auto& body) { eraseFieldStore(body, nth(body, Opcode::fieldAddress, 0, key)); } },
+        { "missing value store", "rule 5", [&](auto&, auto& body) { eraseFieldStore(body, nth(body, Opcode::fieldAddress, 1, value)); } },
+        { "wrong count", "rule 5", [&](auto&, auto& body) {
+              body[nth(body, Opcode::stackBlock) - 4].integerValue = 3;
+          } },
+        { "key stored twice for one entry", "rule 3", [&](auto&, auto& body) {
+              // Entry 1's key field address projects entry 0's place instead.
+              body[nth(body, Opcode::fieldAddress, 1, key)].operands[0] =
+                      body[nth(body, Opcode::fieldAddress, 0, key)].operands[0];
+          } },
+        { "a value stored as the key", "rule 4", [&](auto&, auto& body) {
+              body[nth(body, Opcode::fieldAddress, 0, key) + 1].operands[0] =
+                      body[nth(body, Opcode::booleanConstant)].result->id;
+          } },
+        { "swapped fields", "rule 4", [&](auto&, auto& body) {
+              auto& first = body[nth(body, Opcode::fieldAddress, 0, key)];
+              auto& second = body[nth(body, Opcode::fieldAddress, 0, value)];
+              std::swap(first.symbol, second.symbol);
+              std::swap(first.result->type, second.result->type);
+          } },
+        { "an escaping field address", "rule 4", [&](auto&, auto& body) {
+              const auto at = nth(body, Opcode::fieldAddress, 0, key);
+              joyeer::ir::Instruction escape { Opcode::pointerToInteger };
+              escape.operands = { body[at].result->id };
+              escape.result = joyeer::ir::Value { 9000, body[nth(body, Opcode::stackBlock)].result->type,
+                                                  joyeer::ir::ValueCategory::value };
+              body.insert(body.begin() + static_cast<std::ptrdiff_t>(at + 2), escape);
+          } },
+        { "a non-entry element", "rule 2", [&](auto& module, auto& body) {
+              const auto integer = checking.model->types().intType();
+              (void) module;
+              for (auto& instruction : body) {
+                  if (instruction.opcode == Opcode::stackBlock || instruction.opcode == Opcode::slotAddress) {
+                      instruction.integerValue = static_cast<int64_t>(integer);
+                  }
+                  if (instruction.opcode == Opcode::integerAddress) instruction.result->type = integer;
+              }
+          } },
+        { "a load in the window", "rule 6", [&](auto&, auto& body) {
+              const auto block = nth(body, Opcode::stackBlock);
+              auto load = body[nth(body, Opcode::load)];
+              load.result->id = 9000;
+              body.insert(body.begin() + static_cast<std::ptrdiff_t>(block + 1), load);
+          } },
+        { "a fallible operation in the window", "rule 6", [&](auto&, auto& body) {
+              const auto block = nth(body, Opcode::stackBlock);
+              joyeer::ir::Instruction add { Opcode::add };
+              add.operands = { body[block].operands[0], body[block].operands[0] };
+              add.result = joyeer::ir::Value { 9000, body[block].result->type, joyeer::ir::ValueCategory::value };
+              body.insert(body.begin() + static_cast<std::ptrdiff_t>(block + 1), add);
+          } },
+        { "a non-inert receiver", "rule 6", [&](auto&, auto& body) {
+              body.erase(body.begin() + static_cast<std::ptrdiff_t>(nth(body, Opcode::zeroInitialize)));
+          } },
+        { "two transfers", "rule 6", [&](auto&, auto& body) {
+              const auto call = nth(body, Opcode::call);
+              auto again = body[call];
+              again.result->id = 9000;
+              body.insert(body.begin() + static_cast<std::ptrdiff_t>(call), again);
+          } },
+        { "a cross-block store", "rule 4", [&](auto& module, auto& body) {
+              // The last value store, the transfer and the return move to a second block.
+              auto& function = functionExactly(module, "make");
+              const auto from = nth(body, Opcode::fieldAddress, 1, value) + 1;
+              joyeer::ir::BasicBlock next { 1, "next", { body.begin() + static_cast<std::ptrdiff_t>(from), body.end() } };
+              body.erase(body.begin() + static_cast<std::ptrdiff_t>(from), body.end());
+              joyeer::ir::Instruction branch { Opcode::branch };
+              branch.targets = { 1 };
+              body.push_back(branch);
+              function.blocks.push_back(std::move(next));
+          } },
+    };
+    for (const auto& mutation : cases) {
+        SCOPED_TRACE(mutation.name);
+        auto copy = base;
+        mutation.mutate(copy, bodyOf(copy, "make"));
+        const auto verification = joyeer::ir::Verifier().verify(copy);
+        EXPECT_FALSE(verification.succeeded());
+        const auto messages = joyeer::ir::dump(verification);
+        EXPECT_NE(messages.find(std::string("dictionary literal ") + mutation.rule), std::string::npos) << messages;
+    }
+    {
+        // Rule 5 for a Void value: no value field is projected or stored.
+        SCOPED_TRACE("a Void value stored");
+        auto copy = base;
+        auto& body = bodyOf(copy, "makeUnit");
+        const auto key = nth(body, Opcode::fieldAddress, 0, literal.keyField);
+        auto unitValue = body[key];
+        unitValue.symbol = std::find_if(copy.structures.begin(), copy.structures.end(), [&](const auto& definition) {
+            return definition.role == entryRole && definition.fields[1].type != definition.fields[0].type &&
+                   typeOf(copy, definition.fields[1].type)->kind == joyeer::typing::TypeKind::voidType;
+        })->fields[1].symbol;
+        unitValue.result->id = 9000;
+        unitValue.result->type = typeOf(copy, functionExactly(copy, "makeUnit").resultType)->arguments[1];
+        joyeer::ir::Instruction unit { Opcode::unitConstant };
+        unit.result = joyeer::ir::Value { 9001, unitValue.result->type, joyeer::ir::ValueCategory::value };
+        joyeer::ir::Instruction store { Opcode::store };
+        store.operands = { 9001, 9000 };
+        body.insert(body.begin(), unit);
+        body.insert(body.begin() + static_cast<std::ptrdiff_t>(key + 3), { unitValue, store });
+        const auto messages = joyeer::ir::dump(joyeer::ir::Verifier().verify(copy));
+        EXPECT_NE(messages.find("dictionary literal rule"), std::string::npos) << messages;
+    }
+    {
+        // An entry field address outside verified literal storage, in an otherwise valid function.
+        SCOPED_TRACE("a hand-written field address");
+        auto copy = base;
+        auto& body = bodyOf(copy, "make");
+        joyeer::ir::Instruction storage { Opcode::stackAllocate };
+        storage.result = joyeer::ir::Value { 9000, literal.entry, joyeer::ir::ValueCategory::address };
+        joyeer::ir::Instruction field { Opcode::fieldAddress };
+        field.operands = { 9000 };
+        field.symbol = literal.keyField;
+        field.result = joyeer::ir::Value { 9001, checking.model->types().intType(), joyeer::ir::ValueCategory::address };
+        body.insert(body.begin(), { storage, field });
+        const auto messages = joyeer::ir::dump(joyeer::ir::Verifier().verify(copy));
+        EXPECT_NE(messages.find("dictionary entry"), std::string::npos) << messages;
+    }
+    {
+        // The transfer goes to a method that is not the literal factory.
+        SCOPED_TRACE("no literal factory");
+        auto copy = base;
+        copy.functions[literal.factory].literalFactory = false;
         EXPECT_FALSE(joyeer::ir::Verifier().verify(copy).succeeded());
     }
 }
