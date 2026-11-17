@@ -209,12 +209,12 @@ The current instruction set covers:
 - ordinary source calls for task/channel APIs ([0023](../decisions/0023-library-concurrency.md)).
   Their concrete structs, `deinit` methods, result construction, raw typed moves and callback
   references use the same operations as other library code. There are no concurrency opcodes;
-- inserting/updating `dictionary_set` with an addressable receiver and
-  transferred key/value;
-- `dictionary_get` with borrowed dictionary/key values and an owned
-  `Optional<V>` result, verified against the concrete `K` and `V`;
-- `String`/`Dict` count and value/address subscript operations, plus owned
-  `String.utf8()` byte-array extraction;
+- ordinary source calls for library dictionary methods ([0027](../decisions/0027-library-dict.md)): `d[k]` calls
+  the `dict_element` addressor, `&d[k] = v` calls `dict_set` with an owned key and value, and `get` is the public
+  `dict_get` method. The builtin `construct_dictionary`, `dictionary_set` and `dictionary_get` opcodes and the
+  dictionary arm of `subscript_addr` are no longer emitted; the verifier and backend keep them until the cleanup
+  stage removes them;
+- `String` count and value/address subscript operations, plus owned `String.utf8()` byte-array extraction;
 - high-level recursive pattern switching.
 
 An array literal prepares all owned elements first, then moves them into one `stack_block` and calls the
@@ -232,7 +232,7 @@ projected once to each of the `key` and `value` fields inside the packing window
 one use, a store before the transfer of a value of the field's type evaluated before the storage; (5) the count is a
 constant and every key is stored, and every value unless `V` is `Void`, when no value field is projected; (6) one
 transfer on an inert zero receiver, and only constants, slots, entry places, field addresses and stores in the
-window. Until the switch stage no lowering emits this form; the verifier tests build it by hand.
+window, where each stored value is used once. Lowering emits exactly this form for every dictionary literal.
 The wire also preserves the generic `alwaysInline` policy on closed library wrappers; only
 authorized functions with bodies may carry it.
 Literal factories cannot be formed as function values, so indirect calls cannot evade the storage protocol.

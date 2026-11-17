@@ -77,7 +77,9 @@ it. Passing `consume pair.first` follows the ordinary partial-move rules (a type
 partially moved). A top-level constant array (§3.1.1) passed as the input, or returned as the result, is
 **cloned**, never freed by the task or the joiner. A `JoinHandle` may itself be an input or a result. A library array bound
 by the role `array_type` (§20.12.5) is a valid input exactly when its element type is; it is bitwise
-relocatable, and an array of `JoinHandle` may be passed with `consume` and ended in the task.
+relocatable, and an array of `JoinHandle` may be passed with `consume` and ended in the task. A library
+dictionary bound by `dict_type` is likewise a valid input or result exactly when its key and value are; it holds
+no linear key or value.
 
 ### 21.3 Joining
 

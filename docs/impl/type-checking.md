@@ -31,13 +31,12 @@ The model covers:
 - user `struct` and `enum` nominal types;
 - function types with exact parameter access effects, and one distinct
   `TypeKind::typeParameter` per generic parameter or protocol `Self`;
-- `[K: V]`; and the role-bound library structures `[T]` (the `array_type` role, sugar for the library
+- the role-bound library structures `[K: V]`, `[T]` (the `array_type` role, sugar for the library
   `Array<T>`), `T?`, and `Result<T, E>`;
 - a dedicated error type that suppresses cascading diagnostics.
 
-`[K: V]` is a compiler-known type constructor with fixed arity (the library dictionary's roles are validated, by
-the same collection-role path as the array's, but do not bind it until the switch stage of
-[0027](../decisions/0027-library-dict.md)); `[T]`, `T?` and `Result<T, E>` are ordinary
+`[K: V]` (the `dict_type` role, sugar for the library `Dict<K, V>`, validated by the same collection-role path as
+the array's, [0027](../decisions/0027-library-dict.md)), `[T]`, `T?` and `Result<T, E>` are ordinary
 generic structures and enums of the bundled prelude, found through their `@compiler_role` and never by spelling. An application such as
 `Result<[Int], Error>` retains both nested concrete arguments; it is not
 collapsed to the name resolver's coarse `Result` symbol.

@@ -216,16 +216,16 @@ enum Result<T, E> {
 
 The generic containers are `Array<T>` / `[T]`, `Dict<K, V>` /
 `[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>` (and the concurrency types
-below). `Array` is a source-library struct in `lib/Runtime/collections.joyeer`, bound by
-`array_type` (§20.12.5); `Optional` and `Result` are prelude enums bound by roles (§2.4, §2.5).
-Only `Dict` remains a compiler-defined generic container. User code may *use* these containers and may declare **generic
+below). `Array` and `Dict` are source-library structs in `lib/Runtime/collections.joyeer`, bound by
+`array_type` and `dict_type` (§20.12.5); `Optional` and `Result` are prelude enums bound by roles (§2.4, §2.5).
+No generic container is compiler-defined. User code may *use* these containers and may declare **generic
 top-level functions** and **generic `struct`s and `enum`s** bounded by protocols
 (§20, §20.12, [decision 0022](../docs/decisions/0022-generic-types-and-layout-intrinsics.md)),
 but may not declare generic methods or conditional conformances (§20.10).
 
 ```joyeer
 let xs: [Int] = [1, 2, 3]               // library Array<Int>
-let m: [String: Int] = [:]             // built-in Dict<String, Int>
+let m: [String: Int] = [:]             // library Dict<String, Int>
 let r: Result<Int, ParseError> = .Ok(1)
 ```
 
@@ -244,9 +244,24 @@ moves an owning place (§4.3). The address and capacity fields and compiler-call
 All literal elements are evaluated left to right as owned temporaries before storage is filled;
 an early exit in a later element destroys earlier affine temporaries in reverse order (§4.7).
 
+`[K: V]` and dictionary literals likewise bind to the declaration carrying `dict_type`
+([0027](../docs/decisions/0027-library-dict.md)); `Dict<K, V>` is its nominal spelling, a user type named
+`Dict` shadows only that spelling, and role-dictionary types display as `[K: V]`. The library exposes
+read-only `count` and `get(key:)` (§2.6.1); `d[k]` reads, borrows, consumes or mutates a stored value in
+place and traps `dictionary key not found` for a missing key, and `&d[k] = v` inserts or replaces. In
+`&d[k] = v` the base's index operands, the key and the value are evaluated, in that order, before the base
+is addressed (§4.4.3), so the value is evaluated before a missing outer key traps. The address and
+capacity fields and the compiler-called methods are private. A literal evaluates every key and value
+left to right before any entry is stored; a duplicate key keeps the last value.
+
+**Dictionary keys (closed until plan 0012).** The admitted key types are exactly `Int`, `Bool`, `UInt8`
+and `String`, by type, not by spelling. Any other key, written at a `[K: V]` annotation, a `Dict<K, V>`
+or a literal, is `type-checking.invalid-type-argument`; a function type, a type parameter or `Never` as a
+key keeps its own diagnostic. Keys are compared by the runtime's key kind; lookup is a linear scan.
+
 #### 2.6.1 Safe dictionary lookup
 
-The builtin `Dict<K, V>.get(key:)` takes a key of type `K` and returns
+The library `Dict<K, V>.get(key:)` (the `dict_get` method, §20.12.5) takes a key of type `K` and returns
 `Optional<V>`. It borrows both the receiver and key, evaluates the receiver
 before the key exactly once each, and does not require `&` or `consume`.
 Ordinary access exclusivity and initialization rules still apply.
