@@ -26,4 +26,17 @@ func main() {
     let k = 1
     &grid[1][consumeIndex(i: consume k)] *= rhs(value: 5)
     print(value: grid[1][1])
+
+    // The index is evaluated before the right side changes `m`, so the store lands in b[0].
+    var b = [10, 20]
+    var m = 0
+    &b[m] += bump(j: &m)
+    print(value: b[0])
+    print(value: b[1])
+    print(value: m)
+}
+
+func bump(j: inout Int): Int {
+    &j = j + 1
+    return 1
 }

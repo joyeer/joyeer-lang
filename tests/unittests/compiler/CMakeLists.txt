@@ -1352,7 +1352,7 @@ abcdabcd
             0 1 2 3)
     add_joyeer_native_regression(
             E2ECompoundAssignmentIndexOnce compound_assignment_index_once
-            "index\nrhs\n9\nindex\nrhs\n6\nindex\nrhs\n20\n"
+            "index\nrhs\n9\nindex\nrhs\n6\nindex\nrhs\n20\n11\n20\n1\n"
             0 1 2 3)
     add_joyeer_native_regression(
             E2EForIn for_in

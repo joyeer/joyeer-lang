@@ -698,41 +698,101 @@ print(value: i)
 }
 
 // Spec 4.4.3: `op=` reads the old value after the right side, so a right side that consumes the
-// target's root leaves nothing to read.
+// target's root, the target itself, or storage that may overlap it leaves nothing to read.
 TEST_F(SemanticAnalysisTest, CompoundAssignmentReadsTheTargetAfterTheRightSide) {
     for (const auto* target : {
                 "&a[0] += take(a: consume a)",
                 "&a[i] += take(a: consume a)",
-                "n += drop(n: consume n)" }) {
+                "n += drop(n: consume n)",
+                "c.text += takeText(value: consume c.text)",
+                "&cells[0].text += takeText(value: consume cells[0].text)",
+                // Element indices are not compared, so another element may overlap the target.
+                "&texts[0] += takeText(value: consume texts[1])" }) {
         SCOPED_TRACE(target);
         ASSERT_NO_FATAL_FAILURE(analyze(
+                "struct Cell { var text: String }\n"
                 "func take(a: consuming [Int]): Int { return 1 }\n"
                 "func drop(n: consuming Int): Int { return 1 }\n"
+                "func takeText(value: consuming String): String { return value }\n"
                 "func invalid() {\n"
                 "var a = [1, 2, 3]\n"
                 "var n = 1\n"
+                "var c = Cell(text: \"a\")\n"
+                "var cells = [Cell(text: \"a\")]\n"
+                "var texts = [\"a\", \"b\"]\n"
                 "let i = 0\n" + std::string(target) + "\n}\n"));
         EXPECT_FALSE(result.succeeded());
         EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
                 << joyeer::analysis::dump(result.diagnostics);
+        // The help names the evaluation order rather than suggesting a reinitialization that cannot help.
+        const auto consumed = std::find_if(
+                result.diagnostics.begin(), result.diagnostics.end(), [](const auto& diagnostic) {
+                    return diagnostic.id == joyeer::analysis::DiagnosticId::useAfterConsume;
+                });
+        ASSERT_NE(consumed, result.diagnostics.end());
+        ASSERT_TRUE(consumed->help.has_value());
+        EXPECT_NE(consumed->help->find("4.4.3"), std::string::npos) << *consumed->help;
     }
 }
 
+// The right side runs before the old value is read: it may initialize the target root, and it may
+// change or consume an index binding that was already evaluated.
+TEST_F(SemanticAnalysisTest, CompoundAssignmentRightSideRunsBeforeTheTargetAccess) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func fill(out: initializing Int): Int {
+&out = 40
+return 2
+}
+func bump(j: inout Int): Int {
+&j = j + 1
+return 10
+}
+func takeIndex(i: consuming Int): Int { return i }
+func main() {
+var n: Int
+n += fill(out: &n)
+var a = [1, 2, 3]
+var j = 0
+&a[j] += bump(j: &j)
+let i = 1
+&a[i] += takeIndex(i: consume i)
+print(value: n + a[0] + a[1] + j)
+}
+)JOYEER"));
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
 TEST_F(SemanticAnalysisTest, CompoundAssignmentRequiresAnInitializedTarget) {
-    for (const auto* target : {
-                "&a[0] += 1",
-                "n += 1",
-                "cell.n += 1" }) {
+    for (const auto& [target, storage] : {
+                std::pair { "&a[0] += 1", "a[0]" },
+                std::pair { "n += 1", "n" },
+                std::pair { "cell.n += 1", "cell.n" } }) {
         SCOPED_TRACE(target);
-        ASSERT_NO_FATAL_FAILURE(analyze(
+        const auto prefix = std::string(
                 "struct Cell { var n: Int }\n"
                 "func invalid() {\n"
                 "var a: [Int]\n"
                 "var n: Int\n"
-                "var cell: Cell\n" + std::string(target) + "\n}\n"));
+                "var cell: Cell\n");
+        const auto text = prefix + target + "\n}\n";
+        ASSERT_NO_FATAL_FAILURE(analyze(text));
         EXPECT_FALSE(result.succeeded());
-        EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useBeforeInitialization))
+        // Reported once, at the storage the old value is read from.
+        ASSERT_EQ(
+                std::count_if(
+                        result.diagnostics.begin(),
+                        result.diagnostics.end(),
+                        [](const auto& diagnostic) {
+                            return diagnostic.id ==
+                                    joyeer::analysis::DiagnosticId::useBeforeInitialization;
+                        }),
+                1)
                 << joyeer::analysis::dump(result.diagnostics);
+        const auto& span = std::find_if(
+                result.diagnostics.begin(), result.diagnostics.end(), [](const auto& diagnostic) {
+                    return diagnostic.id == joyeer::analysis::DiagnosticId::useBeforeInitialization;
+                })->span;
+        EXPECT_EQ(text.substr(span.offset, span.length), storage);
     }
 }
 
