@@ -1,11 +1,15 @@
 // Decision 0027 stage 5: the dictionary roles (`dict_type`, its five method roles and `dict_entry`) and their
 // closed shapes. `[K: V]` and dictionary literals stay builtin until the switch, so the roles are exercised through
 // a role-bound `Table<K, V>` supplied with the library array through the collections-prelude test seam.
+#include "compiler/backend/ir_wire.h"
+#include "compiler/codegen/llvm.h"
 #include "compiler/frontend/lexparser.h"
 #include "compiler/frontend/nameresolution.h"
 #include "compiler/frontend/parser.h"
 #include "compiler/frontend/semanticanalysis.h"
 #include "compiler/frontend/typechecking.h"
+#include "compiler/ir/ir.h"
+#include "compiler/ir/irlowering.h"
 
 #include <gtest/gtest.h>
 
@@ -245,6 +249,22 @@ protected:
         if (checking.model == nullptr) return "no model";
         analysis = joyeer::analysis::Analyzer().analyze(checking.model);
         return joyeer::analysis::dump(analysis.diagnostics);
+    }
+
+    std::shared_ptr<joyeer::ir::Module> lower() {
+        EXPECT_TRUE(checks()) << diagnostics();
+        if (checking.model == nullptr) return nullptr;
+        analysis = joyeer::analysis::Analyzer().analyze(checking.model);
+        EXPECT_TRUE(analysis.succeeded()) << joyeer::analysis::dump(analysis.diagnostics);
+        // The driver's source table: the user source, then the prelude sources by identity.
+        const auto info = [](const SourceFile::Ptr& file) {
+            return joyeer::ir::SourceInfo { "fixture.joyeer", ".", file->content.size(), file->lineStarts };
+        };
+        std::vector<joyeer::ir::SourceInfo> sources { info(userSource), info(roleSource) };
+        for (const auto& prelude : checking.model->semanticModel()->preludeSources()) sources.push_back(info(prelude));
+        auto result = joyeer::lowering::Lowerer().lower(checking.model, "fixture.joyeer", info(userSource), sources);
+        EXPECT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+        return result.module;
     }
 
     SourceFile::Ptr userSource;
@@ -522,6 +542,201 @@ TEST_F(DictRoleTest, DictionarySyntaxStaysBuiltinUntilTheSwitch) {
     EXPECT_TRUE(checks()) << diagnostics();
     EXPECT_TRUE(rejectedMentioning("func bad(table: [String: Int]): Table<String, Int> { return table }\n", "Table"))
             << diagnostics();
+}
+
+// ---- IR, wire and backend ----
+
+// The structure roles by their wire values (decision 0027, wire 24): 2 the dictionary, 3 its entry.
+constexpr auto dictRole = static_cast<joyeer::ir::StructureRole>(2);
+constexpr auto entryRole = static_cast<joyeer::ir::StructureRole>(3);
+
+joyeer::ir::StructureDefinition* structureWithRole(joyeer::ir::Module& module, joyeer::ir::StructureRole role,
+                                                    const std::string& name = "") {
+    for (auto& definition : module.structures) {
+        if (definition.role == role && (name.empty() || definition.name == name)) return &definition;
+    }
+    return nullptr;
+}
+
+joyeer::ir::Function* functionNamed(joyeer::ir::Module& module, const std::string& part) {
+    for (auto& function : module.functions) {
+        if (function.name.find(part) != std::string::npos) return &function;
+    }
+    return nullptr;
+}
+
+const joyeer::ir::TypeName* typeOf(const joyeer::ir::Module& module, joyeer::ir::TypeId id) {
+    for (const auto& type : module.types) {
+        if (type.id == id) return &type;
+    }
+    return nullptr;
+}
+
+TEST_F(DictRoleTest, TheRoleStructsLowerWithTheirRolesAndNoLiveFlag) {
+    load("func size(table: Table<Int, String>): Int { return table.count }\n");
+    auto module = lower();
+    ASSERT_NE(module, nullptr);
+    const auto* table = structureWithRole(*module, dictRole);
+    ASSERT_NE(table, nullptr) << joyeer::ir::dump(*module);
+    ASSERT_EQ(table->fields.size(), 3u) << "an inert-zero handle has no hidden live flag";
+    EXPECT_EQ(table->fields[0].name, "address");
+    EXPECT_EQ(table->fields[1].name, "count");
+    EXPECT_EQ(table->fields[2].name, "capacity");
+    EXPECT_TRUE(table->deinitializer.has_value());
+    EXPECT_TRUE(table->copier.has_value()) << "Table<Int, String> is copyable";
+    // The interned entry over the same key and value: exactly `key: Int`, `value: String`, nothing to run.
+    const auto* entry = structureWithRole(*module, entryRole);
+    ASSERT_NE(entry, nullptr) << joyeer::ir::dump(*module);
+    ASSERT_EQ(entry->fields.size(), 2u);
+    EXPECT_EQ(entry->fields[0].name, "key");
+    EXPECT_EQ(entry->fields[1].name, "value");
+    EXPECT_EQ(entry->fields[0].type, checking.model->types().intType());
+    EXPECT_EQ(entry->fields[1].type, checking.model->types().stringType());
+    EXPECT_FALSE(entry->deinitializer.has_value());
+    EXPECT_FALSE(entry->copier.has_value());
+    const auto verification = joyeer::ir::Verifier().verify(*module);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+}
+
+TEST_F(DictRoleTest, InstanceDiscoveryDemandsTheCompilerCalledMethodsAndInlinesTheWrappers) {
+    load("func size(table: Table<Int, String>): Int { return table.count }\n");
+    auto module = lower();
+    ASSERT_NE(module, nullptr);
+    const auto* element = functionNamed(*module, ".element");
+    const auto* insert = functionNamed(*module, ".insert");
+    const auto* copy = functionNamed(*module, ".duplicate");
+    const auto* literal = functionNamed(*module, ".literal");
+    ASSERT_NE(element, nullptr) << joyeer::ir::dump(*module);
+    ASSERT_NE(insert, nullptr);
+    ASSERT_NE(copy, nullptr);
+    ASSERT_NE(literal, nullptr);
+    EXPECT_TRUE(element->elementAddressor);
+    EXPECT_TRUE(literal->literalFactory);
+    EXPECT_FALSE(insert->literalFactory);
+    // The closed wrappers are always inlined (0026 A4, extended by role in 0027).
+    EXPECT_TRUE(insert->alwaysInline);
+    EXPECT_TRUE(copy->alwaysInline);
+    EXPECT_TRUE(literal->alwaysInline);
+    EXPECT_EQ(functionNamed(*module, ".get"), nullptr) << "get is demanded only by user calls";
+    load("func lookup(table: Table<Int, String>): String? { return table.get(key: 1) }\n");
+    module = lower();
+    ASSERT_NE(module, nullptr);
+    const auto* get = functionNamed(*module, ".get");
+    ASSERT_NE(get, nullptr) << joyeer::ir::dump(*module);
+    EXPECT_TRUE(get->alwaysInline);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+}
+
+TEST_F(DictRoleTest, ANoncopyableValueHasNoCopier) {
+    // (A noncopyable key is not an admitted key: its `key_kind` is a lowering error, so the checker test covers it.)
+    load("struct Resource { var value: Int\n deinit() {} }\n"
+         "func value(table: borrowing Table<Int, Resource>): Int { return table.count }\n");
+    auto module = lower();
+    ASSERT_NE(module, nullptr);
+    size_t tables = 0;
+    for (const auto& definition : module->structures) {
+        if (definition.role != dictRole) continue;
+        ++tables;
+        EXPECT_FALSE(definition.copier.has_value()) << definition.name;
+    }
+    EXPECT_EQ(tables, 1u);
+    EXPECT_EQ(functionNamed(*module, ".duplicate"), nullptr);
+    const auto verification = joyeer::ir::Verifier().verify(*module);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+}
+
+TEST_F(DictRoleTest, TheWireCarriesTheDictionaryRolesAtVersion24) {
+    EXPECT_EQ(joyeer::llvmbackend::wire::version, 24u);
+    load("func size(table: Table<String, [Int]>): Int { return table.count }\n");
+    const auto module = lower();
+    ASSERT_NE(module, nullptr);
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    EXPECT_EQ(joyeer::ir::dump(decoded), joyeer::ir::dump(*module));
+    ASSERT_NE(structureWithRole(decoded, dictRole), nullptr);
+    ASSERT_NE(structureWithRole(decoded, entryRole), nullptr);
+    EXPECT_TRUE(functionNamed(decoded, ".literal")->literalFactory);
+    EXPECT_TRUE(functionNamed(decoded, ".element")->elementAddressor);
+}
+
+TEST_F(DictRoleTest, TheVerifierRejectsForgedDictionaryRoles) {
+    load("func size(table: Table<Int, String>): Int { return table.count }\n");
+    const auto module = lower();
+    ASSERT_NE(module, nullptr);
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    const auto integer = checking.model->types().intType();
+    const auto text = checking.model->types().stringType();
+    for (unsigned mutation = 0; mutation < 14; ++mutation) {
+        SCOPED_TRACE(mutation);
+        auto copy = *module;
+        auto* table = structureWithRole(copy, dictRole);
+        auto* entry = structureWithRole(copy, entryRole);
+        ASSERT_NE(table, nullptr);
+        ASSERT_NE(entry, nullptr);
+        const auto arguments = [&](joyeer::ir::StructureDefinition& definition) -> std::vector<joyeer::ir::TypeId>& {
+            return std::find_if(copy.types.begin(), copy.types.end(), [&](const auto& type) {
+                return type.id == definition.type;
+            })->arguments;
+        };
+        switch (mutation) {
+            case 0: table->role = static_cast<joyeer::ir::StructureRole>(4); break;
+            // The dictionary: two type arguments, the three Int words, no live flag, a deinit.
+            case 1: arguments(*table).pop_back(); break;
+            case 2: arguments(*table).push_back(integer); break;
+            case 3: table->fields.pop_back(); break;
+            case 4:
+                table->fields.push_back({ joyeer::semantic::invalidSymbolId, joyeer::ir::liveFieldName,
+                                          checking.model->types().boolType(), false });
+                break;
+            case 5: table->deinitializer.reset(); break;
+            case 6: table->fields[1].type = text; break;
+            // The entry: exactly `key: K`, `value: V` of its two type arguments, nothing to run or copy.
+            case 7: std::swap(entry->fields[0].type, entry->fields[1].type); break;
+            case 8: entry->fields.push_back(entry->fields[0]); entry->fields.back().symbol += 1000; break;
+            case 9: entry->deinitializer = table->deinitializer; break;
+            case 10: arguments(*entry).push_back(integer); break;
+            case 11: entry->copier = table->copier; break;
+            // The addressor borrows the dictionary and a key of type K.
+            case 12: functionNamed(copy, ".element")->parameters[1].value.type = text; break;
+            // A literal factory consumes a dictionary and returns the same instance.
+            case 13: functionNamed(copy, ".literal")->resultType = integer; break;
+        }
+        EXPECT_FALSE(joyeer::ir::Verifier().verify(copy).succeeded());
+    }
+}
+
+TEST_F(DictRoleTest, TheBackendEmitsTheHandleAndTheEntryLayoutForASpreadOfTypes) {
+    // Every admitted key against values of each layout class: Void, UInt8, Int, String, a padded struct, an
+    // optional and an enum. The backend checks each entry's field offsets against the runtime's formula.
+    load("struct Padded { var small: UInt8\n var large: Int }\n"
+         "enum Choice {\n    One,\n    Two(String),\n}\n"
+         "func a(table: Table<Int, String>): Int { return table.count }\n"
+         "func b(table: Table<String, Void>): Int { return table.count }\n"
+         "func c(table: Table<UInt8, Int>): Int { return table.count }\n"
+         "func d(table: Table<Bool, Padded>): Int { return table.count }\n"
+         "func e(table: Table<Int, Int?>): Int { return table.count }\n"
+         "func f(table: Table<UInt8, UInt8>): Int { return table.count }\n"
+         "func g(table: Table<String, Choice>): Int { return table.count }\n"
+         "func h(table: Table<Bool, Void>): Int { return table.count }\n"
+         "func main() {}\n");
+    const auto module = lower();
+    ASSERT_NE(module, nullptr);
+    size_t entries = 0;
+    for (const auto& definition : module->structures) entries += definition.role == entryRole;
+    EXPECT_EQ(entries, 8u);
+    for (const auto level : { joyeer::OptimizationLevel::O0, joyeer::OptimizationLevel::O2 }) {
+        SCOPED_TRACE(static_cast<int>(level));
+        joyeer::llvmbackend::EmitOptions options;
+        options.optimizationLevel = level;
+        const auto emitted = joyeer::llvmbackend::Emitter().emit(*module, options);
+        ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+        EXPECT_NE(emitted.text.find("{ i64, i64, i64 }"), std::string::npos);
+        EXPECT_EQ(emitted.text.find("{ i64, i64, i64, i1 }"), std::string::npos) << "no live flag on the handle";
+    }
 }
 
 } // namespace
