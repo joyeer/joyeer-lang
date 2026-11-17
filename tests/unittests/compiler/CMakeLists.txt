@@ -109,6 +109,12 @@ joyeer_discover_tests(CompilerCollectionRoleTests
         PROPERTIES LABELS collection-roles
 )
 
+add_executable(CompilerDictRoleTests dict_roles_test.cpp)
+target_link_libraries(CompilerDictRoleTests PRIVATE GTest::gtest_main JoyeerCompilerCore)
+joyeer_discover_tests(CompilerDictRoleTests
+        PROPERTIES LABELS collection-roles
+)
+
 add_executable(CompilerArrayCharacterizationTests array_characterization_test.cpp)
 target_link_libraries(CompilerArrayCharacterizationTests PRIVATE GTest::gtest_main JoyeerCompilerCore)
 joyeer_discover_tests(CompilerArrayCharacterizationTests
