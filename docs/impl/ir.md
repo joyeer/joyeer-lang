@@ -223,7 +223,9 @@ private role method marked `literalFactory` on a zero receiver. No element opera
 The verifier admits user-function `stack_block` / `slot_address` / `integer_address` only for this closed graph:
 one matching factory call, equal element type and constant count, an inert-zero receiver, every bounded slot
 stored exactly once before transfer, and no other uses or intervening calls. A factory call without verified
-storage is rejected. This does not grant source-level runtime authorization.
+storage is rejected. This does not grant source-level runtime authorization. Unlike the dictionary protocol below,
+it does not check that a stored element value is used once, so hand-written IR could store one owned value into two
+slots; lowering never does.
 
 A dictionary literal ([0027](../decisions/0027-library-dict.md), Decision 3) packs into a block of the dictionary's
 `dict_entry` instance, whose ordinary layout is the runtime's entry layout. The verifier checks its closed protocol
@@ -234,6 +236,9 @@ one use, a store before the transfer of a value of the field's type evaluated be
 constant and every key is stored, and every value unless `V` is `Void`, when no value field is projected; (6) one
 transfer on an inert zero receiver, and only constants, slots, entry places, field addresses and stores in the
 window, where each stored value is used once. Lowering emits exactly this form for every dictionary literal.
+"Used once" follows paths from the packing block in both directions; the paths that avoid a value's defining block
+come from a `DominanceAnalysis` rooted at the packing block (one per direction and literal), not from a walk per
+value, so the check stays linear in the function's blocks for each literal.
 The wire also preserves the generic `alwaysInline` policy on closed library wrappers; only
 authorized functions with bodies may carry it.
 Literal factories cannot be formed as function values, so indirect calls cannot evade the storage protocol.
