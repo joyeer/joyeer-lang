@@ -1126,10 +1126,12 @@ private:
         if (expression->op != nullptr && expression->op->kind != equal && assigned.has_value()) {
             // Spec 4.4.3: `x op= y` evaluates the target's index operands once, then the right side, and
             // only then reads the old value, which must still be initialized and not consumed.
+            const auto read = storageRead(expression->target);
             analyzeStorageOperands(expression->target, state);
+            const bool readableBeforeValue = state.reachable && !readFailure(read, state).has_value();
             analyzeExpression(expression->value, state);
             if (state.reachable) {
-                analyzeStorageRead(storageRead(expression->target), state, /*compoundTarget=*/true);
+                analyzeStorageRead(read, state, /*failedByRightSide=*/readableBeforeValue);
             }
         } else {
             analyzeAssignmentTarget(expression->target, state);
@@ -1458,13 +1460,31 @@ private:
         return true;
     }
 
-    // `compoundTarget` marks the old-value read of `x op= y`, which happens after the right side.
+    // Why reading the storage `expression` names fails in `state`: nothing when it is readable, `true`
+    // when all or part of it was consumed, `false` when it is not initialized.
+    std::optional<bool> readFailure(
+            const syntax::ExprPtr& expression,
+            const InitializationState& state) const {
+        const auto path = storagePath(expression);
+        if (!path.has_value() || !tracked.contains(path->root)) return std::nullopt;
+        if (!state.initialized.contains(path->root)) return state.consumed.contains(path->root);
+        const auto consumed = std::find_if(
+                state.consumedProjections.begin(),
+                state.consumedProjections.end(),
+                [&](const auto& candidate) { return pathsOverlap(*path, candidate); });
+        if (consumed != state.consumedProjections.end()) return true;
+        return std::nullopt;
+    }
+
+    // `failedByRightSide` marks the old-value read of `x op= y` when `x` was readable before the right
+    // side, so a failure now is the right side's doing (spec 4.4.3).
     bool analyzeStorageRead(
             const syntax::ExprPtr& expression,
             const InitializationState& state,
-            bool compoundTarget = false) {
+            bool failedByRightSide = false) {
+        const auto failure = readFailure(expression, state);
+        if (!failure.has_value()) return true;
         const auto path = storagePath(expression);
-        if (!path.has_value() || !tracked.contains(path->root)) return true;
         const auto* declaration = model->semanticModel()->symbol(path->root);
         const auto reportRead = [&](bool consumed) {
             diagnostics.push_back(Diagnostic {
@@ -1479,7 +1499,7 @@ private:
                                 ? "' is used after all or part of its ownership was consumed"
                                 : "' is used before being initialized"),
                 consumed
-                        ? std::optional<std::string>(compoundTarget
+                        ? std::optional<std::string>(failedByRightSide
                                 ? "the right side runs before the target's old value is read (spec 4.4.3): do "
                                   "not consume the target's storage in the right side"
                                 : "reinitialize the consumed storage before reading it")
@@ -1487,19 +1507,8 @@ private:
                                 "initialize this binding on every continuing path before reading it"),
             });
         };
-        if (!state.initialized.contains(path->root)) {
-            reportRead(state.consumed.contains(path->root));
-            return false;
-        }
-        const auto consumed = std::find_if(
-                state.consumedProjections.begin(),
-                state.consumedProjections.end(),
-                [&](const auto& candidate) { return pathsOverlap(*path, candidate); });
-        if (consumed != state.consumedProjections.end()) {
-            reportRead(true);
-            return false;
-        }
-        return true;
+        reportRead(*failure);
+        return false;
     }
 
     void analyzeProjectionTarget(
