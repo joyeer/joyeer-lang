@@ -1,4 +1,4 @@
-// Consuming would move a byte out of the String; read it without consume (spec 2.1.1).
+// Consuming would move a byte out of the String (spec 2.1.1): copy it into a binding and consume that.
 func main() {
     var text = "abc"
     let first = consume text[0]

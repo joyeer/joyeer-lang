@@ -1609,6 +1609,31 @@ print(value: held.byte)
     }
 }
 
+TEST_F(TypeCheckingTest, AStringByteOfANonConsumableBaseReportsOnlyTheByte) {
+    // Making the base consumable would not help, so the byte is the only report, whatever the base.
+    check(R"JOYEER(struct Holder {
+var byte: UInt8
+}
+func eat(value: consuming UInt8) { print(value: value) }
+func make(): String { return "z" }
+func borrowed(text: String, other: inout String) {
+let a = consume text[0]
+eat(value: consume text[1])
+let held = Holder(byte: consume other[0])
+let q = consume make()[0]
+print(value: a)
+print(value: held.byte)
+print(value: q)
+}
+)JOYEER");
+
+    ASSERT_EQ(checking.diagnostics.size(), 4u) << joyeer::typing::dump(checking.diagnostics);
+    for (const auto& diagnostic : checking.diagnostics) {
+        EXPECT_NE(diagnostic.message.find("cannot consume a byte of a String"), std::string::npos)
+                << diagnostic.message;
+    }
+}
+
 TEST_F(TypeCheckingTest, AStringByteIsReadOnlyThroughEveryBaseAndBinding) {
     // Nested bases, an inout parameter, a parenthesized target, and `let` bindings: making the binding mutable would
     // not help, so every one reports the String byte, once, with its help. Reading a byte of a `var` is fine.
