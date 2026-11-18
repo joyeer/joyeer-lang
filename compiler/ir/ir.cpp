@@ -1695,23 +1695,52 @@ VerificationResult Verifier::verify(const Module& module) const {
             // is evaluated again, such as its cleanup on an early exit of a later entry. Paths are followed from the
             // packing block, forward and backward, stopping at the value's defining block; a cycle that returns to
             // the packing without evaluating the value again would transfer it twice.
+            //
+            // A barrier only removes paths, so the walks without one bound every walk with one: a value whose other
+            // uses lie off them, in a packing block on no cycle, needs no walk of its own. The walks are made once
+            // per literal, and once per defining block when a barrier matters, never once per stored value.
+            std::optional<std::unordered_set<BlockId>> reachedFromPacking;
+            std::optional<std::unordered_set<BlockId>> reachingPacking;
+            std::unordered_map<std::optional<BlockId>,
+                    std::pair<std::unordered_set<BlockId>, std::unordered_set<BlockId>>> avoidingDefinition;
             const auto usedOnceInWindow = [&](ValueId value) {
                 const auto definition = valueDefinitions.find(value);
                 const auto defined = definition == valueDefinitions.end()
                         ? std::optional<BlockId>() : std::optional<BlockId>(definition->second.first);
-                const auto after = reachedAvoiding(block.id, defined, true);
-                const auto before = reachedAvoiding(block.id, defined, false);
-                if (defined != block.id && after.contains(block.id)) return false;
                 size_t inWindow = 0;
+                std::vector<BlockId> elsewhere;
                 for (const auto& use : literalUses[value]) {
                     if (use.block == block.id && use.index > index && use.index < transfer.index) {
                         ++inWindow;
-                    } else if (use.block == block.id || use.block == defined || after.contains(use.block) ||
-                               before.contains(use.block)) {
+                    } else if (use.block == block.id || use.block == defined) {
                         return false;
+                    } else {
+                        elsewhere.push_back(use.block);
                     }
                 }
-                return inWindow == 1;
+                if (inWindow != 1) return false;
+                if (defined == block.id && elsewhere.empty()) return true;
+                if (!reachedFromPacking.has_value()) reachedFromPacking = reachedAvoiding(block.id, std::nullopt, true);
+                // Only a packing block on a cycle can be reached again from itself.
+                const bool mayReturn = defined != block.id && reachedFromPacking->contains(block.id);
+                if (!mayReturn && elsewhere.empty()) return true;
+                if (!mayReturn) {
+                    if (!reachingPacking.has_value()) reachingPacking = reachedAvoiding(block.id, std::nullopt, false);
+                    const bool offEveryPath = std::none_of(elsewhere.begin(), elsewhere.end(), [&](BlockId use) {
+                        return reachedFromPacking->contains(use) || reachingPacking->contains(use);
+                    });
+                    if (offEveryPath) return true;
+                }
+                auto walks = avoidingDefinition.find(defined);
+                if (walks == avoidingDefinition.end()) {
+                    walks = avoidingDefinition.emplace(defined, std::make_pair(
+                            reachedAvoiding(block.id, defined, true), reachedAvoiding(block.id, defined, false))).first;
+                }
+                const auto& [after, before] = walks->second;
+                if (defined != block.id && after.contains(block.id)) return false;
+                return std::none_of(elsewhere.begin(), elsewhere.end(), [&](BlockId use) {
+                    return after.contains(use) || before.contains(use);
+                });
             };
             std::unordered_set<int64_t> keys;
             std::unordered_set<int64_t> storedValues;
