@@ -429,6 +429,9 @@ struct VerificationError {
 
 struct VerificationResult {
     std::vector<VerificationError> errors;
+    // The elementary steps of the literal protocols' control-flow walks, so tests can bound their growth without
+    // timing them.
+    size_t literalPathWork = 0;
 
     [[nodiscard]] bool succeeded() const {
         return errors.empty();

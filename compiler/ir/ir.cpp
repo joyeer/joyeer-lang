@@ -1629,11 +1629,13 @@ VerificationResult Verifier::verify(const Module& module) const {
             std::unordered_set<BlockId> reached;
             std::vector<BlockId> work { from };
             while (!work.empty()) {
+                ++result.literalPathWork;
                 const auto current = work.back();
                 work.pop_back();
                 const auto next = edges.find(current);
                 if (next == edges.end()) continue;
                 for (const auto block : next->second) {
+                    ++result.literalPathWork;
                     if (block != barrier && reached.insert(block).second) work.push_back(block);
                 }
             }
