@@ -1,0 +1,9 @@
+func take(a: consuming [Int]): Int {
+    return 1
+}
+
+// Spec 4.4.3: `op=` reads the old element only after the right side has consumed `a`.
+func invalid() {
+    var a = [1, 2, 3]
+    &a[0] += take(a: consume a)
+}

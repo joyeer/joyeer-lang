@@ -1,0 +1,42 @@
+struct Cell { var n: Int }
+
+// Spec 4.4.3: a compound assignment evaluates each index operand once, before the right side.
+func consumeIndex(i: consuming Int): Int {
+    print(value: "index")
+    return i
+}
+
+func rhs(value: Int): Int {
+    print(value: "rhs")
+    return value
+}
+
+func main() {
+    var a = [1, 2, 3]
+    let i = 1
+    &a[consumeIndex(i: consume i)] += rhs(value: 7)
+    print(value: a[1])
+
+    var cells = [Cell(n: 10), Cell(n: 20)]
+    let j = 0
+    &cells[consumeIndex(i: consume j)].n -= rhs(value: 4)
+    print(value: cells[0].n)
+
+    var grid = [[1, 2], [3, 4]]
+    let k = 1
+    &grid[1][consumeIndex(i: consume k)] *= rhs(value: 5)
+    print(value: grid[1][1])
+
+    // The index is evaluated before the right side changes `m`, so the store lands in b[0].
+    var b = [10, 20]
+    var m = 0
+    &b[m] += bump(j: &m)
+    print(value: b[0])
+    print(value: b[1])
+    print(value: m)
+}
+
+func bump(j: inout Int): Int {
+    &j = j + 1
+    return 1
+}

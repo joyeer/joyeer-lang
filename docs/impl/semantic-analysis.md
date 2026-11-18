@@ -128,6 +128,13 @@ member or subscript does read/project the base storage. The right-hand side and
 `inout` arguments are ordinary reads and therefore require prior
 initialization.
 
+A compound assignment `x op= y` follows spec 4.4.3: the analysis checks the
+index operands in `x` once, then `y`, and only then the read of the old value
+of `x`. So `y` may initialize the root of `x` or change an index binding that
+was already evaluated. It must not consume `x`, its root, or storage that may
+overlap it. Element indices are not compared, so `&a[0] += f(s: consume a[1])`
+is rejected.
+
 Joyeer IR represents deferred nontrivial storage with `alloc_stack` followed by
 `zero_init`. The zero state is an implementation detail that makes cleanup safe;
 the source-level contract still requires rejection of reads before

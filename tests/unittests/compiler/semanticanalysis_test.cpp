@@ -651,6 +651,178 @@ print(value: text)
             << joyeer::analysis::dump(result.diagnostics);
 }
 
+// Spec 4.4.3: a compound assignment evaluates its index operands once, before the right side.
+TEST_F(SemanticAnalysisTest, CompoundAssignmentAnalyzesIndexOperandsOnce) {
+    for (const auto* target : {
+                "&a[consumeIndex(i: consume i)] += 7",
+                "&a[consumeIndex(i: consume i)] -= a[0]",
+                "&cells[consumeIndex(i: consume i)].n += 7",
+                "&grid[0][consumeIndex(i: consume i)] *= 2" }) {
+        SCOPED_TRACE(target);
+        ASSERT_NO_FATAL_FAILURE(analyze(
+                "struct Cell { var n: Int }\n"
+                "func consumeIndex(i: consuming Int): Int { return i }\n"
+                "func main() {\n"
+                "var a = [1, 2, 3]\n"
+                "var cells = [Cell(n: 1), Cell(n: 2)]\n"
+                "var grid = [[1, 2], [3, 4]]\n"
+                "let i = 1\n" + std::string(target) + "\n"
+                "print(value: a[0] + cells[0].n + grid[0][0])\n}\n"));
+        EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+        EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+                << joyeer::analysis::dump(result.diagnostics);
+    }
+}
+
+// The index's own effects still apply once: a later read of the consumed index is rejected.
+TEST_F(SemanticAnalysisTest, CompoundAssignmentIndexConsumeStillEndsTheIndex) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func consumeIndex(i: consuming Int): Int { return i }
+func main() {
+var a = [1, 2, 3]
+let i = 1
+&a[consumeIndex(i: consume i)] += 7
+print(value: i)
+}
+)JOYEER"));
+    EXPECT_EQ(
+            std::count_if(
+                    result.diagnostics.begin(),
+                    result.diagnostics.end(),
+                    [](const auto& diagnostic) {
+                        return diagnostic.id ==
+                                joyeer::analysis::DiagnosticId::useAfterConsume;
+                    }),
+            1)
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+// Spec 4.4.3: `op=` reads the old value after the right side, so a right side that consumes the
+// target's root, the target itself, or storage that may overlap it leaves nothing to read.
+TEST_F(SemanticAnalysisTest, CompoundAssignmentReadsTheTargetAfterTheRightSide) {
+    for (const auto* target : {
+                "&a[0] += take(a: consume a)",
+                "&a[i] += take(a: consume a)",
+                "n += drop(n: consume n)",
+                "c.text += takeText(value: consume c.text)",
+                "&cells[0].text += takeText(value: consume cells[0].text)",
+                // Element indices are not compared, so another element may overlap the target.
+                "&texts[0] += takeText(value: consume texts[1])" }) {
+        SCOPED_TRACE(target);
+        ASSERT_NO_FATAL_FAILURE(analyze(
+                "struct Cell { var text: String }\n"
+                "func take(a: consuming [Int]): Int { return 1 }\n"
+                "func drop(n: consuming Int): Int { return 1 }\n"
+                "func takeText(value: consuming String): String { return value }\n"
+                "func invalid() {\n"
+                "var a = [1, 2, 3]\n"
+                "var n = 1\n"
+                "var c = Cell(text: \"a\")\n"
+                "var cells = [Cell(text: \"a\")]\n"
+                "var texts = [\"a\", \"b\"]\n"
+                "let i = 0\n" + std::string(target) + "\n}\n"));
+        EXPECT_FALSE(result.succeeded());
+        EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+                << joyeer::analysis::dump(result.diagnostics);
+        // The help names the evaluation order rather than suggesting a reinitialization that cannot help.
+        const auto consumed = std::find_if(
+                result.diagnostics.begin(), result.diagnostics.end(), [](const auto& diagnostic) {
+                    return diagnostic.id == joyeer::analysis::DiagnosticId::useAfterConsume;
+                });
+        ASSERT_NE(consumed, result.diagnostics.end());
+        ASSERT_TRUE(consumed->help.has_value());
+        EXPECT_NE(consumed->help->find("4.4.3"), std::string::npos) << *consumed->help;
+    }
+}
+
+// The right side runs before the old value is read: it may initialize the target root, and it may
+// change or consume an index binding that was already evaluated.
+TEST_F(SemanticAnalysisTest, CompoundAssignmentRightSideRunsBeforeTheTargetAccess) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func fill(out: initializing Int): Int {
+&out = 40
+return 2
+}
+func bump(j: inout Int): Int {
+&j = j + 1
+return 10
+}
+func takeIndex(i: consuming Int): Int { return i }
+func main() {
+var n: Int
+n += fill(out: &n)
+var a = [1, 2, 3]
+var j = 0
+&a[j] += bump(j: &j)
+let i = 1
+&a[i] += takeIndex(i: consume i)
+print(value: n + a[0] + a[1] + j)
+}
+)JOYEER"));
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, CompoundAssignmentRequiresAnInitializedTarget) {
+    for (const auto& [target, storage] : {
+                std::pair { "&a[0] += 1", "a[0]" },
+                std::pair { "n += 1", "n" },
+                std::pair { "cell.n += 1", "cell.n" } }) {
+        SCOPED_TRACE(target);
+        const auto prefix = std::string(
+                "struct Cell { var n: Int }\n"
+                "func invalid() {\n"
+                "var a: [Int]\n"
+                "var n: Int\n"
+                "var cell: Cell\n");
+        const auto text = prefix + target + "\n}\n";
+        ASSERT_NO_FATAL_FAILURE(analyze(text));
+        EXPECT_FALSE(result.succeeded());
+        // Reported once, at the storage the old value is read from.
+        ASSERT_EQ(
+                std::count_if(
+                        result.diagnostics.begin(),
+                        result.diagnostics.end(),
+                        [](const auto& diagnostic) {
+                            return diagnostic.id ==
+                                    joyeer::analysis::DiagnosticId::useBeforeInitialization;
+                        }),
+                1)
+                << joyeer::analysis::dump(result.diagnostics);
+        const auto& span = std::find_if(
+                result.diagnostics.begin(), result.diagnostics.end(), [](const auto& diagnostic) {
+                    return diagnostic.id == joyeer::analysis::DiagnosticId::useBeforeInitialization;
+                })->span;
+        EXPECT_EQ(text.substr(span.offset, span.length), storage);
+    }
+}
+
+// A target consumed before the statement is not the right side's doing, so the help asks for a
+// reinitialization instead of citing the evaluation order.
+TEST_F(SemanticAnalysisTest, CompoundAssignmentRejectsATargetConsumedBeforeTheStatement) {
+    for (const auto* body : {
+                "take(value: consume cells[0].text)\n&cells[0].text += \"b\"",
+                "if flag { take(value: consume cells[0].text) }\n&cells[0].text += \"b\"",
+                "drop(n: consume n)\nn += 1" }) {
+        SCOPED_TRACE(body);
+        ASSERT_NO_FATAL_FAILURE(analyze(
+                "struct Cell { var text: String }\n"
+                "func take(value: consuming String) {}\n"
+                "func drop(n: consuming Int) {}\n"
+                "func invalid(flag: Bool) {\n"
+                "var cells = [Cell(text: \"a\")]\n"
+                "var n = 1\n" + std::string(body) + "\n}\n"));
+        EXPECT_FALSE(result.succeeded());
+        const auto consumed = std::find_if(
+                result.diagnostics.begin(), result.diagnostics.end(), [](const auto& diagnostic) {
+                    return diagnostic.id == joyeer::analysis::DiagnosticId::useAfterConsume;
+                });
+        ASSERT_NE(consumed, result.diagnostics.end()) << joyeer::analysis::dump(result.diagnostics);
+        ASSERT_TRUE(consumed->help.has_value());
+        EXPECT_NE(consumed->help->find("reinitialize"), std::string::npos) << *consumed->help;
+        EXPECT_EQ(consumed->help->find("4.4.3"), std::string::npos) << *consumed->help;
+    }
+}
+
 TEST_F(SemanticAnalysisTest, DoesNotRestoreADifferentConsumedElement) {
     for (const auto* replacement : {
                 "&values[1] = \"new\"",
