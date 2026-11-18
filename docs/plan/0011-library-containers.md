@@ -156,10 +156,13 @@ remain separate gates.
   `lib/Runtime/collections.joyeer` behind the 0027 roles (stage 6); the differential against the builtin
   (identical outputs and allocation counts at -O0 to -O3); role reviews and fixes; Windows x64 and Linux x86_64
   validation (2026-11-18 log entry).
-- [ ] Remove dictionary-specific opcodes, type kinds, and backend cases after fixtures pass.
+- [x] Remove dictionary-specific opcodes, type kinds, and backend cases after fixtures pass. Evidence: 0027 stage 7
+  (2026-11-18 log entry): no `TypeKind::dictionary`, builtin dictionary opcode or backend case remains; opcode slots
+  39-41 and 50 (`subscript_addr`) and type slot 11 are rejected by the verifier (observed-failing tests 439702d,
+  e79cd36); the wire is 25; role reviews and Windows x64 and Linux x86_64 validation.
 - [ ] Benchmark both profiles, run all role reviewers and full platform validation, and
-  update supported features and runtime/IR notes. Done for the switch on Windows x64 and Linux x86_64 (2026-11-18);
-  remaining: macOS validation, and the cleanup stage (7) above.
+  update supported features and runtime/IR notes. Done on Windows x64 and Linux x86_64 for the switch and the
+  cleanup (2026-11-18); remaining: macOS validation.
 
 ## Open questions
 
@@ -828,3 +831,22 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   key it could borrow. Validation at 07d2fac: Windows AMD64 Debug and Release `ctest` 1971/1971, `fern test` 7/7
   (six tests passed only on rerun while the machine ran reviewer timing jobs: Fern.Workspace, Fern.Manifest and four
   `E2EOptimizationEquivalence_*`); Linux x86_64 fresh WSL clone 1947/1947 and 7/7, no reruns. macOS not run.
+- 2026-11-18: 0027 stage 7 (cleanup), 988c60f..04b842c, every change test-first. A String byte written through a
+  subscript passed the checker and failed in the backend (older than the branch); it was the last producer of
+  `subscript_addr`. Spec 2.1.1 now makes a byte read-only whatever the binding: `&s[i] = b` and `op=` are
+  `assignment-to-immutable`, an `inout` `&s[i]` is `invalid-inout-argument`, `consume s[i]` is
+  `invalid-consume-argument` (one report, also for a non-consumable base), each with help (tests 3e05aa3, 5c00858,
+  054396f observed failing; fixes 31c4b46, 5ca4da4, 04b842c; 2382569 corrects a test of mine that passed a byte to a
+  consuming parameter without `consume`). Then the cleanup (tests 439702d and e79cd36 observed failing; 526bdc7):
+  `TypeKind::dictionary`, `construct_dictionary`, `dictionary_set`, `dictionary_get` and `subscript_addr` are deleted
+  with their checker (builtin `get` and its signature), lowering, verifier and backend cases (and the backend's
+  key-kind table); slots 39-41, 50 and type kind 11 stay rejected, `subscript` and `count` are String-only and pinned
+  by invalid-IR tests, the wire is 25. The runtime dictionary ABI stays: the library calls it. The hand-built tests of
+  the builtin operations went with them; the one role rule they alone covered (one declaration per optional role)
+  moved to `VerifierRejectsMalformedRoleEnumerations`. Reviews: type-system (no blocking; low findings fixed, one
+  re-review round) and IR/backend (no blocking; `consume s[i]` reaching lowering fixed, test gaps filled). The cost
+  gate was not re-measured: every deleted path is unreachable from a library `Dict` program, and the checker change
+  touches only String byte writes. Validation at 04b842c: Windows AMD64 Debug and Release `ctest` 1976/1976 and
+  `fern test` 7/7 (Debug: Compression.Interoperability, Release: ValidationScriptTests, Fern.Manifest,
+  Fern.Workspace and Compression.Interoperability passed only on rerun, while two other sessions ran their own
+  validations on the machine); Linux x86_64 fresh WSL clone 1952/1952 and 7/7 in each, no reruns. macOS not run.

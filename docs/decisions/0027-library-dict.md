@@ -3,7 +3,9 @@
 - Status: accepted for stages 1-4 (2026-11-16, revision 4, by the user, after three language-designer reviews, the
   last "accept with changes"). Stages 5-7 are conditional on the measured gates (Acceptance condition below); the
   three open questions of revision 2 were answered by the user the same day. The switch's one missed `-O2` row, a
-  code-placement effect, was accepted by the user on 2026-11-17 (Acceptance condition).
+  code-placement effect, was accepted by the user on 2026-11-17 (Acceptance condition). Stage 7 (cleanup) landed
+  2026-11-18 at wire 25. With its dictionary arm gone, `subscript_addr`'s only producer was a String byte target,
+  which spec 2.1.1 now rejects in the checker, so the whole opcode went and slot 50 is held with 39-41.
 - Spec: [§2.6](../../specs/02-types.md#26-generics) and §2.6.1 (lookup), §4.1.1 (copyability),
   [§20.5](../../specs/20-protocols.md) (key constraints), §20.12.5 (layout intrinsics and roles) and
   [§21.2.2](../../specs/21-concurrency.md) (task transfer) change with this record once it is accepted.
