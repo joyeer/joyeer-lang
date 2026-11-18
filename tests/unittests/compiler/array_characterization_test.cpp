@@ -53,12 +53,14 @@ TEST(ArrayCharacterization, TypesPrintInSquareBrackets) {
     EXPECT_TRUE(contains(literal, "cannot use value of type 'String' where 'Int' is required")) << literal;
 }
 
-// CHANGES WITH 0026: today the member error names the builtin type by its bare name `Array`; the library
-// struct is an ordinary type with private fields, so `address` and `capacity` become inaccessible instead.
+// CHANGES WITH 0026: the library's stored fields are inaccessible, not unknown members.
 TEST(ArrayCharacterization, UnknownMembersAndMisuseOfCount) {
     const auto text = diagnose("func main() { let a: [Int] = [1]\n print(value: a.address) }\n");
-    EXPECT_TRUE(contains(text, "name-resolution.unknown-member")) << text;
-    EXPECT_TRUE(contains(text, "type 'Array' has no member named 'address'")) << text;
+    EXPECT_TRUE(contains(text, "inaccessible-declaration")) << text;
+    EXPECT_TRUE(contains(text, "declaration 'address' is not accessible from this file")) << text;
+    const auto capacity = diagnose("func main() { let a: [Int] = [1]\n print(value: a.capacity) }\n");
+    EXPECT_TRUE(contains(capacity, "inaccessible-declaration")) << capacity;
+    EXPECT_TRUE(contains(capacity, "declaration 'capacity' is not accessible from this file")) << capacity;
     const auto call = diagnose("func main() { let a: [Int] = [1]\n print(value: a.count()) }\n");
     EXPECT_TRUE(contains(call, "name-resolution.not-callable")) << call;
     EXPECT_TRUE(contains(call, "'count' is not callable")) << call;
@@ -86,7 +88,7 @@ TEST(ArrayCharacterization, ForInNeedsAnIterable) {
 TEST(ArrayCharacterization, AUserTypeNamedArrayShadowsTheBuiltin) {
     const auto text = diagnose("struct Array { var x: Int }\n"
                                "func main() { let a = Array(x: 1)\n let b: Int = a }\n");
-    EXPECT_TRUE(contains(text, "cannot use value of type 'Array' where 'Int' is required")) << text;
+    EXPECT_TRUE(contains(text, "cannot use value of type '<main>.Array' where 'Int' is required")) << text;
 }
 
 TEST(ArrayCharacterization, OwnershipReasonsNameTheElement) {
@@ -102,6 +104,24 @@ TEST(ArrayCharacterization, OwnershipReasonsNameTheElement) {
     EXPECT_TRUE(contains(linear, "'h' holds a linear value of type '[JoinHandle<Int>]' that is not consumed "
                                  "before the end of its block")) << linear;
     EXPECT_TRUE(contains(linear, "help: end each handle with its consuming 'join' method")) << linear;
+}
+
+// The help for an unconsumed linear value names the handle's own ending method. Only a bare array is told to
+// remove its elements and end the empty container; a struct field or an Optional holding an array is not.
+TEST(ArrayCharacterization, LinearHelpNamesTheHandleNotTheContainerEnd) {
+    const auto nested = diagnose("func main() { let h: [[JoinHandle<Int>]] = [] }\n");
+    EXPECT_TRUE(contains(nested, "semantic-analysis.linear-not-consumed")) << nested;
+    EXPECT_TRUE(contains(nested, "end each handle with its consuming 'join' method")) << nested;
+    const auto wrapped = diagnose("struct W { var hs: [JoinHandle<Int>] }\n"
+                                  "func main() { let w = W(hs: []) }\n");
+    EXPECT_TRUE(contains(wrapped, "semantic-analysis.linear-not-consumed")) << wrapped;
+    EXPECT_TRUE(contains(wrapped, "help: end each handle with its consuming 'join' method (or return it)")) << wrapped;
+    EXPECT_FALSE(contains(wrapped, "consumeEmpty")) << wrapped;
+    const auto optional = diagnose("func main() { let o: Optional<[JoinHandle<Int>]> = .None }\n");
+    EXPECT_TRUE(contains(optional, "semantic-analysis.linear-not-consumed")) << optional;
+    EXPECT_TRUE(contains(optional, "help: end each handle with its consuming 'join' method (or return it)"))
+            << optional;
+    EXPECT_FALSE(contains(optional, "consumeEmpty")) << optional;
 }
 
 TEST(ArrayCharacterization, LinearElementsCannotBeIterated) {
@@ -128,14 +148,108 @@ TEST(ArrayCharacterization, ConsumingAnElementOfANoncopyableTypeIsAccepted) {
     EXPECT_EQ(text, "") << text;
 }
 
-TEST(ArrayCharacterization, NeverElementsAreAcceptedAndAnyIsNotSyntax) {
-    EXPECT_EQ(diagnose("func f(a: [Never]) {}\nfunc main() {}\n"), "");
+// Decision 0026, revision 5: `Never` has no values, so an array of it can hold none and every operation on one
+// (iteration, indexing) binds a value that cannot exist. It is rejected like `Never` in any other generic.
+TEST(ArrayCharacterization, NeverIsNotAnArrayElement) {
+    for (const auto* source : {
+                 "func f(a: [Never]) {}\nfunc main() {}\n",
+                 "func f(a: Array<Never>) {}\nfunc main() {}\n",
+                 "func main() { let n: [Never] = [] }\n",
+                 "func main() { let n: [Never] = []\n for x in n { } }\n",
+                 "func main() { let n: [Never] = []\n let x = n[0] }\n",
+                 "func f(): [[Never]] { return [] }\nfunc main() {}\n",
+                 "func main() { let a = [return] }\n",
+         }) {
+        const auto text = diagnose(source);
+        EXPECT_TRUE(contains(text, "type-checking.invalid-type-argument")) << source << "\n" << text;
+        EXPECT_TRUE(contains(text, "'Never'")) << source << "\n" << text;
+    }
+    for (const auto* source : {
+                 "func main() { let a = [return, return] }\n",
+                 "func main() { let a = [[return]] }\n",
+                 "func f(a: [Never]?) {}\nfunc main() {}\n",
+                 "func f(a: Result<[Never], Int>) {}\nfunc main() {}\n",
+                 "struct S { var a: [Never] }\nfunc main() {}\n",
+                 "func f(a: [String: [Never]]) {}\nfunc main() {}\n",
+                 "func main() { for x in [return] { } }\n",
+         }) {
+        const auto text = diagnose(source);
+        EXPECT_TRUE(contains(text, "type-checking.invalid-type-argument")) << source << "\n" << text;
+    }
+    // The written spellings read the same, and the generic-parameter text is not used for an array.
+    for (const auto* source : { "func f(a: [Never]) {}\nfunc main() {}\n", "func f(a: Array<Never>) {}\nfunc main() {}\n" }) {
+        const auto text = diagnose(source);
+        EXPECT_TRUE(contains(text, "the element type of an array cannot be 'Never'")) << source << "\n" << text;
+        EXPECT_FALSE(contains(text, "type parameter 'T' of 'Array'")) << source << "\n" << text;
+    }
+    // Arrays that still have an element type, and a diverging element that does not decide it.
+    for (const auto* source : {
+                 "func main() { let a = [1, return] }\n",
+                 "func f(a: [Void]) {}\nfunc main() {}\n",
+                 "func f(a: Array<Never?>) {}\nfunc main() {}\n",
+                 "func f(a: Array<Optional<Never>>) {}\nfunc main() {}\n",
+                 "func main() { let a: [Int] = [return] }\n",
+                 "func main() { let a = [[1], [return]] }\n",
+         }) {
+        EXPECT_EQ(contains(diagnose(source), "element type of an array"), false) << source;
+    }
+    // One error per mistake: neither a rejected annotation nor an earlier element error is reported twice.
+    const auto count = [](const std::string& text, const std::string& needle) {
+        size_t found = 0;
+        for (auto at = text.find(needle); at != std::string::npos; at = text.find(needle, at + 1)) ++found;
+        return found;
+    };
+    for (const auto* source : {
+                 "func main() { let a: [Never] = [return] }\n",
+                 "func main() { let b: Array<Never> = [] }\n",
+                 "func main() { let a: [Never] = [] }\n",
+         }) {
+        const auto text = diagnose(source);
+        EXPECT_EQ(count(text, "invalid-type-argument"), 1u) << source << "\n" << text;
+        EXPECT_FALSE(contains(text, "missing-contextual-type")) << source << "\n" << text;
+    }
+    const auto order = diagnose("func main() { let a = [return, 1] }\n");
+    EXPECT_FALSE(contains(order, "element type of an array")) << order;
+    // The rejected annotation poisons the binding: its empty literal adds no follow-on error.
+    const auto cascade = diagnose("func main() { let n: [Never] = [] }\n");
+    EXPECT_FALSE(contains(cascade, "missing-contextual-type")) << cascade;
+    // `Never` inside an optional is a type with a value (`.None`), so it stays an ordinary element.
+    EXPECT_EQ(diagnose("func f(a: [Never?]) {}\nfunc main() {}\n"), "");
+}
+
+// The same rule as for arrays (0026, A10/A11): a dictionary of `Never` keys or values could hold no entry, and
+// `d["a"]` on one binds a value that cannot exist (the compiler used to segfault on it).
+TEST(ArrayCharacterization, NeverIsNotADictionaryKeyOrValue) {
+    for (const auto* source : {
+                 "func f(d: [String: Never]) {}\nfunc main() {}\n",
+                 "func main() { let d: [String: Never] = [:]\n let x = d[\"a\"] }\n",
+                 "func f(d: [Never: Int]) {}\nfunc main() {}\n",
+                 "func f(): [String: [String: Never]] { return [:] }\nfunc main() {}\n",
+                 "func main() { let d = [\"a\": return] }\n",
+         }) {
+        const auto text = diagnose(source);
+        EXPECT_TRUE(contains(text, "type-checking.invalid-type-argument")) << source << "\n" << text;
+        EXPECT_TRUE(contains(text, "of a dictionary cannot be 'Never'")) << source << "\n" << text;
+        EXPECT_FALSE(contains(text, "missing-contextual-type")) << source << "\n" << text;
+    }
+    // A `Never?` value is an ordinary value, and a dictionary with a real value type may start with a diverging one.
+    EXPECT_EQ(diagnose("func f(d: [String: Never?]) {}\nfunc main() {}\n"), "");
+    EXPECT_FALSE(contains(diagnose("func main() { let d: [String: Int] = [\"a\": return] }\n"), "of a dictionary cannot"));
+}
+
+TEST(ArrayCharacterization, AnyIsNotSyntax) {
     const auto any = diagnose("func g(a: [Any]) {}\nfunc main() {}\n");
     EXPECT_TRUE(contains(any, "Syntax 'Any' is not supported")) << any;
 }
 
 TEST(ArrayCharacterization, FunctionValueElementsAreAccepted) {
     EXPECT_EQ(diagnose("func f(a: [(Int): Int]) {}\nfunc main() {}\n"), "");
+}
+
+TEST(ArrayCharacterization, EqualityOfLibraryArraysWaitsForEquatable) {
+    const auto text = diagnose("func main() { let equal = [1] == [1]\n print(value: equal) }\n");
+    EXPECT_TRUE(contains(text, "type-checking.invalid-operator-operands")) << text;
+    EXPECT_TRUE(contains(text, "[Int]")) << text;
 }
 
 } // namespace

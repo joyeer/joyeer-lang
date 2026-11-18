@@ -246,7 +246,7 @@ destruct-then-construct round-trip for large objects.
 ### 4.3 Call-site markers `&` and `consume`
 
 The call-site marker for `inout` / `initializing` is `&x`;
-for `consuming` it is `consume x`.
+for `consuming` it is `consume x`, except the closed library-owned element context below.
 
 ```joyeer
 swap(a: &a, b: &b)        // both args are inout
@@ -256,10 +256,17 @@ plain(x: x, y: y)         // no marker → both are borrowing (read-only)
 ```
 
 The `&` marker is **mandatory** on `inout` and `initializing` arguments,
-and `consume` is **mandatory** on `consuming` arguments. Omitting either is
-a syntax-level error, not just a type error — this guarantees that mutation
+and `consume` is **mandatory** on ordinary `consuming` arguments. Omitting either is
+an access-marker error — this guarantees that mutation
 and ownership transfer are always visible at the call site by simple
 scanning (§0.1 principle 2).
+
+A consuming parameter of an `array_type` method declared with exactly the role's owned type
+parameter is an **owned argument context** (§20.12.5). This preserves `append(element:)`:
+an unmarked argument supplies an owned temporary or a copy of a copyable place, without
+uninitializing that place. `consume` explicitly moves it; `&` is invalid. The exception is
+classified before generic substitution, applies to neither receivers nor other parameters,
+and does not relax exclusivity or the must-transfer rule inside the library body.
 
 Last-use optimization still applies to plain `borrowing` bindings (§4.6);
 `consume` specifies **semantic** ownership transfer, not the optimization.
@@ -357,7 +364,23 @@ var a = [1, 2, 3]
 ```
 
 Only the right-hand side's own calls are checked for exclusivity (§4.4), not
-against the assignment target.
+against the assignment target. A right-hand side that consumes the target's
+root, or the part of it the target projects through, is rejected
+(`use-after-consume`): nothing is left to assign into at step 3.
+
+```joyeer
+&d["b"] = take(d: consume d)   // ❌ error: 'd' is consumed before the element is assigned
+d = pass(d: consume d)         // ✅ the whole binding is reinitialized
+```
+
+For the same reason a right-hand side may initialize the target's root, on
+every path, before step 3 assigns into it; the element it replaces is
+destroyed once:
+
+```joyeer
+var d: [String: Res]
+&d["k"] = fill(out: &d)        // ✅ fill initializes d; then d["k"] is replaced
+```
 
 ### 4.5 Subscripts & projection
 

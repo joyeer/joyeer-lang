@@ -79,6 +79,11 @@ private:
     llvm::Value* operand(ir::ValueId id) { return operands.at(id); }
     const ir::TypeName& type(ir::TypeId id) { return *types.at(id); }
     bool unit(ir::TypeId id) { return type(id).kind == typing::TypeKind::voidType; }
+    bool isArrayRole(ir::TypeId id) const {
+        const auto found = structures.find(id);
+        return found != structures.end() && found->second->role == ir::StructureRole::array;
+    }
+    llvm::Value* bufferData(ir::TypeId id, llvm::Value* value);
     void report(DiagnosticId id, SourceSpan span, std::string message);
 
     // Types/layout and ownership use Joyeer's portable 64-bit runtime ABI.
@@ -86,6 +91,8 @@ private:
     Layout layout(ir::TypeId id);
     std::vector<size_t> payloadOffsets(const ir::EnumCaseDefinition& definition);
     void defineTypes();
+    void checkDictionaryEntryLayout(const ir::StructureDefinition& definition, llvm::StructType* aggregate,
+                                    const llvm::DataLayout& target);
     // The LLVM type of a Joyeer function: the one place its convention comes from, shared by function
     // definitions and calls through a function value (decision 0020). `inout` and `initializing`
     // parameters are pointers; a unit or `Never` result is void. No attributes are added.
@@ -138,8 +145,6 @@ private:
     llvm::Value* emitIntrinsic(const intrinsic::Descriptor& descriptor,
             llvm::ArrayRef<llvm::Value*> arguments);
     bool emitCollection(const ir::Instruction& instruction, llvm::Value*& result);
-    int keyKind(ir::TypeId id);
-    llvm::Value* dictionaryFind(ir::TypeId id, llvm::Value* dictionary, llvm::Value* key);
 
     // Debug locations are attached to objects as they are built, never by
     // searching or rewriting printed instruction text.
@@ -151,6 +156,8 @@ private:
     llvm::DILocalScope* locationScope(std::optional<ir::DebugScopeId> id, SourceSpan span);
     llvm::DILocation* location(const std::optional<ir::DebugLocation>& location);
     void functionDebug(const ir::Function& function);
+    void ownershipDebug(ir::TypeId type);
+    void implicitCallLocation(llvm::CallInst* call);
     bool bindDebug(const ir::DebugVariableBinding& binding);
 };
 

@@ -1,0 +1,26 @@
+// Dictionary destruction baseline (plan 0011 phase 4, decision 0027): a [String: [Int]] of 16 keys each holding eight
+// Ints is built, copied, the copy read, and both dropped, each round.
+func main() {
+    var keys: [String] = []
+    var text = "n"
+    var index = 0
+    while index < 16 {
+        &keys.append(element: text)
+        text = text + "y"
+        index = index + 1
+    }
+    var total = 0
+    var round = 0
+    while round < 100000 {
+        var table: [String: [Int]] = [:]
+        index = 0
+        while index < 16 {
+            &table[keys[index]] = [index, round, 1, 2, 3, 4, 5, 6]
+            index = index + 1
+        }
+        let copy = table
+        total = total + copy[keys[3]][0] + copy[keys[15]][1] + copy.count
+        round = round + 1
+    }
+    print(value: total)
+}

@@ -151,10 +151,11 @@ std::optional<ConstantValue> ConstantEvaluator::evaluateCount(
     const auto baseType = model->typeOf(expression->base);
     if (!baseType.has_value()) return std::nullopt;
     const auto kind = model->types().type(*baseType)->kind;
-    if (kind != Kind::array && kind != Kind::string) return std::nullopt;
+    const bool array = model->isArrayRoleType(*baseType);
+    if (!array && kind != Kind::string) return std::nullopt;
     const auto base = evaluate(expression->base);
     if (!base.has_value()) return std::nullopt;
-    return makeInteger(kind == Kind::array ? base->elements.size() : base->text.size(), 64);
+    return makeInteger(array ? base->elements.size() : base->text.size(), 64);
 }
 
 std::optional<ConstantValue> ConstantEvaluator::evaluateLiteral(
@@ -429,7 +430,14 @@ bool ConstantEvaluator::appendEncoded(const ConstantValue& value, typing::TypeId
         report(span, "constant has no resolved type");
         return false;
     }
-    switch (record->kind) {
+    if (model->isArrayRoleType(type)) {
+        const auto elementType = record->arguments[0];
+        appendInteger(out, value.elements.size(), 8);
+        for (const auto& element : value.elements) {
+            if (!appendEncoded(element, elementType, out, span)) return false;
+            if (out.size() > maximumConstantBytes) break;
+        }
+    } else switch (record->kind) {
         case Kind::boolean:
             appendInteger(out, value.integer, 1);
             break;
@@ -449,13 +457,6 @@ bool ConstantEvaluator::appendEncoded(const ConstantValue& value, typing::TypeId
         case Kind::string:
             appendInteger(out, value.text.size(), 8);
             out += value.text;
-            break;
-        case Kind::array:
-            appendInteger(out, value.elements.size(), 8);
-            for (const auto& element : value.elements) {
-                if (!appendEncoded(element, record->arguments.at(0), out, span)) return false;
-                if (out.size() > maximumConstantBytes) break;
-            }
             break;
         default:
             if (!typing::isInteger(record->kind)) {

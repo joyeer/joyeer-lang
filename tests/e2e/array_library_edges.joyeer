@@ -1,0 +1,9 @@
+// Unit elements still count and move through the ordinary library API. (`Never` is not an array element.)
+func main() {
+    var units: [Void] = [(), (), ()]
+    &units.append(element: ())
+    print(value: units.count)
+    let last = &units.removeLast()
+    print(value: match last { .Some(()) => 1, .None => 0 })
+    print(value: units.count)
+}

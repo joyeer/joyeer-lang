@@ -35,6 +35,13 @@ either type an address type.
 `i` in **O(1)**, and `s.count` is the **byte length**. Integer subscripts do
 not provide code-point (`Char`) indexing; `.chars()` iterates code points.
 
+A byte is read-only, whatever the binding: no subscript writes into a
+`String`, so `&s[i] = b` and a compound assignment to `s[i]` are
+`type-checking.assignment-to-immutable`, `&s[i]` as an `inout` argument is
+`type-checking.invalid-inout-argument`, and `consume s[i]` is
+`type-checking.invalid-consume-argument` (copy the byte into a binding with
+`let byte = s[i]` and consume that). Build a new `String` instead.
+
 ```joyeer
 let s = "héllo"      // 'é' is 2 UTF-8 bytes
 s.count               // 6 (bytes), not 5
@@ -214,29 +221,57 @@ enum Result<T, E> {
 
 ### 2.6 Generics
 
-The generic types are the built-in types `Array<T>` / `[T]`, `Dict<K, V>` /
+The generic containers are `Array<T>` / `[T]`, `Dict<K, V>` /
 `[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>` (and the concurrency types
-below). `Array` and `Dict` have angle brackets that are **type arguments understood directly by the
-compiler**; `Optional` and `Result` are prelude enums bound by roles (§2.4, §2.5). User code may *use* these containers and may declare **generic
+below). `Array` and `Dict` are source-library structs in `lib/Runtime/collections.joyeer`, bound by
+`array_type` and `dict_type` (§20.12.5); `Optional` and `Result` are prelude enums bound by roles (§2.4, §2.5).
+No generic container is compiler-defined. User code may *use* these containers and may declare **generic
 top-level functions** and **generic `struct`s and `enum`s** bounded by protocols
 (§20, §20.12, [decision 0022](../docs/decisions/0022-generic-types-and-layout-intrinsics.md)),
 but may not declare generic methods or conditional conformances (§20.10).
 
 ```joyeer
-let xs: [Int] = [1, 2, 3]               // built-in Array<Int>
-let m: [String: Int] = [:]             // built-in Dict<String, Int>
+let xs: [Int] = [1, 2, 3]               // library Array<Int>
+let m: [String: Int] = [:]             // library Dict<String, Int>
 let r: Result<Int, ParseError> = .Ok(1)
 ```
 
 Generic functions use `<T: P & Q>` and are instantiated by monomorphization
 (§20.4, §20.6). A type parameter may be a container's element, payload or
 error type (`[T]`, `T?`, `Result<T, E>`, `[String: T]`), but not a `Dict` key
-type (§20.5). Generic user types and associated types remain deferred
-(§20.10).
+type (§20.5). Associated types remain deferred (§20.10).
+
+`[T]` and array literals always bind to the declaration carrying `array_type`, regardless of
+names in scope. `Array<T>` is its ordinary nominal spelling; a user type named `Array` shadows
+that spelling but not `[T]`, and diagnostics qualify the user type to avoid ambiguity. Role-array
+types display as `[T]`. The library exposes read-only `count`, mutating `append(element:)` and
+`removeLast()`, and consuming `consumeEmpty()`. `append` stores an owned element: an unmarked
+place is independently copied when copyable, an owned temporary transfers, and `consume` explicitly
+moves an owning place (§4.3). The address and capacity fields and compiler-called helper methods are private.
+All literal elements are evaluated left to right as owned temporaries before storage is filled;
+an early exit in a later element destroys earlier affine temporaries in reverse order (§4.7).
+
+`[K: V]` and dictionary literals likewise bind to the declaration carrying `dict_type`
+([0027](../docs/decisions/0027-library-dict.md)); `Dict<K, V>` is its nominal spelling, a user type named
+`Dict` shadows only that spelling, and role-dictionary types display as `[K: V]`. The library exposes
+read-only `count` and `get(key:)` (§2.6.1); `d[k]` reads, borrows, consumes or mutates a stored value in
+place and traps `dictionary key not found` for a missing key, and `&d[k] = v` inserts or replaces. In
+`&d[k] = v` the base's index operands, the key and the value are evaluated, in that order, before the base
+is addressed (§4.4.3), so the value is evaluated before a missing outer key traps, and a value that
+exits early (`&d[missing][k] = f()?` when `f` fails) leaves without trapping. The evaluated keys are kept
+as they were read: a value that consumes or reassigns the key's binding does not change which entry is
+addressed. The address and
+capacity fields and the compiler-called methods are private. A literal evaluates every key and value
+left to right before any entry is stored; a duplicate key keeps the last value.
+
+**Dictionary keys (closed until plan 0012).** The admitted key types are exactly `Int`, `Bool`, `UInt8`
+and `String`, by type, not by spelling. Any other key, written at a `[K: V]` annotation, a `Dict<K, V>`
+or a literal, is `type-checking.invalid-type-argument`; a function type, a type parameter or `Never` as a
+key keeps its own diagnostic. Keys are compared by the runtime's key kind; lookup is a linear scan.
 
 #### 2.6.1 Safe dictionary lookup
 
-The builtin `Dict<K, V>.get(key:)` takes a key of type `K` and returns
+The library `Dict<K, V>.get(key:)` (the `dict_get` method, §20.12.5) takes a key of type `K` and returns
 `Optional<V>`. It borrows both the receiver and key, evaluates the receiver
 before the key exactly once each, and does not require `&` or `consume`.
 Ordinary access exclusivity and initialization rules still apply.
@@ -265,7 +300,7 @@ allocation. The receiver dictionary itself is not copied by `get`.
 
 #### 2.6.2 Removing the last array element
 
-The builtin `Array<T>.removeLast()` is a mutating method with no arguments. It
+The library `Array<T>.removeLast()` is a mutating method with no arguments. It
 needs a mutable receiver and the `&` marker (§4.3), and returns `Optional<T>`:
 `.Some` holding the last element, which is removed from the array, or `.None`
 when the array is empty.
@@ -283,11 +318,10 @@ temporary, and a `match` that moves the payload (§7.1.2) can take the element o
 of it. **Implementation status:** implemented; the runtime
 removes the element in constant time and does not shrink the array's capacity.
 
-**Planned library `Array` ([decision 0025](../docs/decisions/0025-library-collection-capabilities.md)).**
-The compiler capabilities that let `Array<T>` be an ordinary prelude struct bound by the role
-`array_type` (§20.12.5) are specified, but `Array<T>` and `[T]` are still builtin until Phase 3 of
-[plan 0011](../docs/plan/0011-library-containers.md). The public behavior of this section, the `[JoyeerArray]`
-layout and the trap texts do not change.
+The source implementation calls the existing runtime array ABI
+([decision 0026](../docs/decisions/0026-library-array.md)); the three-word `JoyeerArray` layout,
+ownership behavior and trap texts are unchanged. Capacity, geometric growth and header size are
+runtime implementation details, not language guarantees.
 
 #### 2.6.3 Concurrency library types
 
@@ -325,7 +359,9 @@ traps with `array not empty` before any element is touched. It is the only way t
 returns `Void`. In this version the receiver must be a variable, a parameter or a field, not a
 temporary.
 
-**Implementation status:** implemented (stage 0 of P5a, [decision 0018](../docs/decisions/0018-tasks.md)): a consuming builtin member, the `array_consume_empty` IR instruction (wire version 13) and `joyeer_array_consume_empty_abi` in the runtime.
+**Implementation status:** implemented as the library method bound to `container_end`, calling
+`joyeer_array_consume_empty_abi`. Its consumed receiver is destroyed after the method returns;
+the runtime has already zeroed the empty handle, so that destruction is inert.
 
 ### 2.8 Type inference
 
@@ -368,6 +404,15 @@ parameter is rejected (`type-checking.invalid-type-argument`).
 
 `Never` is not the type of a stored field of a structure, because no value of
 that structure could be constructed (`type-checking.never-field-type`).
+
+`Never` is not the element type of an array, written `[Never]` or `Array<Never>`
+or inferred from a literal such as `[return]`: such an array could never hold an
+element, and iterating or indexing it would bind a value that cannot exist. It is
+rejected with `type-checking.invalid-type-argument`, like `Never` in any other
+generic. `Never` inside an optional element (`[Never?]`) is an ordinary element,
+because `.None` is a value. The same holds for a dictionary: `Never` is neither a key
+nor a value type (`[String: Never]`, `[Never: Int]`, or inferred from a literal such as
+`["a": return]`).
 
 `Never` may appear in a signature as an explicit "this function never returns"
 marker:

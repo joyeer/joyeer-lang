@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace joyeer::ir {
@@ -79,24 +80,21 @@ enum class Opcode {
 
     call,
     constructStruct,
-    constructArray,
-    arrayAppend,
-    arrayRemoveLast,
-    arrayConsumeEmpty,
-    constructDictionary,
-    dictionarySet,
-    dictionaryGet,
-    fieldAddress,
+    // Wire slots 35-38 belonged to the removed builtin array operations, and 39-41 to the removed builtin
+    // dictionary operations (decision 0027); the verifier rejects them.
+    fieldAddress = 42,
     extractField,
     constructEnum,
     extractPayload,
     payloadAddress,
     stringUtf8,
+    // The byte length of a String.
     count,
+    // The byte of a String at an Int offset; traps out of range.
     subscript,
-    subscriptAddress,
+    // Wire slot 50 belonged to the removed `subscript_addr`, the builtin dictionary's element address.
 
-    branch,
+    branch = 51,
     conditionalBranch,
     switchPattern,
     returnValue,
@@ -126,6 +124,14 @@ enum class Opcode {
     cloneCallback,
     destroyCallback,
     linearRangeGuard,
+    // The address of element `index` of a run of slots of the type `integerValue` names, starting at `base`
+    // (operands: base, index; an `Int` result): `base + index * size`, with no overflow or bounds check. Library
+    // code checks the bounds first and keeps size computations for allocation checked (decision 0026).
+    slotAddress,
+    // Contiguous stack storage for a constant number of slots of the type `integerValue` names (operand: the
+    // constant count; an `Int` address result, 0 for no storage). Allocated once per invocation and never
+    // destroyed; runtime-only (decision 0026).
+    stackBlock,
 };
 
 enum class PatternKind {
@@ -246,6 +252,11 @@ struct Function {
     // The `array_element` addressor of a library array instance (decision 0025): the one kind of
     // function whose result a non-runtime function may turn into an element address.
     bool elementAddressor = false;
+    // The literal method of a role-bound collection (decisions 0026, 0027): called once, on an inert zero value,
+    // with the literal's packed storage.
+    bool literalFactory = false;
+    // Closed runtime wrappers whose extra call frame is not part of the unoptimized library cost.
+    bool alwaysInline = false;
     bool isExternal = false;
     BlockId entry = invalidBlockId;
     std::vector<BasicBlock> blocks;
@@ -279,6 +290,45 @@ struct FieldDefinition {
     bool isMutable = false;
 };
 
+enum class StructureRole : uint8_t {
+    none,
+    array,
+    // The library dictionary handle (decision 0027): inert-zero like the array, owning a key and a value.
+    dict,
+    // The entry a dictionary literal packs: exactly `key: K` then `value: V`, never a value (decision 0027).
+    dictEntry,
+};
+
+// The type argument of a role-bound collection that is the element an addressor returns (decisions 0026, 0027):
+// the only argument of an array, the value of a dictionary.
+inline size_t collectionElementArgument(StructureRole role) {
+    switch (role) {
+        case StructureRole::array: return 0;
+        case StructureRole::dict: return 1;
+        case StructureRole::none:
+        case StructureRole::dictEntry: break;
+    }
+    return 0;
+}
+
+// How many type arguments a role-bound collection owns, each of which its copy depends on: the element of an
+// array, the key and the value of a dictionary; 0 for any other structure.
+inline size_t collectionOwnedArguments(StructureRole role) {
+    switch (role) {
+        case StructureRole::array: return 1;
+        case StructureRole::dict: return 2;
+        case StructureRole::none:
+        case StructureRole::dictEntry: break;
+    }
+    return 0;
+}
+
+// A role-bound collection handle: no hidden live flag, because its all-zero value is destroyable (decisions 0025,
+// 0027).
+inline bool isInertZero(StructureRole role) {
+    return role == StructureRole::array || role == StructureRole::dict;
+}
+
 struct StructureDefinition {
     semantic::SymbolId symbol = semantic::invalidSymbolId;
     TypeId type = typing::invalidTypeId;
@@ -292,8 +342,8 @@ struct StructureDefinition {
     std::optional<FunctionId> deinitializer;
     // A struct bound to the library array role (decision 0025): destruction runs `deinitializer` with
     // no hidden live flag, because the all-zero value is destroyable and the destroy helper zero-fills.
-    bool inertZero = false;
-    // The method that copies such a struct (a function taking its address and returning the struct).
+    StructureRole role = StructureRole::none;
+    // The method that copies such a struct (a function borrowing its value and returning the struct).
     // Present exactly when the instance is copyable; without it the struct is noncopyable.
     std::optional<FunctionId> copier;
 };
@@ -380,6 +430,9 @@ struct VerificationError {
 
 struct VerificationResult {
     std::vector<VerificationError> errors;
+    // The elementary steps of the literal protocols' control-flow walks, so tests can bound their growth without
+    // timing them.
+    size_t literalPathWork = 0;
 
     [[nodiscard]] bool succeeded() const {
         return errors.empty();
@@ -409,6 +462,10 @@ private:
 class DominanceAnalysis {
 public:
     explicit DominanceAnalysis(const Function& function);
+    // Dominance from `root` alone along `edges` (each block's successors, or its predecessors for the
+    // reverse graph): a block dominates another when every path from `root` to it passes through it.
+    // The blocks are those `root` reaches, itself included.
+    DominanceAnalysis(BlockId root, const std::unordered_map<BlockId, std::unordered_set<BlockId>>& edges);
     // Whether `dominator` dominates `block`; a block dominates itself. False when either is not a
     // block of the function.
     [[nodiscard]] bool dominates(BlockId dominator, BlockId block) const;
@@ -418,6 +475,10 @@ public:
     }
 
 private:
+    // The dominator tree of `count` blocks under a virtual root numbered `count`, from their edges.
+    void build(size_t count, const std::vector<std::vector<size_t>>& successors,
+               const std::vector<std::vector<size_t>>& predecessors);
+
     // Each block's dense index, and per index the entry and exit numbers of the dominator tree's
     // preorder walk; a block that no root reaches keeps the unreached sentinel.
     std::unordered_map<BlockId, size_t> indices;

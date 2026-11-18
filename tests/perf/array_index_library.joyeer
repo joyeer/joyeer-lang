@@ -1,0 +1,21 @@
+// Flat element access over a library array (plan 0011, phase 3, decision 0026 measurement): the same program
+// as array_index_flat.joyeer, written over the `Buffer<T>` of array_buffer_prelude.joyeer, whose `a[i]` is a
+// call of the `array_element` addressor (0025). Built only by the array_addressor_probe tool, which supplies
+// the prelude. Prints 221165568000.
+func main() {
+    var items: Buffer<Int> = makeBuffer(count: 1024, sample: 0)
+    var index = 0
+    var total = 0
+    var round = 0
+    while round < 12000 {
+        index = 0
+        while index < 1024 {
+            total = total + items[index]
+            &items[index] = items[index] + 1
+            &items[index] += 2
+            index = index + 1
+        }
+        round = round + 1
+    }
+    print(value: total)
+}

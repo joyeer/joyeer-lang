@@ -5,6 +5,7 @@
 #include "nativebinding.h"
 #include "compiler/diagnostics/diagnostic.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -34,9 +35,8 @@ enum class TypeKind {
     uint8,
     structure,
     enumeration,
-    array,
-    dictionary,
-    int8,
+    // Wire slots 10 and 11 belonged to the removed builtin array and dictionary kinds.
+    int8 = 12,
     int16,
     int32,
     int64,
@@ -125,19 +125,19 @@ enum class NativeBufferKind {
 
 // Both frontend and verified IR use this boundary; nested native storage is
 // limited to borrowed lists of strings or byte arrays, never arbitrary values.
-template<class Lookup>
-[[nodiscard]] NativeBufferKind nativeBufferKind(TypeId id, const Lookup& lookup) {
+template<class Lookup, class IsArray>
+[[nodiscard]] NativeBufferKind nativeBufferKind(TypeId id, const Lookup& lookup, const IsArray& isArray) {
     const auto* value = lookup(id);
     if (value == nullptr) return NativeBufferKind::none;
     if (value->kind == TypeKind::string) return NativeBufferKind::string;
-    if (value->kind != TypeKind::array || value->arguments.size() != 1) {
+    if (!isArray(id) || value->arguments.size() != 1) {
         return NativeBufferKind::none;
     }
     const auto* element = lookup(value->arguments[0]);
     if (element == nullptr) return NativeBufferKind::none;
     if (element->kind == TypeKind::uint8) return NativeBufferKind::bytes;
     if (element->kind == TypeKind::string) return NativeBufferKind::strings;
-    if (element->kind == TypeKind::array && element->arguments.size() == 1) {
+    if (isArray(element->id) && element->arguments.size() == 1) {
         const auto* byte = lookup(element->arguments[0]);
         if (byte != nullptr && byte->kind == TypeKind::uint8) return NativeBufferKind::byteArrays;
     }
@@ -164,6 +164,12 @@ public:
     [[nodiscard]] TypeId dictionaryType(TypeId key, TypeId value);
     [[nodiscard]] TypeId optionalType(TypeId wrapped);
     [[nodiscard]] TypeId resultType(TypeId success, TypeId failure);
+    [[nodiscard]] bool isArray(const TypeRecord* record) const;
+    [[nodiscard]] bool isArray(TypeId id) const { return isArray(type(id)); }
+    // Whether `record` is an instance of the struct bound to the `dict_type` role (decision 0027): `[K: V]` binds to
+    // the role, never to a name.
+    [[nodiscard]] bool isDictionary(const TypeRecord* record) const;
+    [[nodiscard]] bool isDictionary(TypeId id) const { return isDictionary(type(id)); }
     // Whether `record` is an instance of the enum bound to the `optional` or `result` role (decision
     // 0024): the language binds `T?`, `nil` and postfix `?` to the role, never to a name.
     [[nodiscard]] bool isOptional(const TypeRecord* record) const;
@@ -422,7 +428,21 @@ public:
     [[nodiscard]] bool isArrayRoleType(TypeId type) const;
     // The method of the `array_type` struct of `type` that has `role`, or empty (decision 0025).
     [[nodiscard]] std::optional<semantic::SymbolId> arrayRoleMethod(TypeId type, semantic::LibraryRole role) const;
-    [[nodiscard]] std::optional<std::string> linearEndingMethod(TypeId type) const;
+    // The method of `role` of the role-bound collection `type` is an instance of, if any.
+    [[nodiscard]] std::optional<semantic::SymbolId> collectionRoleMethod(TypeId type, semantic::LibraryRole role) const;
+    // Whether `type` is an instance of a validated role-bound collection (an array or a dictionary role).
+    [[nodiscard]] bool isCollectionRoleType(TypeId type) const;
+    // Whether `type` is an instance of the validated `dict_type` struct (decision 0027).
+    [[nodiscard]] bool isDictRoleType(TypeId type) const;
+    // The interned `dict_entry` instance of a concrete dictionary role instance (decision 0027), if any.
+    [[nodiscard]] std::optional<TypeId> dictEntryType(TypeId dictionary) const;
+    // The `key` and `value` field symbols of the validated `dict_entry` struct, which a literal stores through.
+    [[nodiscard]] std::optional<std::array<semantic::SymbolId, 2>> dictEntryFields() const;
+    // Consuming parameters declared with exactly the role's owned type parameter accept owned arguments.
+    [[nodiscard]] bool isOwnedArgumentContext(semantic::SymbolId function, size_t parameter) const;
+    // The consuming method that ends a linear value of `type`. With `leaf`, arrays are looked through and the
+    // method is the one of the first linear element handle, not the array's own container_end method.
+    [[nodiscard]] std::optional<std::string> linearEndingMethod(TypeId type, bool leaf = false) const;
     // Generic functions (spec 20, decision 0021).
     // The type parameters of a generic function in declaration order; null for any other function.
     [[nodiscard]] const std::vector<semantic::SymbolId>* genericParameters(semantic::SymbolId function) const;
@@ -473,8 +493,19 @@ private:
     std::unordered_map<semantic::SymbolId, std::vector<semantic::SymbolId>> constraintLists;
     std::unordered_map<semantic::NodeId, GenericCall> genericCalls;
     std::unordered_map<semantic::NodeId, TypeId> layoutIntrinsicTypes;
-    // For each `array_type` struct: its `array_element`, `array_copy` and `container_end` methods.
-    std::unordered_map<semantic::SymbolId, std::array<semantic::SymbolId, 3>> arrayRoleMethods;
+    // A validated role-bound collection declaration (decisions 0025, 0026, 0027): its structure role, the type
+    // parameters it owns elements of, in declaration order, and the method of each method role the compiler calls.
+    struct CollectionRole {
+        semantic::LibraryRole kind = semantic::LibraryRole::none;
+        std::vector<semantic::SymbolId> ownedParameters;
+        std::unordered_map<semantic::LibraryRole, semantic::SymbolId> methods;
+        // A dictionary's `dict_entry` struct, whose instance over the key and value a literal packs.
+        std::optional<semantic::SymbolId> entry;
+    };
+    std::unordered_map<semantic::SymbolId, CollectionRole> collectionRoles;
+    // Each concrete dictionary role instance's interned entry instance.
+    std::unordered_map<TypeId, TypeId> dictEntryTypes;
+    std::optional<std::array<semantic::SymbolId, 2>> dictEntryFieldSymbols;
     std::vector<Conformance> conformanceList;
     std::vector<Instance> instanceList;
     std::map<std::pair<semantic::SymbolId, std::vector<TypeId>>, size_t> instanceIndices;

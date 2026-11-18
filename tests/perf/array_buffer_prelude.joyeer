@@ -1,0 +1,104 @@
+// A minimal library array for the decision 0026 measurement (plan 0011, phase 3). It is appended to the role
+// prelude by tests/perf/array_addressor_probe and is not part of the product. It follows 0026 Decision 1 as far as
+// the current compiler allows: the storage and its header come from the runtime's array functions, the addressor is
+// two checks and a `slot_address`, and `deinit` destroys the range, clears the count and frees the block.
+// Differences: without `place_address` the runtime create function writes into a stack slot that is read back, and
+// `deinit` frees the block itself instead of calling the runtime destroy (see there).
+@c_extern(symbol: "joyeer_panic")
+private func panic(message: Int): Never
+
+@c_extern(symbol: "joyeer_alloc")
+private func allocate(size: Int): Int
+
+@c_extern(symbol: "joyeer_free")
+private func release(address: Int, size: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+private func literalAddress(text: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+private func load64(address: Int): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_memset")
+private func zero(address: Int, value: UInt8, count: Int): Void
+
+@c_extern(symbol: "joyeer_array_create_owned_abi")
+private func createOwned(output: Int, values: Int, count: Int, elementSize: Int, clone: Int, destroy: Int): Void
+
+@compiler_role(array_type)
+public struct Buffer<T> {
+    private var address: Int
+    private var count: Int
+    private var capacity: Int
+
+    // A live array always has a header, so `address == 0` implies `count == 0`: the second check covers it.
+    @compiler_role(array_element)
+    public borrowing func element(index: Int): Int {
+        if index < 0 {
+            panic(message: literalAddress(text: "array index out of bounds"))
+        }
+        if index >= self.count {
+            panic(message: literalAddress(text: "array index out of bounds"))
+        }
+        return joyeer_intrinsic_slot_address<T>(base: self.address, index: index)
+    }
+
+    @compiler_role(array_copy)
+    public borrowing func duplicate(): Buffer<T> {
+        panic(message: literalAddress(text: "this measurement array cannot be copied"))
+    }
+
+    @compiler_role(container_end)
+    public consuming func finish() {}
+
+    @compiler_role(array_literal)
+    private consuming func literal(address: Int, count: Int): Buffer<T> {
+        return Buffer(address: address, count: count, capacity: count)
+    }
+
+    // Decision 1's order: destroy the live elements, clear the count, then free the block. The runtime destroy
+    // would do the free here; its C binding is declared by the backend with a pointer parameter, which a Joyeer
+    // binding cannot match, so the free is written out (the same `release` of `24 + capacity * size` bytes).
+    deinit() {
+        joyeer_intrinsic_destroy_range<T>(address: self.address, count: self.count)
+        &self.count = 0
+        if self.address != 0 {
+            release(address: self.address - 24, size: 24 + self.capacity * joyeer_intrinsic_size_of<T>())
+        }
+    }
+}
+
+// Reads back the handle the runtime wrote into a stack slot.
+private func adopt<T>(handle: Int, sample: T): Buffer<T> {
+    return Buffer(address: load64(address: handle) as Int, count: load64(address: handle + 8) as Int,
+                  capacity: load64(address: handle + 16) as Int)
+}
+
+// `count` zero elements, through the runtime's create function with the real header (setup only).
+public func makeBuffer<T>(count: Int, sample: T): Buffer<T> {
+    let bytes = count * joyeer_intrinsic_size_of<T>()
+    let values = allocate(size: bytes)
+    zero(address: values, value: 0, count: bytes)
+    let handle = joyeer_intrinsic_stack_slot<Buffer<T>>()
+    createOwned(output: handle, values: values, count: count, elementSize: joyeer_intrinsic_size_of<T>(),
+                clone: joyeer_intrinsic_clone_callback<T>(), destroy: joyeer_intrinsic_destroy_callback<T>())
+    release(address: values, size: bytes)
+    return adopt(handle: handle, sample: sample)
+}
+
+struct Four {
+    var first: Int
+    var second: Int
+    var third: Int
+    var fourth: Int
+}
+
+// Four zero `Int`s from a stack block, as the builtin `[0, 0, 0, 0]` literal does.
+public func makeFour(): Buffer<Int> {
+    let values = joyeer_intrinsic_stack_slot<Four>()
+    zero(address: values, value: 0, count: 32)
+    let handle = joyeer_intrinsic_stack_slot<Buffer<Int>>()
+    createOwned(output: handle, values: values, count: 4, elementSize: 8,
+                clone: joyeer_intrinsic_clone_callback<Int>(), destroy: joyeer_intrinsic_destroy_callback<Int>())
+    return adopt(handle: handle, sample: 0)
+}

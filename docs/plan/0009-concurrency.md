@@ -41,8 +41,9 @@ Linux CTest 1641/1641 and fern 7/7 in each. Native AArch64 and macOS remain unve
   fern suites are 7/7 on both Windows and WSL Linux, including `SystemTests`.
 - [ ] Test the `-lpthread` link argument (emitted for a program that starts a task or names a channel
   end type) on glibc older than 2.34.
-- [ ] Stop the Windows C-startup link (`/WHOLEARCHIVE`) and macOS (`-force_load`) from loading every
-  runtime archive member: a plain archive plus `/INCLUDE:wmain` on Windows, with a regression test.
+- [ ] Stop the Windows C-startup link (`/WHOLEARCHIVE`) from loading every runtime archive member: a plain
+  archive plus `/INCLUDE:wmain` on Windows, with a regression test. (macOS `-force_load` was removed by
+  plan 0011 stage 5; see `docs/plan/0011-library-containers.md`.)
 
 ### Language and compiler gaps
 

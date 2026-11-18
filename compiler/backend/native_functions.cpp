@@ -168,7 +168,8 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
             }
             break;
         case Opcode::destroy:
-            builder.CreateCall(destroys.at(values.at(instruction.operands[0]).type), {argument(0)}); break;
+            implicitCallLocation(builder.CreateCall(destroys.at(values.at(instruction.operands[0]).type),
+                                                    {argument(0)})); break;
         case Opcode::add:
         case Opcode::subtract:
         case Opcode::multiply:
@@ -254,6 +255,33 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
             index->addIncoming(previous, body);
             builder.CreateBr(header);
             builder.SetInsertPoint(exit);
+            break;
+        }
+        case Opcode::stackBlock: {
+            // Contiguous storage for a constant number of slots, allocated in the prologue (once per invocation).
+            const auto id = static_cast<ir::TypeId>(instruction.integerValue);
+            const auto* count = llvm::dyn_cast<llvm::ConstantInt>(argument(0));
+            if (count == nullptr) throw std::runtime_error("stack_block needs a constant count");
+            if (unit(id) || count->isZero()) {
+                result = builder.getInt64(0);
+                break;
+            }
+            auto* block = stack(llvm::ArrayType::get(llvmType(id), count->getZExtValue()));
+            result = builder.CreatePtrToInt(block, builder.getInt64Ty());
+            break;
+        }
+        case Opcode::slotAddress: {
+            // Element `index` of a run of `T` slots: `base + index * size`, unchecked; the library checks the
+            // bounds. A plain (not `inbounds`) GEP, so an address that is never loaded through, or a zero-size
+            // element at base 0, is an ordinary value and not poison (decision 0026).
+            const auto id = static_cast<ir::TypeId>(instruction.integerValue);
+            if (unit(id)) {
+                result = argument(0);
+                break;
+            }
+            auto* base = builder.CreateIntToPtr(argument(0), pointer());
+            result = builder.CreatePtrToInt(
+                    builder.CreateGEP(llvmType(id), base, { argument(1) }), builder.getInt64Ty());
             break;
         }
         case Opcode::cloneAt: {
@@ -635,7 +663,7 @@ void Builder::emitEntry() {
         const auto& parameterType = type(parameter.value.type);
         arguments = parameter.label == "args" && !parameter.isMutable && !parameter.isConsuming &&
                 parameter.value.category == ir::ValueCategory::value &&
-                parameterType.kind == typing::TypeKind::array && parameterType.arguments.size() == 1 &&
+                isArrayRole(parameter.value.type) && parameterType.arguments.size() == 1 &&
                 type(parameterType.arguments[0]).kind == typing::TypeKind::string;
     }
     if (!legacy && !arguments) {

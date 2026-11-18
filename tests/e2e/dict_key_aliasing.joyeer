@@ -1,0 +1,92 @@
+// A key operand of a nested assignment target or read is evaluated before the right side and later indexes (spec
+// 4.4.3); the evaluated key survives a right side that consumes or reassigns the binding it was read from, and an
+// element read through a reallocated outer table reads the table that exists after the index ran.
+func eat(text: consuming String): Int {
+    return text.count
+}
+
+func clobber(text: inout String): Int {
+    &text = "b" + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    return 7
+}
+
+func clobberKey(text: inout String): String {
+    &text = "b" + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    return "y"
+}
+
+func growOuter(outer: inout [Int: [String: Int]]): String {
+    var index = 1
+    while index < 300 {
+        &outer[index] = ["x": index]
+        index = index + 1
+    }
+    return "x"
+}
+
+func grow(items: inout [[Int]]): Int {
+    var index = 1
+    while index < 300 {
+        &items.append(element: [index])
+        index = index + 1
+    }
+    return 0
+}
+
+func consumedKey() {
+    var outer: [String: [String: Int]] = ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": ["x": 1]]
+    let key = "a" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    &outer[key]["x"] = eat(text: consume key)
+    print(value: outer["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]["x"])
+}
+
+func reassignedKey() {
+    var outer: [String: [String: Int]] = [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": ["x": 1],
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": ["x": 2],
+    ]
+    var key = "a" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    &outer[key]["x"] = clobber(text: &key)
+    print(value: outer["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]["x"])
+    print(value: outer["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]["x"])
+}
+
+func reassignedByTheInnerKey() {
+    var outer: [String: [String: Int]] = [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": ["x": 1],
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": ["x": 2],
+    ]
+    var key = "a" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    &outer[key][clobberKey(text: &key)] = 5
+    print(value: outer["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"].count)
+    print(value: outer["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"].count)
+}
+
+func reassignedArrayKey() {
+    var lists: [String: [Int]] = [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": [1],
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": [2],
+    ]
+    var key = "a" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    &lists[key][0] = clobber(text: &key)
+    print(value: lists["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"][0])
+    print(value: lists["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"][0])
+}
+
+func readAfterGrowth() {
+    var outer: [Int: [String: Int]] = [0: ["x": 41]]
+    let value = outer[0][growOuter(outer: &outer)]
+    print(value: value)
+    print(value: outer.count)
+    var items: [[Int]] = [[42]]
+    print(value: items[0][grow(items: &items)])
+    print(value: items.count)
+}
+
+func main() {
+    consumedKey()
+    reassignedKey()
+    reassignedByTheInnerKey()
+    reassignedArrayKey()
+    readAfterGrowth()
+}

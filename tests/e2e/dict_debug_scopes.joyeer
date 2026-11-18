@@ -1,0 +1,39 @@
+// The debug-scope prerequisite of the dictionary switch (decision 0027, closing 0026's known gap (a) for
+// dictionaries): built with `-gfull` at -O1 and -O2, so every dictionary operation is inlined into a program whose
+// debug info the backend verifies after optimization in a test build. Literals with duplicate keys, lookup,
+// insertion, replacement, in-place mutation, `get`, a copy and nested destruction.
+func fill(count: Int): [Int: [String]] {
+    var table: [Int: [String]] = [0: ["zero"], 1: ["one"], 0: ["again"]]
+    var index = 2
+    while index < count {
+        &table[index] = ["v"]
+        &table[index].append(element: "w")
+        index = index + 1
+    }
+    return table
+}
+
+func describe(found: [String]?): String {
+    match found {
+        .Some(words) => return words[0],
+        .None => return "none",
+    }
+}
+
+func main() {
+    let table = fill(count: 6)
+    print(value: table.count)
+    print(value: table[0][0])
+    print(value: table[4].count)
+    var copy = table
+    &copy[1] = ["changed"]
+    print(value: table[1][0])
+    print(value: copy[1][0])
+    print(value: describe(found: table.get(key: 5)))
+    print(value: describe(found: table.get(key: 9)))
+    var counts: [String: Int] = ["x": 1, "y": 2, "x": 3]
+    &counts["x"] = counts["x"] + 4
+    &counts["z"] = counts["y"] * 10
+    print(value: counts["x"] + counts["y"] + counts["z"])
+    print(value: counts.count)
+}

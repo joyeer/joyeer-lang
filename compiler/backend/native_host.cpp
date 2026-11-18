@@ -67,8 +67,7 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
         return builder.CreateCall(assemblyType, assembly, arguments, temporary());
     }
     if (descriptor.operation == Operation::staticSlot) {
-        // One zeroed table per program: every object that uses slots defines the
-        // same linkonce symbol in a comdat, and the linker keeps a single copy.
+        // Mach-O coalesces the linkonce symbol without COMDAT support.
         const std::string symbol(intrinsic::staticSlotSymbol);
         auto* tableType = llvm::ArrayType::get(builder.getInt64Ty(), static_cast<uint64_t>(intrinsic::staticSlotCount));
         auto* table = module().getNamedGlobal(symbol);
@@ -76,9 +75,11 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
             table = new llvm::GlobalVariable(module(), tableType, false,
                     llvm::GlobalValue::LinkOnceODRLinkage, llvm::ConstantAggregateZero::get(tableType), symbol);
             table->setAlignment(llvm::Align(8));
-            auto* comdat = module().getOrInsertComdat(symbol);
-            comdat->setSelectionKind(llvm::Comdat::Any);
-            table->setComdat(comdat);
+            if (!llvm::Triple(llvm::sys::getDefaultTargetTriple()).isOSBinFormatMachO()) {
+                auto* comdat = module().getOrInsertComdat(symbol);
+                comdat->setSelectionKind(llvm::Comdat::Any);
+                table->setComdat(comdat);
+            }
         }
         auto* outside = builder.CreateICmpUGE(arguments[0],
                 integer(static_cast<uint64_t>(intrinsic::staticSlotCount)), temporary());
@@ -194,6 +195,11 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
     return nullptr;
 }
 
+llvm::Value* Builder::bufferData(ir::TypeId id, llvm::Value* value) {
+    auto* data = builder.CreateExtractValue(value, 0, temporary());
+    return isArrayRole(id) ? builder.CreateIntToPtr(data, pointer(), temporary()) : data;
+}
+
 llvm::Value* Builder::emitCall(const ir::Instruction& instruction) {
     if (!instruction.callee.has_value()) return nullptr;
     const auto found = sourceFunctions.find(*instruction.callee);
@@ -216,7 +222,7 @@ llvm::Value* Builder::emitCall(const ir::Instruction& instruction) {
                 auto* handle = parameter.value.category == ir::ValueCategory::address
                         ? builder.CreateLoad(llvmType(parameter.value.type), arguments[index], temporary())
                         : arguments[index];
-                nativeArguments.push_back(builder.CreateExtractValue(handle, 0, temporary()));
+                nativeArguments.push_back(bufferData(parameter.value.type, handle));
             } else if (parameter.isInitializing) {
                 if (kind == typing::TypeKind::string) {
                     builder.CreateStore(llvm::Constant::getNullValue(llvmType(parameter.value.type)), arguments[index]);
@@ -227,8 +233,8 @@ llvm::Value* Builder::emitCall(const ir::Instruction& instruction) {
                             builder.getVoidTy(), {arguments[index]});
                 }
                 nativeArguments.push_back(arguments[index]);
-            } else if (kind == typing::TypeKind::string || kind == typing::TypeKind::array) {
-                nativeArguments.push_back(builder.CreateExtractValue(arguments[index], 0, temporary()));
+            } else if (kind == typing::TypeKind::string || isArrayRole(parameter.value.type)) {
+                nativeArguments.push_back(bufferData(parameter.value.type, arguments[index]));
                 nativeArguments.push_back(builder.CreateExtractValue(arguments[index], 1, temporary()));
             } else {
                 nativeArguments.push_back(arguments[index]);

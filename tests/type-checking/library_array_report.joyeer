@@ -1,0 +1,7 @@
+func main() {
+    var values: [Int] = [1]
+    &values.append(element: 2)
+    let last = &values.removeLast()
+    print(value: values.count)
+    print(value: match last { .Some(value) => value, .None => 0 })
+}

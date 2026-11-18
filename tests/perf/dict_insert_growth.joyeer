@@ -1,0 +1,22 @@
+// Dictionary insertion baseline (plan 0011 phase 4, decision 0027): a fresh dictionary per round grows from 0 to 4,
+// 8 and 16 entries, then every key is replaced, then the dictionary is dropped.
+func main() {
+    var total = 0
+    var round = 0
+    while round < 350000 {
+        var table: [Int: Int] = [:]
+        var key = 0
+        while key < 16 {
+            &table[key] = key + round
+            key = key + 1
+        }
+        key = 0
+        while key < 16 {
+            &table[key] = key * 2
+            key = key + 1
+        }
+        total = total + table.count + table[15]
+        round = round + 1
+    }
+    print(value: total)
+}

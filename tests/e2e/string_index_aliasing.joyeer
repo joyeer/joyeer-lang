@@ -1,0 +1,42 @@
+// A String byte read whose index reassigns the string reads the string that exists after the index ran (spec
+// 4.4.3's order: operands, then the access), through a binding, a field, a dictionary value and an array element.
+// Each index also allocates, so a read of the freed buffer would see other bytes.
+func refill(): Int {
+    let filler = "c" + "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    return filler.count - 65
+}
+
+func clobber(text: inout String): Int {
+    &text = "b" + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    return refill()
+}
+
+struct Holder {
+    var s: String
+}
+
+func clobberField(h: inout Holder): Int {
+    &h.s = "b" + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    return refill()
+}
+
+func clobberValue(names: inout [Int: String]): Int {
+    &names[0] = "b" + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    return refill()
+}
+
+func clobberElement(lists: inout [[String]]): Int {
+    &lists[0][0] = "b" + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    return refill()
+}
+
+func main() {
+    var s = "a" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    print(value: s[clobber(text: &s)])
+    var h = Holder(s: "a" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    print(value: h.s[clobberField(h: &h)])
+    var names: [Int: String] = [0: "a" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+    print(value: names[0][clobberValue(names: &names)])
+    var lists: [[String]] = [["a" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]]
+    print(value: lists[0][0][clobberElement(lists: &lists)])
+}

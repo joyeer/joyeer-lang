@@ -1,0 +1,36 @@
+// A literal owns its linear elements; the whole array can move through a task and be drained there.
+func square(value: consuming Int): Int {
+    return value * value
+}
+
+func drain(values: consuming [JoinHandle<Int>]): Int {
+    var total = 0
+    while true {
+        let next = &values.removeLast()
+        match consume next {
+            .Some(handle) => { total = total + consume handle.join() },
+            .None => { break },
+        }
+    }
+    consume values.consumeEmpty()
+    return total
+}
+
+func launch(value: consuming Int): [JoinHandle<Int>] {
+    return [spawn(function: square, input: consume value)]
+}
+
+func main() {
+    let handles: [JoinHandle<Int>] = [
+        spawn(function: square, input: consume 3),
+        spawn(function: square, input: consume 4)
+    ]
+    let worker = spawn(function: drain, input: consume handles)
+    let total = consume worker.join()
+    print(value: total)
+
+    let launcher = spawn(function: launch, input: consume 5)
+    let back = consume launcher.join()
+    print(value: drain(values: consume back))
+    print(value: drain(values: consume []))
+}

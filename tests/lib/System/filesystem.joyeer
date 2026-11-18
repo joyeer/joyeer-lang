@@ -282,7 +282,8 @@ func testDirectories(root: String): Int {
 
     seed(root: root, name: "dir/one.txt", contents: "1")
     seed(root: root, name: "dir/two.txt", contents: "22")
-    failures = failures + agree(label: "list directory", expected: "ok:2|one.txt|two.txt",
+    failures = failures + agreeAny(label: "list directory",
+        options: ["ok:2|one.txt|two.txt", "ok:2|two.txt|one.txt"],
         actual: describeNames(outcome: System.listDirectory(path: pathIn(root: root, name: "dir"))))
     makeDirectory(root: root, name: "hollow")
     failures = failures + agree(label: "list empty", expected: "ok:0",

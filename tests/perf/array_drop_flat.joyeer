@@ -1,0 +1,13 @@
+// Create-and-drop of small builtin arrays (plan 0011, phase 3, decision 0026 measurement): each round builds a
+// four-element array, reads it and drops it, so the cost of the destroy path dominates. The same program over a
+// library array is array_drop_library.joyeer. Prints 8000000.
+func main() {
+    var total = 0
+    var round = 0
+    while round < 2000000 {
+        let items: [Int] = [0, 0, 0, 0]
+        total = total + items.count + items[1]
+        round = round + 1
+    }
+    print(value: total)
+}

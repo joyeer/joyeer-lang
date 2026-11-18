@@ -24,7 +24,9 @@ Facts, checked against the code:
   C `int`, `DWORD` and `BOOL` results are `Int32` or `UInt32`, widened with `as Int`, because the
   upper half of the register is undefined), and `@c_export` functions whose address `symbol_address`
   takes in the same unit.
-- **Archive members are not always linked lazily.** Linux and the Windows own-entry link are:
+- **Archive members are not always linked lazily.** (Amended by [plan 0011](../plan/0011-library-containers.md):
+  macOS no longer uses `-force_load` and links lazily like Linux; only the Windows C-startup link below
+  still loads every member.) Linux and the Windows own-entry link are:
   a member nothing references does not reach the program. The Windows C-startup link uses
   `/WHOLEARCHIVE` and macOS uses `-force_load`, which load every member, so a thread object would
   add its imports to those programs. See "Gating".

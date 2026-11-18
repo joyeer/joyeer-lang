@@ -64,6 +64,13 @@ not stage the runtime needed to link programs. Unit tests, fern, and
 Compression are enabled by default. Keep them enabled for acceptance;
 filtered CTest runs are only for focused iteration.
 
+The Debug presets also set `JOYEER_BACKEND_TEST_HOOKS=ON`: the backend verifies
+the optimized module again and accepts a test fault injection. It is off by
+default and in the Release presets, which build the packages; never enable it
+for a package. A local Debug installation carries it, as a developer build.
+Configuring without a preset leaves it off, so add `-DJOYEER_BACKEND_TEST_HOOKS=ON`
+to run `E2EOptimizedDebugInfoIsVerified`.
+
 ### Full platform validation
 
 For feature or platform acceptance, use the shared validator:
@@ -75,7 +82,8 @@ python3 scripts/validate.py --llvm-root <sdk>
 Use `python` instead of `python3` on Windows. The validator builds and runs
 unfiltered CTest and the root workspace's `fern test` in **Debug and Release**.
 Keep `BUILD_TESTING`, `JOYEER_BUILD_UNITTESTS`, `JOYEER_BUILD_FERN`, and
-`JOYEER_BUILD_COMPRESSION` enabled. `--no-compression` covers only library
+`JOYEER_BUILD_COMPRESSION` enabled; the validator also enables
+`JOYEER_BACKEND_TEST_HOOKS`. `--no-compression` covers only library
 modules, not the full workspace.
 
 Use `--report FILE` to save results, `--no-retry` to disable failed-test
@@ -153,6 +161,8 @@ Keep LLVM SDKs and test tools out of product packages.
   explicitly.
 
 Keep the compiler, backend, and runtime together, with matching architectures.
+The concurrency, enum-role and collections preludes (`lib/Runtime/{concurrency,roles,collections}.joyeer`)
+are embedded in that compiler. No separate source-prelude installation or runtime file lookup is required.
 Before redistribution, assemble applicable LLVM/LLD, support-library,
 Windows LibXml2, Linux Clang, and other dependency notices.
 

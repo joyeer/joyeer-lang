@@ -30,8 +30,8 @@ let table: [UInt32] = [0, 0x7707_3096, 0xEE0E_612C]
 ```
 
 - Only `let` is allowed at the top level, and the type annotation is required.
-- The type is `Bool`, an integer type, `Float`, `Double`, `String`, or an array
-  of those (arrays may nest). Structs, enums, dictionaries and optionals are
+- The type is `Bool`, an integer type, `Float`, `Double`, `String`, or a role-bound library array
+  of those (arrays may nest). Other structs, enums, dictionaries and optionals are
   not supported, and neither are function types (§2.3.1;
   `type-checking.invalid-function-type`).
 - The initializer is evaluated by the compiler. It may use literals, array
@@ -44,6 +44,8 @@ let table: [UInt32] = [0, 0x7707_3096, 0xEE0E_612C]
   nested lengths included).
 - A use borrows the constant without copying. Binding it to a `var` or passing
   it to a `consuming` parameter makes an ordinary independent copy.
+  A constant role array uses the same read-only header encoding as runtime storage; an owned use
+  calls its `array_copy` method, including task inputs and results (§21.2.2).
 - Visibility follows §12: a `public` constant can be used from importing
   modules by short or qualified name.
 

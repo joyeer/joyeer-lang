@@ -28,10 +28,11 @@ string storage and operations, arrays and dictionaries, scalar and string
 printing, panic and bounds traps, and the process entry and allocation-balance
 check. File, filesystem, process and standard-stream operations are in the
 `System` module instead (see Host operations below).
-Generated Joyeer arithmetic and typed array accesses use inline LLVM checks;
-the runtime has no checked-arithmetic or array-indexing entry points of its own
-(the former ones were removed in runtime plan stage 0). String and dictionary accesses use runtime
-operations. The LLVM emitter generates `joyeer_main` and implements
+Generated Joyeer arithmetic uses inline LLVM checks, and array element access is a bounds-checked method of the
+library `Array<T>` (`lib/Runtime/collections.joyeer`); the runtime has no checked-arithmetic or
+array-indexing entry points of its own (the former ones were removed in runtime plan stage 0). The runtime does
+provide the array ownership ABI (`joyeer_array_*_abi`) that the library type calls. String and dictionary
+accesses use runtime operations. The LLVM emitter generates `joyeer_main` and implements
 `String.utf8()` using the runtime's owned-array creation API; neither is a
 dedicated C runtime operation.
 
@@ -62,8 +63,8 @@ thread, 64 for a mutex or condition, all zeroed), so the functions never allocat
 shape, with an explicit 8 MiB stack on every platform, and at most 256 threads may be unjoined at
 once (`JOYEER_THREAD_LIMIT` beyond that). The rest of the runtime is thread safe from P4 on (next section).
 
-On Linux and on the Windows own-entry link the object is linked only into a program that
-references it. The Windows C-startup link (`/WHOLEARCHIVE`) and macOS (`-force_load`) load every
+On Linux, macOS and the Windows own-entry link the object is linked only into a program that
+references it. The Windows C-startup link (`/WHOLEARCHIVE`) loads every
 member, so those programs also import the thread functions. The tests are
 `tests/unittests/runtime/thread_test.cpp` (start and join, many threads, visibility after join,
 mutual exclusion, wait and wake, the thread limit, null arguments, and `static_assert`s that the
@@ -165,16 +166,25 @@ program was allocation-free.
 
 Arrays provide construction, checked indexing, mutable element projection,
 ownership-transferring append/growth, recursive clone, and reverse-order
-element destruction. The built-in
+element destruction in `lib/Runtime/collections.joyeer`.
 `&values.append(element: value)` requires an addressable mutable `Array<T>`.
 `values.removeLast()` calls `joyeer_array_remove_last_abi`, which moves the last element's bytes into the
 result payload and shortens the array without destroying the element.
 `consume values.consumeEmpty()` calls `joyeer_array_consume_empty_abi`, which traps (`array not empty`)
 unless the count is zero and otherwise frees the storage and zeroes the handle.
-Lowering transfers a type-correct `T` to `joyeer_array_append_owned_abi`;
+The library transfers a type-correct `T` through a typed stack slot to `joyeer_array_append_owned_abi`;
 the runtime grows geometrically and retains element clone/destroy callbacks.
 Borrowed heap-backed elements are cloned before transfer; owned temporaries
 move directly into the array.
+
+The library `deinit` destroys the live range last to first, preserving the linear range guard before any
+zero-address return. A live handle then clears its count and invokes `joyeer_array_destroy_abi` to free
+exactly the original block. Literal and clone output use typed raw stack slots, moved out without creating
+extra owning zero-output locals. The C imports use the runtime's scalar
+address ABI (`Int`), avoiding a second LLVM pointer-typed declaration of those same functions.
+The compiler retains role-keyed constant-block encoding, native byte/string-array marshalling,
+`String.utf8()`, syntax/display binding, and the collection capability checks; it does not dispatch array
+methods by their public names.
 
 Dictionary lookup is linear, not hashed. Dictionaries provide construction,
 count, primitive/string-key lookup, mutable insert/update growth, recursive
@@ -187,8 +197,8 @@ changing `count`.
 `Dict.get(key:)` uses nontrapping `joyeer_dictionary_find_abi`: a borrowed
 value address indicates a present key, and null indicates absence. Invalid
 handles or key types still trap. This private pointer never escapes to Joyeer
-source. Generated code constructs `Optional<V>` and clones the present value
-using the existing typed copy helpers; neither the receiver nor an absent
+source. The library's `dict_get` constructs `Optional<V>` and clones the present value
+with `clone_at`; neither the receiver nor an absent
 payload is cloned. Zero-sized values have a non-null presence address but
 require no payload load. Strict `joyeer_dictionary_at_abi` retains its
 missing-key trap and shares the single-pass lookup.
@@ -336,7 +346,8 @@ loaded and is not replaced by a caller-supplied prelude
 ([0024](../decisions/0024-library-optional-and-result.md)). It is not a runtime unit (it may declare no C bindings), but its
 declarations may use the layout intrinsics, and are verified as runtime code, including the four collection capabilities of
 [0025](../decisions/0025-library-collection-capabilities.md) (`clone_at`, `destroy_range`, `clone_callback`,
-`destroy_callback`); the library array they serve is Phase 3.
+`destroy_callback`). A third independent runtime-authorized prelude, `lib/Runtime/collections.joyeer`,
+provides `Array` and its calls to the existing runtime algorithms.
 
 `lib/Runtime/core/channels.joyeer` is the fifth archive object (decision [0019](../decisions/0019-channels.md),
 spec §21.9), linked only into a program that creates a channel (which also links the thread object and

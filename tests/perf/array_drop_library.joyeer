@@ -1,0 +1,14 @@
+// Create-and-drop of small library arrays (plan 0011, phase 3, decision 0026 measurement): the same program as
+// array_drop_flat.joyeer over the `Buffer<T>` of array_buffer_prelude.joyeer, built through the runtime create
+// function as the builtin literal is, so each drop runs the destroy helper,
+// the library `deinit` and the free. Built only by the array_addressor_probe tool. Prints 8000000.
+func main() {
+    var total = 0
+    var round = 0
+    while round < 2000000 {
+        let items: Buffer<Int> = makeFour()
+        total = total + items.count + items[1]
+        round = round + 1
+    }
+    print(value: total)
+}

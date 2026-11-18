@@ -1,0 +1,35 @@
+// Dictionary lookup baseline (plan 0011 phase 4, decision 0027): Int keys at sizes 1, 4, 16 and 64, strict reads
+// `d[k]` of present keys and `get(key:)` of present and missing keys. Lookup is a linear scan, so small sizes
+// measure the per-call overhead the library wrapper adds.
+func lookups(size: Int, rounds: Int): Int {
+    var table: [Int: Int] = [:]
+    var key = 0
+    while key < size {
+        &table[key] = key * 3
+        key = key + 1
+    }
+    var total = 0
+    var round = 0
+    while round < rounds {
+        key = 0
+        while key < size {
+            total = total + table[key]
+            key = key + 1
+        }
+        key = 0
+        while key < size * 2 {
+            total = total + match table.get(key: key) {
+                .Some(value) => value,
+                .None => 1,
+            }
+            key = key + 1
+        }
+        round = round + 1
+    }
+    return total
+}
+
+func main() {
+    print(value: lookups(size: 1, rounds: 500000) + lookups(size: 4, rounds: 125000) +
+            lookups(size: 16, rounds: 32000) + lookups(size: 64, rounds: 8000))
+}

@@ -62,7 +62,7 @@ using typing::TypeKind;
 
 inline constexpr std::array<Descriptor, 25> table {{
     { "joyeer_intrinsic_address_of", Operation::addressOf, TypeKind::integer,
-      { TypeKind::array, TypeKind::error }, 1, true },
+      { TypeKind::structure, TypeKind::error }, 1, true },
     { "joyeer_intrinsic_load_u8", Operation::load8, TypeKind::uint8,
       { TypeKind::integer, TypeKind::error }, 1, false },
     { "joyeer_intrinsic_load_u16", Operation::load16, TypeKind::uint16,
@@ -143,7 +143,10 @@ inline constexpr std::array<Descriptor, 25> table {{
            name == "joyeer_intrinsic_destroy_at" || name == "joyeer_intrinsic_stack_slot" ||
            name == "joyeer_intrinsic_needs_destroy" || name == "joyeer_intrinsic_callback_address" ||
            name == "joyeer_intrinsic_clone_at" || name == "joyeer_intrinsic_destroy_range" ||
-           name == "joyeer_intrinsic_clone_callback" || name == "joyeer_intrinsic_destroy_callback";
+           name == "joyeer_intrinsic_clone_callback" || name == "joyeer_intrinsic_destroy_callback" ||
+           name == "joyeer_intrinsic_slot_address" || name == "joyeer_intrinsic_stack_block" ||
+           name == "joyeer_intrinsic_place_address" || name == "joyeer_intrinsic_borrow_address" ||
+           name == "joyeer_intrinsic_key_kind";
 }
 
 [[nodiscard]] inline bool reserved(std::string_view symbol) {

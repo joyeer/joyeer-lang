@@ -2,6 +2,7 @@
 #include "compiler/frontend/intrinsics.h"
 
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
@@ -155,8 +156,6 @@ llvm::Type* Builder::llvmType(ir::TypeId id) {
         case typing::TypeKind::boolean: result = builder.getInt1Ty(); break;
         case typing::TypeKind::function: result = pointer(); break;
         case typing::TypeKind::string: name = "joyeer.string"; break;
-        case typing::TypeKind::array: name = "joyeer.array"; break;
-        case typing::TypeKind::dictionary: name = "joyeer.dictionary"; break;
         case typing::TypeKind::structure:
         case typing::TypeKind::enumeration:
             break;
@@ -202,8 +201,6 @@ Layout Builder::layout(ir::TypeId id) {
         // A function value is a code address; its parameter types are not part of its layout.
         case typing::TypeKind::function: result = {8, 8}; break;
         case typing::TypeKind::string: result = {16, 8}; break;
-        case typing::TypeKind::array:
-        case typing::TypeKind::dictionary: result = {24, 8}; break;
         case typing::TypeKind::structure:
             for (const auto& field : structures.at(id)->fields) {
                 const auto fieldLayout = layout(field.type);
@@ -246,6 +243,38 @@ std::vector<size_t> Builder::payloadOffsets(const ir::EnumCaseDefinition& defini
     return offsets;
 }
 
+// A dictionary literal places each value with `field_addr` on the entry struct, and the runtime finds it at the
+// library's `valueOffset = alignTo(size_of<K>, align_of<V>)` within `entrySize = size_of<Entry<K, V>>` (decision
+// 0027). Both are the target's layout, so assert here that they agree, including the runtime's entry-size formula,
+// rather than let a disagreement corrupt entries at run time.
+void Builder::checkDictionaryEntryLayout(const ir::StructureDefinition& definition, llvm::StructType* aggregate,
+                                         const llvm::DataLayout& target) {
+    // `Void` has no storage and needs no alignment (spec 20.12.5), as `size_of` and `align_of` answer.
+    const auto size = [&](ir::TypeId id) -> uint64_t {
+        return unit(id) ? 0 : target.getTypeAllocSize(llvmType(id)).getFixedValue();
+    };
+    const auto alignment = [&](ir::TypeId id) -> uint64_t {
+        return unit(id) ? 1 : target.getABITypeAlign(llvmType(id)).value();
+    };
+    const auto key = definition.fields[0].type;
+    const auto value = definition.fields[1].type;
+    const auto valueOffset = alignTo(size(key), alignment(value));
+    const auto entrySize = alignTo(valueOffset + size(value), std::max(alignment(key), alignment(value)));
+    const auto* placed = target.getStructLayout(aggregate);
+    // The backend's portable layout model must agree too: it answers every other size and offset question.
+    const auto portable = layout(definition.type);
+    const bool modelAgrees = portable.size == entrySize &&
+            (unit(key) || layout(key).size == size(key)) &&
+            (unit(value) || layout(value).alignment == alignment(value));
+    if (placed->getElementOffset(1) != valueOffset || placed->getSizeInBytes() != entrySize || !modelAgrees) {
+        report(DiagnosticId::invalidModule, {}, "dictionary entry '" + definition.name +
+                "' is laid out at value offset " + std::to_string(placed->getElementOffset(1)) + ", size " +
+                std::to_string(placed->getSizeInBytes()) + ", but the runtime's entry formula gives " +
+                std::to_string(valueOffset) + " and " + std::to_string(entrySize));
+        throw std::runtime_error("dictionary entry layout");
+    }
+}
+
 void Builder::defineTypes() {
     // Opaque declarations break definition-order dependencies without allowing
     // recursive inline layouts, which are still rejected by layout().
@@ -259,6 +288,8 @@ void Builder::defineTypes() {
                 "joyeer.enum." + std::to_string(definition.type)));
     }
     for (const auto& [id, aggregate] : aggregates) loweredTypes.emplace(id, aggregate);
+    // The target's layout, which folds `size_of` and places every `field_addr` (the portable module has none yet).
+    const llvm::DataLayout targetLayout(llvm::Triple(llvm::sys::getDefaultTargetTriple()).computeDataLayout());
     for (const auto& [id, aggregate] : aggregates) {
         if (const auto found = structures.find(id); found != structures.end()) {
             std::vector<llvm::Type*> fields;
@@ -269,6 +300,13 @@ void Builder::defineTypes() {
             const auto valueLayout = layout(id);
             aggregate->setBody({builder.getInt32Ty(),
                     llvm::ArrayType::get(builder.getInt64Ty(), (valueLayout.size - 8) / 8)});
+        }
+    }
+    // Once every body is set: a key or value type may have a larger id than its entry.
+    for (const auto& [id, aggregate] : aggregates) {
+        if (const auto found = structures.find(id);
+            found != structures.end() && found->second->role == ir::StructureRole::dictEntry) {
+            checkDictionaryEntryLayout(*found->second, aggregate, targetLayout);
         }
     }
 }
@@ -300,10 +338,16 @@ llvm::Function* Builder::declareFunction(const ir::Function& function) {
     for (const auto& parameter : function.parameters) {
         parameters.emplace_back(parameter.value.type, parameter.value.category);
     }
-    return llvm::Function::Create(signatureType(parameters, function.resultType),
-            source.isRuntimeObject || function.nativeBinding.has_value()
+    auto* declared = llvm::Function::Create(signatureType(parameters, function.resultType),
+            // Authorized runtime helpers cross native boundaries only through explicit C exports or callbacks.
+            source.isRuntimeObject || function.runtimeContext || function.nativeBinding.has_value()
                     ? llvm::GlobalValue::InternalLinkage : llvm::GlobalValue::ExternalLinkage,
             "joyeer_fn_" + std::to_string(function.id), module());
+    // A library array's element addressor is a bounds check and an address computation; every `a[i]`
+    // calls it, so it is inlined even at -O0, where LLVM's default pipeline runs only this inliner
+    // (decision 0026).
+    if (function.elementAddressor || function.alwaysInline) declared->addFnAttr(llvm::Attribute::AlwaysInline);
+    return declared;
 }
 
 llvm::GlobalVariable* Builder::declareDataSymbol(const std::string& symbol) {
@@ -331,7 +375,7 @@ llvm::Function* Builder::declareNativeFunction(const ir::Function& function) {
         } else if (parameter.isInitializing) {
             parameters.push_back(pointer());
             kinds.push_back(typing::TypeKind::voidType);
-        } else if (kind == typing::TypeKind::string || kind == typing::TypeKind::array) {
+        } else if (kind == typing::TypeKind::string || isArrayRole(parameter.value.type)) {
             parameters.push_back(pointer());
             parameters.push_back(builder.getInt64Ty());
             kinds.push_back(typing::TypeKind::voidType);

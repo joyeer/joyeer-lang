@@ -17,6 +17,7 @@ struct Prelude {
 enum class PreludeKind {
     concurrency,
     roles,
+    collections,
 };
 
 // Parses a compiler-bundled prelude with every token carrying `sourceId`. `source` is set even when

@@ -1,0 +1,77 @@
+// Characterization of dictionary assignment (plan 0011 phase 4, decision 0027): the key, then the value, are
+// evaluated before the store; a `?` that leaves while evaluating the value inserts nothing; a value computed by a
+// call that itself grows the same dictionary, a key read from the dictionary being assigned, a nested assignment
+// whose right-hand side grows the outer dictionary, and a value moved out of another entry.
+struct Res {
+    var id: Int
+    deinit() {
+        print(value: self.id)
+    }
+}
+
+struct Counter {
+    var id: Int
+    var n: Int
+    mutating func bump() {
+        &self.n = self.n + 1
+    }
+}
+
+func key(text: String): String {
+    print(value: text)
+    return text
+}
+
+func number(value: Int): Int {
+    print(value: value)
+    return value
+}
+
+func missing(): Int? {
+    print(value: "none")
+    return .None
+}
+
+func attempt(table: inout [String: Int]): Int? {
+    &table[key(text: "late")] = missing()?
+    return .Some(1)
+}
+
+func grow(table: inout [String: Int]): Int {
+    &table["new"] = 5
+    return 7
+}
+
+func growOuter(outer: inout [String: [String: Int]]): Int {
+    &outer["z"] = ["q": 1]
+    return 9
+}
+
+func main() {
+    var d: [String: Int] = ["k": 1]
+    &d[key(text: "first")] = number(value: 2)
+    match attempt(table: &d) {
+        .Some(_) => print(value: 1),
+        .None => print(value: 0),
+    }
+    print(value: d.count)
+    &d["k"] = grow(table: &d)
+    print(value: d.count)
+    print(value: d["k"])
+
+    var ints: [Int: Int] = [0: 10]
+    &ints[ints.count] = 1
+    print(value: ints[1])
+
+    var outer: [String: [String: Int]] = ["a": ["b": 1]]
+    &outer["a"]["b"] = growOuter(outer: &outer)
+    print(value: outer["a"]["b"] + outer.count)
+
+    var counters: [Int: Counter] = [1: Counter(id: 2, n: 0), 2: Counter(id: 1, n: 10)]
+    &counters[counters[1].id].bump()
+    print(value: counters[2].n)
+
+    var resources: [String: Res] = ["a": Res(id: 1), "b": Res(id: 2)]
+    &resources["a"] = consume resources["b"]
+    print(value: 0)
+}

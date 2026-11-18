@@ -1,0 +1,112 @@
+// A minimal library dictionary for the decision 0027 measurement (plan 0011, phase 4, stage 3). It is not part of
+// the product. benchmark_dicts.py appends it to lib/Runtime/collections.joyeer, so the replaced collections prelude
+// still holds the product's library array, and builds the `*_table` programs with the array-addressor-probe tool.
+//
+// `Table<K, V>` is the shape 0027 Decision 1 gives `Dict<K, V>`: the `{data, count, capacity}` handle of the runtime
+// dictionary ABI, keys passed by `borrow_address`, the key kind from `key_kind`, and storage moved through stack
+// slots. It has no role: lookup, `get`, insertion and the copy are explicit method calls (a consuming argument needs
+// `consume` at the call site), and there is no literal. So its lookup row is not like for like with `d[k]` (a role
+// addressor and a raw load in user code); 0027 asks this prototype for a go or no-go verdict only.
+//
+// Without a role the struct is not inert-zero: its `deinit` gives it the hidden live flag (a 32-byte value and a
+// flag test on every drop, where the role type has a 24-byte handle and none). Tables are therefore built by
+// memberwise initialization, which sets the flag, and filled in place by the runtime. The difference makes the
+// prototype slower than the role type, which is the safe direction for a go or no-go verdict.
+
+@c_extern(symbol: "joyeer_dictionary_create_owned_abi")
+private func createTable(output: Int, entries: Int, count: Int, keySize: Int, valueSize: Int,
+        entrySize: Int, valueOffset: Int, keyKind: Int32, cloneKey: Int, destroyKey: Int,
+        cloneValue: Int, destroyValue: Int): Void
+
+@c_extern(symbol: "joyeer_dictionary_clone_abi")
+private func cloneTable(output: Int, data: Int, count: Int): Void
+
+@c_extern(symbol: "joyeer_dictionary_set_owned_abi")
+private func setTableOwned(dictionary: Int, key: Int, value: Int): Void
+
+@c_extern(symbol: "joyeer_dictionary_find_abi")
+private func findTableValue(data: Int, count: Int, key: Int, keySize: Int, keyKind: Int32): Int
+
+@c_extern(symbol: "joyeer_dictionary_at_abi")
+private func tableValueAt(data: Int, count: Int, key: Int, keySize: Int, keyKind: Int32): Int
+
+@c_extern(symbol: "joyeer_dictionary_destroy_abi")
+private func destroyTable(dictionary: Int): Void
+
+private func tableRoundUp(value: Int, alignment: Int): Int {
+    return (value + alignment - 1) / alignment * alignment
+}
+
+public struct Table<K, V> {
+    private var address: Int
+    private var count: Int
+    private var capacity: Int
+
+    // The strict read `d[k]`: traps with `dictionary key not found` when the key is absent.
+    public borrowing func at(key: borrowing K): V {
+        let value = tableValueAt(data: self.address, count: self.count,
+                key: joyeer_intrinsic_borrow_address<K>(value: key), keySize: joyeer_intrinsic_size_of<K>(),
+                keyKind: joyeer_intrinsic_key_kind<K>() as Int32)
+        let slot = joyeer_intrinsic_stack_slot<V>()
+        joyeer_intrinsic_clone_at<V>(destination: slot, source: value)
+        return joyeer_intrinsic_move_out<V>(address: slot)
+    }
+
+    public borrowing func get(key: borrowing K): Optional<V> {
+        let value = findTableValue(data: self.address, count: self.count,
+                key: joyeer_intrinsic_borrow_address<K>(value: key), keySize: joyeer_intrinsic_size_of<K>(),
+                keyKind: joyeer_intrinsic_key_kind<K>() as Int32)
+        if value == 0 {
+            return .None
+        }
+        let slot = joyeer_intrinsic_stack_slot<V>()
+        joyeer_intrinsic_clone_at<V>(destination: slot, source: value)
+        return .Some(joyeer_intrinsic_move_out<V>(address: slot))
+    }
+
+    // `&d[k] = v`: inserts, or replaces the value of an existing key (the runtime destroys the incoming key, then
+    // the old value).
+    public mutating func set(key: consuming K, value: consuming V): Void {
+        let keySlot = joyeer_intrinsic_stack_slot<K>()
+        let valueSlot = joyeer_intrinsic_stack_slot<V>()
+        joyeer_intrinsic_move_in<K>(address: keySlot, value: consume key)
+        joyeer_intrinsic_move_in<V>(address: valueSlot, value: consume value)
+        setTableOwned(dictionary: joyeer_intrinsic_place_address<Table<K, V>>(value: &self), key: keySlot,
+                value: valueSlot)
+    }
+
+    public borrowing func size(): Int {
+        return self.count
+    }
+
+    public borrowing func duplicate(): Table<K, V> {
+        var copy: Table<K, V> = Table(address: 0, count: 0, capacity: 0)
+        cloneTable(output: joyeer_intrinsic_place_address<Table<K, V>>(value: &copy), data: self.address,
+                count: self.count)
+        return copy
+    }
+
+    deinit() {
+        destroyTable(dictionary: joyeer_intrinsic_place_address<Table<K, V>>(value: &self))
+    }
+}
+
+// An empty table, as `[:]`: a header with no entries.
+public func emptyTable<K, V>(key: K, value: V): Table<K, V> {
+    let keyAlign = joyeer_intrinsic_align_of<K>()
+    let valueAlign = joyeer_intrinsic_align_of<V>()
+    var entryAlign = keyAlign
+    if valueAlign > entryAlign {
+        entryAlign = valueAlign
+    }
+    let valueOffset = tableRoundUp(value: joyeer_intrinsic_size_of<K>(), alignment: valueAlign)
+    let entrySize = tableRoundUp(value: valueOffset + joyeer_intrinsic_size_of<V>(), alignment: entryAlign)
+    var table: Table<K, V> = Table(address: 0, count: 0, capacity: 0)
+    createTable(output: joyeer_intrinsic_place_address<Table<K, V>>(value: &table), entries: 0, count: 0,
+            keySize: joyeer_intrinsic_size_of<K>(),
+            valueSize: joyeer_intrinsic_size_of<V>(), entrySize: entrySize, valueOffset: valueOffset,
+            keyKind: joyeer_intrinsic_key_kind<K>() as Int32,
+            cloneKey: joyeer_intrinsic_clone_callback<K>(), destroyKey: joyeer_intrinsic_destroy_callback<K>(),
+            cloneValue: joyeer_intrinsic_clone_callback<V>(), destroyValue: joyeer_intrinsic_destroy_callback<V>())
+    return table
+}

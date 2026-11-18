@@ -1,0 +1,30 @@
+// dict_nested_destroy.joyeer over the prototype `Table<K, V>` of dict_table_prelude.joyeer (decision 0027, stage 3):
+// the copy is an explicit `duplicate()`. Built only by benchmark_dicts.py through the array-addressor-probe tool.
+// Prints 5001850000.
+func main() {
+    var keys: [String] = []
+    var text = "n"
+    var index = 0
+    while index < 16 {
+        &keys.append(element: text)
+        text = text + "y"
+        index = index + 1
+    }
+    // `emptyTable` infers its type parameters from borrowed samples; this one is built once.
+    let sample: [Int] = []
+    var total = 0
+    var round = 0
+    while round < 100000 {
+        var table: Table<String, [Int]> = emptyTable(key: "", value: sample)
+        index = 0
+        while index < 16 {
+            let inserted = keys[index]
+            &table.set(key: consume inserted, value: consume [index, round, 1, 2, 3, 4, 5, 6])
+            index = index + 1
+        }
+        let copy = table.duplicate()
+        total = total + copy.at(key: keys[3])[0] + copy.at(key: keys[15])[1] + copy.size()
+        round = round + 1
+    }
+    print(value: total)
+}

@@ -1,0 +1,9 @@
+func take(d: consuming [String: Int]): Int {
+    return d.count
+}
+
+// Spec 4.4.3: the right side runs before the element is assigned, and it consumes the dictionary.
+func invalid() {
+    var d: [String: Int] = ["a": 1]
+    &d["b"] = take(d: consume d)
+}

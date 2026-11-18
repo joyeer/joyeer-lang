@@ -7,11 +7,19 @@ namespace joyeer::semantic {
 
 Prelude parsePrelude(PreludeKind kind, uint32_t sourceId) {
     Prelude result;
-    const bool roles = kind == PreludeKind::roles;
-    result.source = SourceFile::fromMemory(
-            std::string(roles ? rolePreludeSource : concurrencyPreludeSource),
-            std::filesystem::path("lib") / "Runtime" / (roles ? "roles.joyeer" : "concurrency.joyeer"));
-    const std::string name = roles ? "role prelude" : "runtime prelude";
+    const char* source = concurrencyPreludeSource;
+    const char* file = "concurrency.joyeer";
+    std::string name = "runtime prelude";
+    if (kind == PreludeKind::roles) {
+        source = rolePreludeSource;
+        file = "roles.joyeer";
+        name = "role prelude";
+    } else if (kind == PreludeKind::collections) {
+        source = collectionsPreludeSource;
+        file = "collections.joyeer";
+        name = "collections prelude";
+    }
+    result.source = SourceFile::fromMemory(std::string(source), std::filesystem::path("lib") / "Runtime" / file);
     Diagnostics diagnostics;
     LexParser(&diagnostics).parse(result.source);
     if (diagnostics.hasFailure()) {

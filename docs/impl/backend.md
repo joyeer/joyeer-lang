@@ -69,10 +69,10 @@ and `compiler/backend/`:
 | [native_module.cpp](../../compiler/backend/native_module.cpp) | C ABI construction, printing, destruction, and exception translation |
 | [native_module.h](../../compiler/backend/native_module.h) | Backend-only context/module storage and opaque handle definition |
 | [native_ir.h](../../compiler/backend/native_ir.h) | One lowering session's state, caches, and responsibility declarations |
-| [native_types.cpp](../../compiler/backend/native_types.cpp) | Construction sequence, type/layout mapping, runtime declarations, globals, and stack utilities |
-| [native_ownership.cpp](../../compiler/backend/native_ownership.cpp) | Type-specific clone/destroy helpers and active-payload ownership; a destroy helper calls the struct `deinit` first when the live flag is set. Helper bodies are emitted after every source function is declared |
+| [native_types.cpp](../../compiler/backend/native_types.cpp) | Construction sequence, type/layout mapping, runtime declarations, globals, and stack utilities. For each dictionary entry structure it asserts that the target layout places the value at `alignTo(size_of<K>, align_of<V>)` within the runtime's entry size, the formula the library passes the runtime ([0027](../decisions/0027-library-dict.md)) |
+| [native_ownership.cpp](../../compiler/backend/native_ownership.cpp) | Type-specific clone/destroy helpers and active-payload ownership; destruction calls `deinit` when live, unconditionally for an inert-zero role struct. The `String` helper tests `data` inline and calls the runtime only when it is not null: every allocating producer stores a non-null block, and the zero value (moved-from, zero-initialized, or an unassigned native output) owns nothing, so dropping a moved-from `String` costs no call. Artificial helper subprograms and unknown-line implicit call locations preserve debug scopes while permitting inlining. Helpers inherit the referenced closed wrapper's `alwaysInline` policy |
 | [native_functions.cpp](../../compiler/backend/native_functions.cpp) | Functions, instructions, checked arithmetic, patterns, and runtime entry adapters |
-| [native_collections.cpp](../../compiler/backend/native_collections.cpp) | Arrays, dictionaries, bounds checks, and runtime ownership callbacks |
+| [native_collections.cpp](../../compiler/backend/native_collections.cpp) | Role-array constant blocks and `String.utf8()`, dictionary operations, and String/Dict bounds checks |
 | [native_host.cpp](../../compiler/backend/native_host.cpp) | External builtins (`print`, byte conversions), native-binding calls, and the memory intrinsics |
 | [native_debug.cpp](../../compiler/backend/native_debug.cpp) | DIBuilder types, scopes, variables, source files, and instruction locations |
 | [backend.cpp](../../compiler/backend/backend.cpp) | Target-specific optimization/object generation and embedded LLD drivers |
@@ -99,7 +99,7 @@ interfaces change. This is not a backward-compatibility promise between
 development revisions: rebuild and deploy the compiler and backend together
 from the same revision. The interface includes module construction, printing,
 destruction, and the object options' module handle. The private IR wire version
-is version 20. Numeric fields use 64-bit little-endian encoding; strings are
+is version 25. Numeric fields use 64-bit little-endian encoding; strings are
 length-prefixed arbitrary bytes.
 Inputs and callback messages are borrowed only during a call. Callbacks must
 not throw, and clients must never delete or interpret the opaque handle.
@@ -149,7 +149,15 @@ The native linker lives in `compiler/codegen/linker.h` and
 `compiler/backend/backend.h` on every platform. The
 native-backend library verifies the constructed module, runs the selected LLVM
 optimization pipeline, emits a COFF, Mach-O, or ELF object, and invokes the
-corresponding LLD driver in-process. A mutex serializes LLD because its library
+corresponding LLD driver in-process. A backend built with `JOYEER_BACKEND_TEST_HOOKS`
+(the Debug presets and `validate.py`; off by default and in the Release presets, so
+packages never carry it) verifies the module again after the pipeline, debug info
+included, so an inlining that leaves a location outside its function's subprogram
+fails the compile with `JOYEER_BACKEND_CODE_GENERATION_FAILED`
+([0027](../decisions/0027-library-dict.md), closing 0026's known gap (a));
+`E2EOptimizedDebugInfoIsVerified`, registered only with that option, proves the check
+runs through a test-only fault injection (`JOYEER_BACKEND_TEST_CORRUPT_DEBUG_INFO=1`).
+A mutex serializes LLD because its library
 entry point has global process state. LLVM/LLD remain private backend
 dependencies; the compiler never launches Clang or an LLD executable for
 native output.
@@ -194,6 +202,18 @@ Driver library discovers the host ABI inputs and returns an ELF linker command
 that embedded LLD executes without spawning a process. Supported build SDK
 versions and platform prerequisites are documented in
 [Building Joyeer](../building.md).
+
+The runtime archive is loaded lazily on macOS, on Linux and on the Windows own-entry link: forcing every member
+into the link would override the intended separation of leaf runtime objects and conflict with native ABI probes
+that provide their own channel entries. Only the Windows C-startup link still loads every member
+(`/WHOLEARCHIVE`). Shared static slots use a coalesced `linkonce_odr` symbol; only
+ELF/COFF attach COMDAT metadata because Mach-O does not support COMDAT.
+
+Generated ownership helpers and authorized runtime wrappers have internal linkage. Closed literal, copy,
+destruction and owned-element wrappers carry the verified `alwaysInline` policy, so their extra frames disappear
+at O0 as well as O2. Every debug-enabled ownership helper has an artificial line-0 `DISubprogram`;
+otherwise-unlocated implicit helper calls use unknown line 0, never a fictitious user location.
+This replaces the earlier `NoInline` workaround without losing valid inline scopes.
 
 Homebrew macOS links LLD and some support libraries dynamically. Their C++
 types remain private to the backend, but in-process linking does not make
@@ -388,9 +408,10 @@ remainder, so neither can evaluate undefined arithmetic or produce LLVM
 poison on these inputs. The panic messages match the checked C runtime
 entry points.
 
-Array reads and mutable projections lower to null/negative/
-upper-bound checks followed by a typed `getelementptr`, rather than a
-per-access runtime call. The IR verifier checks the array element/result type;
+Array reads and mutable projections call the source library's two-check addressor, emitted
+`alwaysinline` even at O0, followed by a typed `getelementptr`. Every live array has a header,
+so a zero data address implies a zero count and the upper-bound check rejects access.
+The IR verifier checks the role identity and array element/result type;
 construction and growth validate the allocation size using that same element
 layout. An in-range access therefore needs neither a header stride lookup nor
 a repeated offset-overflow check. This also handles byte, Boolean, padded
@@ -464,7 +485,7 @@ gaps below mean it is not yet a complete recovery boundary.
 | `Bool` | `i1` |
 | `UInt8` | `i8` |
 | `String` | `{ ptr, i64 }` |
-| `Array<T>` | `{ ptr, i64, i64 }` |
+| role-bound library `Array<T>` | named `{ i64, i64, i64 }`; bit-identical to the C `JoyeerArray` on supported 64-bit targets |
 | `Dict<K,V>` | `{ ptr, i64, i64 }` |
 | user `struct` | named LLVM struct with declaration-order fields |
 | enum / `Optional` / `Result` | named `{ i32 tag, [N x i64] payload }` |

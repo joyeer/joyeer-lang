@@ -156,6 +156,7 @@ def validate_config(config: str, args: argparse.Namespace, sdk: Path, env: dict[
         f"-DCMAKE_BUILD_TYPE={config}",
         f"-DJOYEER_LLVM_ROOT={sdk}",
         "-DJOYEER_BUILD_UNITTESTS=ON",
+        "-DJOYEER_BACKEND_TEST_HOOKS=ON",
         f"-DJOYEER_BUILD_COMPRESSION={'OFF' if args.no_compression else 'ON'}",
         *[f"-D{item}" for item in args.define],
     ]

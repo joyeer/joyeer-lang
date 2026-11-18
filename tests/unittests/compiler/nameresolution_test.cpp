@@ -285,7 +285,8 @@ return text.utf8()
     EXPECT_EQ(resolution.model->symbol(*target)->name, "utf8");
 }
 
-TEST_F(NameResolutionTest, ResolvesDictionaryGetAsBorrowingBuiltinMember) {
+// Since the dictionary switch (decision 0027) `get` is the library's `dict_get` method, not a builtin member.
+TEST_F(NameResolutionTest, ResolvesDictionaryGetAsTheLibraryRoleMethod) {
     resolve("func lookup(values: [String: Int]): Int? {\n"
             "return values.get(key: \"answer\")\n}\n");
     ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
@@ -295,10 +296,13 @@ TEST_F(NameResolutionTest, ResolvesDictionaryGetAsBorrowingBuiltinMember) {
             function->body->items[0]);
     const auto call = std::static_pointer_cast<joyeer::syntax::CallExprSyntax>(returned->value);
     const auto& member = referenced(call->callee);
-    EXPECT_EQ(member.kind, SymbolKind::builtinMember);
+    EXPECT_EQ(member.kind, SymbolKind::method);
+    EXPECT_EQ(member.libraryRole, joyeer::semantic::LibraryRole::dictGet);
     EXPECT_EQ(member.name, "get");
     EXPECT_FALSE(member.isMutable);
     ASSERT_TRUE(member.callable.has_value());
+    ASSERT_TRUE(member.callable->receiver.has_value());
+    EXPECT_EQ(member.callable->receiver->access, joyeer::syntax::AccessEffect::borrowing);
     ASSERT_EQ(member.callable->parameters.size(), 1u);
     EXPECT_EQ(member.callable->parameters[0].label, std::optional<std::string>("key"));
     EXPECT_EQ(member.callable->parameters[0].access, joyeer::syntax::AccessEffect::borrowing);
@@ -314,7 +318,7 @@ TEST_F(NameResolutionTest, RejectsDictionaryGetArgumentLabelsAndArity) {
     }
 }
 
-        TEST_F(NameResolutionTest, ResolvesArrayAppendFromTheBuiltinMemberScope) {
+        TEST_F(NameResolutionTest, ResolvesArrayAppendFromTheRoleDeclarationsMemberScope) {
             resolve(R"JOYEER(func add(values: inout [Int]) {
         &values.append(element: 42)
         }
@@ -330,7 +334,7 @@ TEST_F(NameResolutionTest, RejectsDictionaryGetArgumentLabelsAndArity) {
             const auto member = std::static_pointer_cast<joyeer::syntax::MemberExprSyntax>(
                     call->callee);
 
-            EXPECT_EQ(referenced(member).kind, SymbolKind::builtinMember);
+            EXPECT_EQ(referenced(member).kind, SymbolKind::method);
             EXPECT_EQ(referenced(member).name, "append");
             const auto target = resolution.model->callTarget(call);
             ASSERT_TRUE(target.has_value());

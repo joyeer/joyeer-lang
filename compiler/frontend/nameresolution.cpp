@@ -251,6 +251,11 @@ public:
                 model->runtimeSources_[file->span.sourceId] = modules[index].runtimeContext;
                 model->coreSources_[file->span.sourceId] = modules[index].coreContext;
                 model->preludeSources_[file->span.sourceId] = modules[index].preludeContext;
+                if (modules[index].preludeContext &&
+                    (modules[index].replaces == ReplacedPrelude::collections ||
+                     modules[index].name == "$collections-prelude")) {
+                    collectionsPreludeSpan = file->span;
+                }
                 model->fileScope_ = createScope(
                         ScopeKind::file, moduleScopes[index], nodeId(file));
                 model->introducedScopes_[nodeId(file)] = model->fileScope_;
@@ -334,9 +339,11 @@ private:
 
     SemanticModel::Ptr model;
     std::vector<NameResolutionDiagnostic> diagnostics;
-    // The builtin Array and Dict, whose `removeLast` and `get` return the `optional` role enum.
-    SymbolId arraySymbol = invalidSymbolId;
-    SymbolId dictionarySymbol = invalidSymbolId;
+    // Where the missing `dict_type` role is reported: the collections prelude.
+    SourceSpan collectionsPreludeSpan {};
+    // Whether the missing `dict_type` role was reported: it is required only once a program mentions a dictionary
+    // (decision 0027, Decision 7), and reported once.
+    bool missingDictionaryReported = false;
     uint32_t activeModule = 0;
     // The type `Self` denotes while resolving the signature or body of a member.
     std::optional<SymbolId> selfType;
@@ -674,6 +681,15 @@ private:
                         else if (name == "array_element") value.libraryRole = LibraryRole::arrayElement;
                         else if (name == "array_copy") value.libraryRole = LibraryRole::arrayCopy;
                         else if (name == "container_end") value.libraryRole = LibraryRole::containerEnd;
+                        else if (name == "array_literal") value.libraryRole = LibraryRole::arrayLiteral;
+                        // The dictionary roles own no linear key or value: the role is affine-only (decision 0027).
+                        else if (name == "dict_type") value.libraryRole = LibraryRole::dictType;
+                        else if (name == "dict_element") value.libraryRole = LibraryRole::dictElement;
+                        else if (name == "dict_set") value.libraryRole = LibraryRole::dictSet;
+                        else if (name == "dict_get") value.libraryRole = LibraryRole::dictGet;
+                        else if (name == "dict_copy") value.libraryRole = LibraryRole::dictCopy;
+                        else if (name == "dict_literal") value.libraryRole = LibraryRole::dictLiteral;
+                        else if (name == "dict_entry") value.libraryRole = LibraryRole::dictEntry;
                         else report(NameResolutionDiagnosticId::invalidPrelude, attribute.span,
                                     "unknown compiler prelude role '" + name + "'");
                     }
@@ -738,11 +754,26 @@ private:
         return id;
     }
 
-    // The second field of an array role struct is readable everywhere (decision 0025). The shape check
-    // in the type checker guarantees it is `count`.
+    // The declaration carrying the `dict_type` role. A collections prelude without one is valid until a program
+    // mentions a dictionary (decision 0027, Decision 7); the first mention reports it, once.
+    std::optional<SymbolId> dictionaryRole() {
+        if (model->dictSymbol_.has_value()) return model->dictSymbol_;
+        if (!missingDictionaryReported) {
+            missingDictionaryReported = true;
+            report(NameResolutionDiagnosticId::invalidPrelude, collectionsPreludeSpan,
+                   "the compiler-bundled collections prelude does not declare a 'dict_type' struct");
+        }
+        return std::nullopt;
+    }
+
+    // The second field of an array or dictionary role struct is readable everywhere (decisions 0025, 0027). The
+    // shape check in the type checker guarantees it is `count`.
     void markReadOnlyCounts() {
         for (const auto& candidate : model->symbols_) {
-            if (candidate.kind != SymbolKind::structure || candidate.libraryRole != LibraryRole::arrayType) continue;
+            if (candidate.kind != SymbolKind::structure || (candidate.libraryRole != LibraryRole::arrayType &&
+                                                            candidate.libraryRole != LibraryRole::dictType)) {
+                continue;
+            }
             for (auto& field : model->symbols_) {
                 if (field.kind == SymbolKind::structureField && field.containingSymbol == candidate.id &&
                     field.name == "count") {
@@ -757,11 +788,22 @@ private:
     // declaration is a corrupt compiler bundle and is reported once.
     void bindRolePreludeDeclarations() {
         for (const auto& candidate : model->symbols_) {
-            if (candidate.kind != SymbolKind::enumeration || candidate.isInvalid) continue;
-            if (candidate.libraryRole == LibraryRole::optional && !model->optionalSymbol_.has_value()) {
+            if (candidate.isInvalid) continue;
+            if (candidate.kind == SymbolKind::enumeration &&
+                candidate.libraryRole == LibraryRole::optional && !model->optionalSymbol_.has_value()) {
                 model->optionalSymbol_ = candidate.id;
-            } else if (candidate.libraryRole == LibraryRole::result && !model->resultSymbol_.has_value()) {
+            } else if (candidate.kind == SymbolKind::enumeration &&
+                       candidate.libraryRole == LibraryRole::result && !model->resultSymbol_.has_value()) {
                 model->resultSymbol_ = candidate.id;
+            } else if (candidate.kind == SymbolKind::structure &&
+                       candidate.libraryRole == LibraryRole::arrayType && !model->arraySymbol_.has_value()) {
+                model->arraySymbol_ = candidate.id;
+            } else if (candidate.kind == SymbolKind::structure &&
+                       candidate.libraryRole == LibraryRole::dictType && !model->dictSymbol_.has_value()) {
+                model->dictSymbol_ = candidate.id;
+            } else if (candidate.kind == SymbolKind::structure &&
+                       candidate.libraryRole == LibraryRole::dictEntry && !model->dictEntrySymbol_.has_value()) {
+                model->dictEntrySymbol_ = candidate.id;
             }
         }
         if (!model->optionalSymbol_.has_value() || !model->resultSymbol_.has_value()) {
@@ -775,32 +817,14 @@ private:
                    "the compiler-bundled role prelude does not declare the 'optional' and 'result' enums");
             if (!model->optionalSymbol_.has_value()) return;
         }
-        const auto optionalType = *model->optionalSymbol_;
-        declareBuiltinMember(
-                dictionarySymbol,
-                SymbolKind::builtinMember,
-                "get",
-                optionalType,
-                CallableSignature {
-                    CallableKind::function,
-                    true,
-                    { CallableParameter {
-                        std::string("key"),
-                        true,
-                        std::nullopt,
-                        std::nullopt,
-                        std::nullopt,
-                    } },
-                });
-        // `removeLast()` gives back the last element as `Optional<T>`, or `.None` when empty; the
-        // element type comes from the receiver, as for `Dict.get`.
-        const auto removeLast = declareBuiltinMember(
-                arraySymbol,
-                SymbolKind::builtinMember,
-                "removeLast",
-                optionalType,
-                CallableSignature { CallableKind::function, true, {} });
-        symbol(removeLast).isMutable = true;
+        if (!model->arraySymbol_.has_value()) {
+            report(NameResolutionDiagnosticId::invalidPrelude, collectionsPreludeSpan,
+                   "the compiler-bundled collections prelude does not declare an 'array_type' struct");
+            return;
+        }
+        const auto stringType = scope(model->preludeScope_).types.at("String");
+        declareBuiltinMember(stringType, SymbolKind::builtinMember, "utf8", *model->arraySymbol_,
+                             CallableSignature { CallableKind::function, true, {} });
     }
 
     void buildPrelude() {
@@ -818,54 +842,9 @@ private:
         const auto stringType = declareBuiltinType("String");
         const auto byteType = declareBuiltinType("UInt8");
         declareBuiltinType("Any");
-        const auto arrayType = declareBuiltinType("Array");
-        const auto dictionaryType = declareBuiltinType("Dict");
-        arraySymbol = arrayType;
-        dictionarySymbol = dictionaryType;
         const auto ioErrorType = declareBuiltinType("IOError");
 
         declareBuiltinMember(stringType, SymbolKind::builtinMember, "count", intType);
-        declareBuiltinMember(arrayType, SymbolKind::builtinMember, "count", intType);
-        declareBuiltinMember(dictionaryType, SymbolKind::builtinMember, "count", intType);
-        CallableSignature utf8Signature { CallableKind::function, true, {} };
-        declareBuiltinMember(
-            stringType,
-            SymbolKind::builtinMember,
-            "utf8",
-            arrayType,
-            std::move(utf8Signature));
-        CallableSignature appendSignature {
-            CallableKind::function,
-            true,
-            { CallableParameter {
-                std::string("element"),
-                true,
-                std::nullopt,
-                std::nullopt,
-                std::nullopt,
-            } },
-        };
-        const auto append = declareBuiltinMember(
-                arrayType,
-                SymbolKind::builtinMember,
-                "append",
-                voidType,
-                std::move(appendSignature));
-        symbol(append).isMutable = true;
-
-        // `consume a.consumeEmpty()` ends an empty array (spec 2.6.4). The receiver is consumed, so it
-        // is spelled in the signature the way a user method's `consuming` receiver is.
-        declareBuiltinMember(
-                arrayType,
-                SymbolKind::builtinMember,
-                "consumeEmpty",
-                voidType,
-                CallableSignature {
-                    CallableKind::function,
-                    true,
-                    {},
-                    CallableReceiver { std::nullopt, syntax::AccessEffect::consuming, std::nullopt },
-                });
 
         CallableSignature noPayload { CallableKind::enumCase, false, {} };
 
@@ -947,6 +926,24 @@ private:
                 { addressParameter(),
                   CallableParameter { std::string("count"), true, std::nullopt, std::nullopt, intType } },
                 voidType);
+        layoutIntrinsic("joyeer_intrinsic_slot_address",
+                { CallableParameter { std::string("base"), true, std::nullopt, std::nullopt, intType },
+                  CallableParameter { std::string("index"), true, std::nullopt, std::nullopt, intType } },
+                intType);
+        layoutIntrinsic("joyeer_intrinsic_place_address",
+                { CallableParameter { std::string("value"), true, std::nullopt, std::nullopt, std::nullopt,
+                                      syntax::AccessEffect::inout } },
+                intType);
+        // The read-only address of a named readable place, valid for the call it is an argument of (decision 0027).
+        layoutIntrinsic("joyeer_intrinsic_borrow_address",
+                { CallableParameter { std::string("value"), true, std::nullopt, std::nullopt, std::nullopt,
+                                      syntax::AccessEffect::borrowing } },
+                intType);
+        // The runtime key kind of an admitted dictionary key type, a constant per instance (decision 0027).
+        layoutIntrinsic("joyeer_intrinsic_key_kind", {}, intType);
+        layoutIntrinsic("joyeer_intrinsic_stack_block",
+                { CallableParameter { std::string("count"), true, std::nullopt, std::nullopt, intType } },
+                intType);
         layoutIntrinsic("joyeer_intrinsic_clone_callback", {}, intType);
         layoutIntrinsic("joyeer_intrinsic_destroy_callback", {}, intType);
         layoutIntrinsic("joyeer_intrinsic_callback_address",
@@ -1868,13 +1865,20 @@ private:
             case syntax::Kind::arrayType: {
                 const auto array = std::static_pointer_cast<syntax::ArrayTypeSyntax>(type);
                 resolveType(array->element, currentScope);
-                return bindBuiltinType(type, currentScope, "Array");
+                const auto role = model->roleSymbol(LibraryRole::arrayType);
+                if (!role.has_value()) return std::nullopt;
+                model->referenceSymbols_[nodeId(type)] = *role;
+                return role;
             }
             case syntax::Kind::dictionaryType: {
                 const auto dictionary = std::static_pointer_cast<syntax::DictionaryTypeSyntax>(type);
                 resolveType(dictionary->key, currentScope);
                 resolveType(dictionary->value, currentScope);
-                return bindBuiltinType(type, currentScope, "Dict");
+                // `[K: V]` binds to the declaration carrying `dict_type`, never to a name in scope (decision 0027).
+                const auto role = dictionaryRole();
+                if (!role.has_value()) return std::nullopt;
+                model->referenceSymbols_[nodeId(type)] = *role;
+                return role;
             }
             case syntax::Kind::optionalType: {
                 const auto optional = std::static_pointer_cast<syntax::OptionalTypeSyntax>(type);
@@ -2045,6 +2049,8 @@ private:
                 break;
             }
             case syntax::Kind::dictionaryExpr: {
+                // A literal mentions a dictionary even without an annotation: a missing role is reported here once.
+                dictionaryRole();
                 const auto dictionary = std::static_pointer_cast<syntax::DictionaryExprSyntax>(expression);
                 for (const auto& entry : dictionary->entries) {
                     setContainingScope(entry, currentScope);
@@ -2184,6 +2190,11 @@ private:
 
         auto target = *referenced;
         const auto& callee = symbol(target);
+        if (callee.kind == SymbolKind::structureField && callee.readableOutsideDeclaration) {
+            report(NameResolutionDiagnosticId::notCallable, expression->callee->span,
+                   "'" + callee.name + "' is not callable");
+            return;
+        }
         if (callee.kind == SymbolKind::structure) {
             if (!callee.synthesizedInitializer.has_value()) {
                 report(
@@ -2437,9 +2448,11 @@ private:
                 return expressionType(
                         std::static_pointer_cast<syntax::AssignmentExprSyntax>(expression)->value);
             case syntax::Kind::arrayExpr:
-                return lookupType(model->fileScope_, "Array").symbol;
+                // The role-bound type, never the spelling: a user type named `Array` must not take literals.
+                return model->arraySymbol_;
             case syntax::Kind::dictionaryExpr:
-                return lookupType(model->fileScope_, "Dict").symbol;
+                // The role-bound type, never the spelling: a user type named `Dict` must not take literals.
+                return model->dictSymbol_;
             case syntax::Kind::subscriptExpr: {
                 const auto subscript = std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
                 const auto base = expressionType(subscript->base);
@@ -2554,22 +2567,25 @@ NameResolutionResult NameResolver::resolve(const std::vector<ModuleInput>& modul
 }
 
 NameResolutionResult NameResolver::resolveWithPrelude(std::vector<ModuleInput> modules, bool singleFile) const {
-    // A caller-supplied prelude replaces only the concurrency prelude. The role prelude is
-    // toolchain-owned and always loaded (decision 0024).
+    // A caller-supplied prelude replaces only the concurrency prelude. The role and collections preludes are
+    // toolchain-owned and always loaded (decisions 0024 and 0026); a test seam can replace either.
     const bool supplied = std::any_of(modules.begin(), modules.end(),
-            [](const auto& module) { return module.preludeContext && !module.rolePreludeContext; });
+            [](const auto& module) { return module.preludeContext && module.replaces == ReplacedPrelude::none; });
     const bool suppliedRoles = std::any_of(modules.begin(), modules.end(),
-            [](const auto& module) { return module.rolePreludeContext; });
-    // The test seam implies prelude context; a module that sets only the role flag would be inert.
+            [](const auto& module) { return module.replaces == ReplacedPrelude::roles; });
+    const bool suppliedCollections = std::any_of(modules.begin(), modules.end(),
+            [](const auto& module) { return module.replaces == ReplacedPrelude::collections; });
+    // The test seam implies prelude context; a module that names a replacement only would be inert.
     for (auto& module : modules) {
-        if (module.rolePreludeContext) module.preludeContext = true;
+        if (module.replaces != ReplacedPrelude::none) module.preludeContext = true;
     }
     uint32_t sourceId = 0;
     for (const auto& module : modules) {
         for (const auto& file : module.files) sourceId = std::max(sourceId, file->span.sourceId);
     }
-    // Source identities are dense: the concurrency prelude takes max+1 and the role prelude the next.
-    const uint32_t needed = (supplied ? 0u : 1u) + (suppliedRoles ? 0u : 1u);
+    // Source identities are dense: the concurrency prelude takes max+1, the role prelude the next and the
+    // collections prelude the one after, each only when it is bundled.
+    const uint32_t needed = (supplied ? 0u : 1u) + (suppliedRoles ? 0u : 1u) + (suppliedCollections ? 0u : 1u);
     if (sourceId > std::numeric_limits<uint32_t>::max() - needed) {
         auto result = NameResolutionBuilder().build(modules, singleFile);
         result.diagnostics.push_back({NameResolutionDiagnosticId::invalidPrelude, {},
@@ -2577,15 +2593,34 @@ NameResolutionResult NameResolver::resolveWithPrelude(std::vector<ModuleInput> m
         return result;
     }
     std::vector<Prelude> preludes;
+    std::vector<PreludeKind> kinds;
     uint32_t nextSourceId = sourceId + 1;
-    if (!supplied) preludes.push_back(parsePrelude(PreludeKind::concurrency, nextSourceId++));
-    if (!suppliedRoles) preludes.push_back(parsePrelude(PreludeKind::roles, nextSourceId++));
+    if (!supplied) {
+        preludes.push_back(parsePrelude(PreludeKind::concurrency, nextSourceId++));
+        kinds.push_back(PreludeKind::concurrency);
+    }
+    if (!suppliedRoles) {
+        preludes.push_back(parsePrelude(PreludeKind::roles, nextSourceId++));
+        kinds.push_back(PreludeKind::roles);
+    }
+    if (!suppliedCollections) {
+        preludes.push_back(parsePrelude(PreludeKind::collections, nextSourceId++));
+        kinds.push_back(PreludeKind::collections);
+    }
     for (size_t index = 0; index < preludes.size(); ++index) {
         auto& prelude = preludes[index];
-        const bool roles = !suppliedRoles && index + 1 == preludes.size();
-        if (prelude.root != nullptr) {
-            // Only the concurrency prelude may declare C bindings; the role prelude has none.
-            modules.push_back({roles ? "$role-prelude" : "$prelude", {prelude.root}, !roles, false, true});
+        if (prelude.root == nullptr) continue;
+        // The concurrency and collections preludes may declare C bindings; the role prelude has none.
+        switch (kinds[index]) {
+            case PreludeKind::concurrency:
+                modules.push_back({"$prelude", {prelude.root}, true, false, true});
+                break;
+            case PreludeKind::roles:
+                modules.push_back({"$role-prelude", {prelude.root}, false, false, true});
+                break;
+            case PreludeKind::collections:
+                modules.push_back({"$collections-prelude", {prelude.root}, true, false, true});
+                break;
         }
     }
     auto result = NameResolutionBuilder().build(modules, singleFile);

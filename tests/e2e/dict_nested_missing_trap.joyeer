@@ -1,0 +1,12 @@
+// Characterization (plan 0011 phase 4, decision 0027). CHANGED WITH 0027: the builtin addressed the base of a nested
+// assignment before the right-hand side, so a missing outer key trapped before `rhs` printed; the library dictionary
+// evaluates the value first (spec 4.4.3), so `rhs` prints before the trap.
+func f(): Int {
+    print(value: "rhs")
+    return 1
+}
+
+func main() {
+    var outer: [String: [String: Int]] = ["a": ["b": 1]]
+    &outer["missing"]["b"] = f()
+}

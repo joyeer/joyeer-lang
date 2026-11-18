@@ -823,6 +823,49 @@ TEST_F(SemanticAnalysisTest, CompoundAssignmentRejectsATargetConsumedBeforeTheSt
     }
 }
 
+// The `=` counterpart (spec 4.4.3): a projected target that was already consumed before the statement, or by its own
+// index, is an ordinary use after consume, so the help says to reinitialize rather than blaming the right side, and
+// the diagnostic points at the storage, not at its `&`.
+TEST_F(SemanticAnalysisTest, AssignmentRejectsATargetConsumedBeforeTheStatement) {
+    for (const auto* body : {
+                "takeCells(c: consume cells)\n&cells[0].text = \"b\"",
+                "if flag { takeCells(c: consume cells) }\n&cells[0].text = \"b\"",
+                "takeCell(c: consume cells[0])\n&cells[0].text = \"b\"",
+                "&cells[takeCells(c: consume cells)].text = \"b\"" }) {
+        SCOPED_TRACE(body);
+        const auto text = std::string(
+                "struct Cell { var text: String }\n"
+                "func takeCells(c: consuming [Cell]): Int { return 0 }\n"
+                "func takeCell(c: consuming Cell) {}\n"
+                "func invalid(flag: Bool) {\n"
+                "var cells = [Cell(text: \"a\")]\n") + body + "\n}\n";
+        ASSERT_NO_FATAL_FAILURE(analyze(text));
+        EXPECT_FALSE(result.succeeded());
+        const auto consumed = std::find_if(
+                result.diagnostics.begin(), result.diagnostics.end(), [](const auto& diagnostic) {
+                    return diagnostic.id == joyeer::analysis::DiagnosticId::useAfterConsume;
+                });
+        ASSERT_NE(consumed, result.diagnostics.end()) << joyeer::analysis::dump(result.diagnostics);
+        ASSERT_TRUE(consumed->help.has_value());
+        EXPECT_NE(consumed->help->find("reinitialize"), std::string::npos) << *consumed->help;
+        EXPECT_EQ(consumed->help->find("4.4.3"), std::string::npos) << *consumed->help;
+        ASSERT_LT(consumed->span.offset, text.size());
+        EXPECT_NE(text[consumed->span.offset], '&') << joyeer::analysis::dump(result.diagnostics);
+    }
+}
+
+// A compound assignment on a path that never runs reports only the unreachable code.
+TEST_F(SemanticAnalysisTest, CompoundAssignmentOnAnUnreachablePathReportsOnlyUnreachableCode) {
+    ASSERT_NO_FATAL_FAILURE(analyze(
+            "func take(a: consuming [Int]): Int { return 1 }\n"
+            "func f(): Int {\nvar a = [1, 2]\nreturn 0\n&a[0] += take(a: consume a)\n}\n"));
+    for (const auto& diagnostic : result.diagnostics) {
+        EXPECT_EQ(diagnostic.id, joyeer::analysis::DiagnosticId::unreachableCode)
+                << joyeer::analysis::dump(result.diagnostics);
+    }
+    EXPECT_FALSE(result.diagnostics.empty());
+}
+
 TEST_F(SemanticAnalysisTest, DoesNotRestoreADifferentConsumedElement) {
     for (const auto* replacement : {
                 "&values[1] = \"new\"",

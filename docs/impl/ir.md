@@ -39,8 +39,13 @@ The module owns:
 - a deterministic snapshot of canonical compile-time `TypeId` names;
 - concrete user `struct` field definitions, and for a struct that declares `deinit` the
   function that runs it plus a hidden trailing `$live` Bool field (below), except a struct bound to the library
-  array role ([0025](../decisions/0025-library-collection-capabilities.md)), which is marked `inert_zero`, has no
-  live flag, and records its `copier` function when the instance is copyable;
+  array role ([0025](../decisions/0025-library-collection-capabilities.md)), which carries `StructureRole::array`
+  (dumped as `role=array`), has no
+  live flag, and records its `copier` function when the instance is copyable. A struct bound to the dictionary
+  role ([0027](../decisions/0027-library-dict.md)) carries `StructureRole::dict` (`role=dict`) with the same
+  inert-zero rules over two owned type arguments, its key and value; the entry a dictionary literal packs carries
+  `StructureRole::dictEntry` (`role=dict_entry`): exactly the fields `key` and `value` of its two type arguments, no
+  `deinit` and no copier, and it is never a value (its fields are addressed only by verified literal storage);
 - user enum and instantiated generic enum case definitions, including the `Optional<T>` / `Result<T,E>`
   instances, whose `EnumerationDefinition` carries the role (`optional` or `result`) and the indices of
   its present/absent or success/failure cases ([0024](../decisions/0024-library-optional-and-result.md)).
@@ -176,7 +181,7 @@ The current instruction set covers:
   result's type. `move_in`, `move_out` and `destroy_at` lower to `store`, `take` and `destroy` on that address. The
   runtime-only stack slots use `stack_allocate` and `pointer_to_integer`; specialized callback
   addresses use `function_address` and `pointer_to_integer`. The destruction query folds through
-  the existing IR destruction analysis. The wire format version is 20;
+  the existing IR destruction analysis;
 - collection capabilities ([decision 0025](../decisions/0025-library-collection-capabilities.md)), runtime-only:
   `destroy_range` (address, count) destroys live elements of the type in `integerValue`, `clone_at` copies one
   value into an uninitialized slot, `clone_callback` and `destroy_callback` yield the type's helper address as an
@@ -184,26 +189,66 @@ The current instruction set covers:
   (lowering uses it instead of `destroy_range` for a linear type, and an integer constant `0` instead of a
   callback that does not apply). A function marked `elementAddressor` is the `array_element` method of a library
   array instance; `a[i]` on such an array lowers to a call of it followed by `integer_address`, the one place
-  user code may form an integer address. The verifier requires that element address to be used only to load,
-  store, take, destroy, project or pass as an argument, and only where its definition dominates;
+  user code may form an integer address. The verifier requires the `integer_address` of such an element to be used only to load,
+  store, take, destroy, project or pass as an argument, and only where its definition dominates. The backend emits
+  an element addressor with `alwaysinline` ([0026](../decisions/0026-library-array.md));
+- `slot_address` (operands base and index, the element type in `integerValue`, an `Int` result): `base + index *
+  size` with no overflow or bounds check, a plain (not `inbounds`) GEP in the backend, `base` for a zero-size type;
+  runtime-only. A library addressor uses it after its own bounds check;
+- `stack_block` (operand: a constant count, the element type in `integerValue`, an `Int` address result): contiguous stack
+  storage for that many slots, allocated in the prologue (once per invocation) and never destroyed; 0 for a zero count or
+  a unit type. The verifier requires the operand to be an `integer` constant. Source intrinsics are runtime-only;
+  compiler-generated literal storage in user functions follows the closed protocol below;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
 - enum construction, payload extraction (`extract_payload`), and payload addresses
   (`payload_address`, which a moving `match` binding takes from);
-- mutating `array_append` with an addressable receiver and transferred element;
-- mutating `array_remove_last` with an addressable array receiver, giving `Optional<T>`;
-- `array_consume_empty` with an addressable array receiver and no result: traps unless the array is
-  empty, then frees its storage and zeroes the handle (`consume a.consumeEmpty()`);
+- ordinary source calls for library array methods ([0026](../decisions/0026-library-array.md)):
+  append owns its element, removal returns an owned optional, and ending consumes the receiver.
+  There is no array type kind or array-specific executable opcode;
 - ordinary source calls for task/channel APIs ([0023](../decisions/0023-library-concurrency.md)).
   Their concrete structs, `deinit` methods, result construction, raw typed moves and callback
   references use the same operations as other library code. There are no concurrency opcodes;
-- inserting/updating `dictionary_set` with an addressable receiver and
-  transferred key/value;
-- `dictionary_get` with borrowed dictionary/key values and an owned
-  `Optional<V>` result, verified against the concrete `K` and `V`;
-- `String`/collection count and value/address subscript operations, plus owned
-  `String.utf8()` byte-array extraction;
+- ordinary source calls for library dictionary methods ([0027](../decisions/0027-library-dict.md)): `d[k]` calls
+  the `dict_element` addressor, `&d[k] = v` calls `dict_set` with an owned key and value, and `get` is the public
+  `dict_get` method. There is no dictionary type kind or dictionary-specific opcode: wire 25 removed
+  `construct_dictionary`, `dictionary_set`, `dictionary_get` (slots 39-41), `subscript_addr` (50) and type kind 11,
+  and the verifier rejects those slots;
+- `String` `count` and byte `subscript` (a value; a byte is never addressed), plus owned `String.utf8()`
+  byte-array extraction;
 - high-level recursive pattern switching.
+
+An array literal prepares all owned elements first, then moves them into one `stack_block` and calls the
+private role method marked `literalFactory` on a zero receiver. No element operation can fail during packing.
+The verifier admits user-function `stack_block` / `slot_address` / `integer_address` only for this closed graph:
+one matching factory call, equal element type and constant count, an inert-zero receiver, every bounded slot
+stored exactly once before transfer, and no other uses or intervening calls. A factory call without verified
+storage is rejected. This does not grant source-level runtime authorization. Unlike the dictionary protocol below,
+it does not check that a stored element value is used once, so hand-written IR could store one owned value into two
+slots; lowering never does.
+
+A dictionary literal ([0027](../decisions/0027-library-dict.md), Decision 3) packs into a block of the dictionary's
+`dict_entry` instance, whose ordinary layout is the runtime's entry layout. The verifier checks its closed protocol
+rule by rule and names the first rule that fails: (1) the literal method gets the receiver, the block and its count;
+(2) the element is the entry over the dictionary's key and value; (3) each bounded constant slot has one entry place,
+projected once to each of the `key` and `value` fields inside the packing window; (4) each field address has exactly
+one use, a store before the transfer of a value of the field's type evaluated before the storage; (5) the count is a
+constant and every key is stored, and every value unless `V` is `Void`, when no value field is projected; (6) one
+transfer on an inert zero receiver, and only constants, slots, entry places, field addresses and stores in the
+window, where each stored value is used once. Lowering emits exactly this form for every dictionary literal.
+"Used once" follows paths from the packing block in both directions; the paths that avoid a value's defining block
+come from a `DominanceAnalysis` rooted at the packing block (one per direction and literal), not from a walk per
+value, so the check stays linear in the function's blocks for each literal.
+The wire also preserves the generic `alwaysInline` policy on closed library wrappers; only
+authorized functions with bodies may carry it.
+Literal factories cannot be formed as function values, so indirect calls cannot evade the storage protocol.
+Proven literal blocks use the same protocol in runtime and ordinary functions; other runtime raw blocks
+retain their existing capability rules. Wire decoding checks full-width enum and unsigned values before narrowing.
+The removed array kind's slot 10 and executable opcode slots 35-38 stay reserved and are rejected.
+
+A call whose checked argument has type `Never` cannot commit and does not demand a generic callee instance.
+Source argument and constraint checks still run. Lowering uses its substituted typed parameter/effect
+descriptions to evaluate earlier operands and retain their cleanup, then stops at divergence without a phantom call.
 
 The `unit` instruction produces a value of the builtin `Void` type with no
 operands or resource ownership. Unit patterns lower to typed wildcard
@@ -255,7 +300,7 @@ temporaries transfer directly. An overwrite first acquires the owned
 replacement, then destroys the previous value, then stores the replacement;
 this ordering keeps self-assignment valid. For `=` and `op=`, index operands of
 the target are lowered first, then the right-hand side, and only then is the
-element address computed (`subscript_addr`, `field_addr`): a right side that
+element address computed (an addressor call, `field_addr`): a right side that
 reallocates the target's storage cannot leave a stale address behind.
 Scope exits destroy owned storage
 and live temporaries in reverse order.
@@ -282,23 +327,19 @@ dictionary projections lower through their existing address operations, then
 `take` zeroes the projected storage. Parent aggregate destruction remains safe,
 and a later assignment reinitializes the projection.
 
-`array_append` consumes its element operand. Lowering moves an owned temporary
-or clones a borrowed nontrivial value before the instruction, so runtime
+The library append call consumes its element operand. Lowering moves an owned temporary
+or clones a borrowed nontrivial value before the call, so runtime
 reallocation never aliases the caller's retained value and array destruction
 owns every appended element exactly once.
 
-`dictionary_set` likewise consumes a concrete key/value pair. Runtime lookup
+The library dictionary's `dict_set` method likewise consumes a concrete key/value pair. Runtime lookup
 decides whether to insert or update: insertion transfers both into a new entry;
 update keeps the existing key, destroys the incoming duplicate key and old
-value, then transfers the replacement value. Dictionary construction applies
+value, then transfers the replacement value. A dictionary literal applies
 the same last-value-wins policy and counts only unique keys.
 
-`dictionary_get` evaluates the receiver and key once, in source order, without
-copying the receiver. Native emission performs one lookup and clones only the
-present value into `.Some`; absence produces `.None` without a payload copy.
-The result is already owned, so lowering transfers it without another clone.
-Nested optional and unit payloads retain their exact types. Receiver and key
-temporaries remain live through lookup and are cleaned on every exit path.
+`get` is the library's `dict_get` method: an ordinary call that borrows the receiver and the key, performs one
+lookup and clones only a present value into `.Some`; absence produces `.None` without a payload copy.
 
 ---
 
@@ -339,7 +380,7 @@ plus case symbol, including distinct builtin container instantiations.
   type relationships; opcode-specific Boolean constraints remain incomplete;
 - invalid `copy`, `take`, `destroy`, or `zero_init` operand categories/types;
 - a structure `deinit` that is not a function taking only the structure's address and returning
-  nothing, or a struct with one that does not end with the hidden live flag (an `inert_zero` struct must not
+  nothing, or a struct with one that does not end with the hidden live flag (an array-role struct must not
   have one, and must have a `deinit`); a `copier` that is not a function borrowing the struct and returning it;
   an element address that is converted, returned, stored as a value, or used outside its dominance; a
   collection opcode outside a runtime function, or `clone_at` on a noncopyable type;

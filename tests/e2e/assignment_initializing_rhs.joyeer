@@ -1,0 +1,50 @@
+// The right side of an assignment runs before the target is accessed (spec 4.4.3), so a right side may initialize
+// the target's root; the element it then replaces is destroyed once, and nothing else is lost.
+struct Res {
+    var id: Int
+    deinit() { print(value: self.id) }
+}
+
+struct Pair {
+    var r: Res
+    var y: Int
+}
+
+func fillTable(out: initializing [String: Res]): Res {
+    &out = ["k": Res(id: 1), "j": Res(id: 3)]
+    return Res(id: 2)
+}
+
+func fillList(out: initializing [Res]): Res {
+    &out = [Res(id: 1), Res(id: 3)]
+    return Res(id: 2)
+}
+
+func fillPair(out: initializing Pair): Res {
+    &out = Pair(r: Res(id: 1), y: 2)
+    return Res(id: 2)
+}
+
+func table() {
+    var d: [String: Res]
+    &d["k"] = fillTable(out: &d)
+    print(value: 100)
+}
+
+func list() {
+    var a: [Res]
+    &a[0] = fillList(out: &a)
+    print(value: 200)
+}
+
+func pair() {
+    var s: Pair
+    s.r = fillPair(out: &s)
+    print(value: 300)
+}
+
+func main() {
+    table()
+    list()
+    pair()
+}

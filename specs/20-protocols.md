@@ -120,8 +120,8 @@ extension Square: Shape {
 A conformance is valid when every requirement has exactly one **witness**: a
 method of the extended type, found by name, declared in the conformance
 extension or elsewhere in the type or its other extensions. Only declared
-methods are witnesses: a compiler-known member of a builtin type (such as
-`Array.removeLast` or `Dict.get`) is not a function and cannot witness a
+methods are witnesses. The library `Array` and `Dict` belong to the bundled prelude and cannot be
+extended, so their methods (such as `removeLast` or `get`) never witness a user protocol's
 requirement. A requirement with no witness is
 `type-checking.missing-witness`. The witness must match the requirement
 exactly after substituting `Self` with the extended type
@@ -426,7 +426,7 @@ Diagnostics follow the stable-ID and source-span rules of
 | `type-checking.cannot-infer-type-parameter` | No argument determines a type parameter |
 | `type-checking.conflicting-type-argument` | Arguments imply different types for one parameter |
 | `type-checking.linear-type-argument` | A linear type inferred as a type argument |
-| `type-checking.invalid-type-argument` | `Never` inferred as a type argument; a type parameter as a `Dict` key |
+| `type-checking.invalid-type-argument` | `Never` inferred as a type argument or written as an array element or dictionary key or value; a type parameter as a `Dict` key |
 | `type-checking.unknown-member-on-type-parameter` | A member not provided by the constraint |
 | `type-checking.generic-native-binding` | Generics on a C binding (§19) |
 | `type-checking.expanding-generic-recursion` | A cycle of generic calls whose type arguments grow |
@@ -619,8 +619,10 @@ declaration may accept a linear type argument; no user declaration or `--runtime
 claim this metadata. The body is still checked once. Structures with an implicitly destructible
 field of such a parameter remain subject to the ordinary linear/deinit restrictions.
 
-In the compiler-owned prelude only, size, alignment, stack slots, `move_in`, and `move_out` may
-operate on linear/must-transfer types. `destroy_at` never accepts one. The private affine task-block
+In the compiler-owned prelude only, size, alignment, stack slots, `move_in`, `move_out`, and the collection
+intrinsics below except `clone_at` (`destroy_range`, the two callback queries, `slot_address`, `stack_block`,
+`place_address` and `borrow_address`) may operate on linear/must-transfer types. `destroy_at` and `needs_destroy` never accept one, and `clone_at` needs a copyable
+type. The private affine task-block
 owner traps on abandonment rather than attempting to destroy a raw linear task input or result.
 `@compiler_role(...)` is a closed compatibility role for prelude declarations: it selects the
 existing contextual §21 diagnostics and restrictions, never layout. The `optional` and `result` roles
@@ -642,15 +644,47 @@ role that selects layout-relevant behavior, through a fixed table:
 | Linear policy | `T` may be linear |
 | Read-only `count` | the second field may be read, and borrowed, outside the declaration; it is never writable there |
 
-Three method roles, shape-checked and unique per declaration (`invalid-prelude` otherwise): `array_element`
+Four method roles, shape-checked and unique per declaration (`invalid-prelude` otherwise): `array_element`
 (`borrowing func ...(index: Int): Int`, the element address, trapping with `array index out of bounds`),
-`array_copy` (`borrowing func ...(): Self`) and `container_end` (`consuming func ...()` returning `Void`).
+`array_copy` (`borrowing func ...(): Self`), `container_end` (`consuming func ...()` returning `Void`) and
+`array_literal` (`private consuming func ...(address: Int, count: Int): Self`, called on an inert zero value by an array
+literal with `count` elements moved to `address`, [0026](../docs/decisions/0026-library-array.md)). `self` of an
+`array_literal` method is exempt from the linear-not-consumed check, like that of `container_end`.
 An `extension` of an `array_type` struct is `invalid-prelude`. `self` of a `container_end` method is exempt
 from the linear-not-consumed exit check and is destroyed after the body; the method must trap before
 returning unless the container is empty (`array not empty`), and `deinit` of a linear container that is not
 empty traps `linear container dropped while not empty`.
 
-Four further layout intrinsics, authorized units only, with explicit type arguments:
+A consuming parameter of a method of this role, declared with exactly its owned type parameter,
+is an owned argument context (§4.3), determined before substitution. It may receive an owned
+temporary, an unmarked copyable place, or an explicitly consumed owning place; every other
+consuming parameter and every consuming receiver still requires its marker.
+The library body's must-transfer rules remain unchanged.
+
+**Dictionary capabilities** ([0027](../docs/decisions/0027-library-dict.md)): the role `dict_type` marks the bundled
+`public struct Dict<K, V>`, which `[K: V]` and dictionary literals bind to, a `public struct` with exactly two
+unconstrained type parameters, the key and the value, and the same three `private` `Int` fields and `deinit` as
+`array_type`. Its capabilities are those of the table above with both parameters owned, except the linear policy:
+neither may be linear. Five method roles, shape-checked and unique per declaration: `dict_element` (`private borrowing
+func ...(key: K): Int`, the address of the stored value, trapping on a missing key), `dict_set` (`private mutating
+func ...(key: consuming K, value: consuming V): Void`, insert or replace), `dict_get` (`public borrowing func get(key:
+K): Optional<V>`, the one public method role), `dict_copy` (`private borrowing func ...(): Self`) and `dict_literal`
+(`private consuming func ...(address: Int, count: Int): Self`). The role `dict_entry` marks one `private struct` with
+exactly the fields `key: K` then `value: V` and no methods or `deinit`; a dictionary literal packs its entries as that
+struct, whose layout is the runtime's entry layout, and an entry is never a value. An `extension` of either struct is
+`invalid-prelude`. The prelude is required to declare `dict_type` only when a program mentions a dictionary; the key
+rules (§2.6) do not apply to the declaration's own type parameters.
+
+Literal lowering first evaluates every owned element left to right, then initializes one contiguous
+stack block and transfers it to the private literal method on an inert-zero receiver. The compiler-generated
+sequence may occur in ordinary functions only when its complete raw-address use graph is verified:
+matching element type and constant count, one in-range initialization per non-unit slot, no fallible
+operation while packing, and one matching literal call. No address escapes this sequence.
+Empty and `Void` literals use no element storage. `Never` is not an array element (§2.9), so no array of it
+exists; this does not authorize an explicit source layout intrinsic with `Never`.
+
+Seven further layout intrinsics, authorized units only (the bundled prelude and `--runtime-module` units),
+with explicit type arguments:
 
 | Function | Meaning |
 |---|---|
@@ -658,6 +692,11 @@ Four further layout intrinsics, authorized units only, with explicit type argume
 | `joyeer_intrinsic_destroy_range<T>(address: Int, count: Int)` | Destroys `count` live elements; for a linear `T` it instead traps `linear container dropped while not empty` when `count != 0` |
 | `joyeer_intrinsic_clone_callback<T>(): Int` | The address of the per-type clone helper kept in an array header, or `0` when none applies (always for a noncopyable `T`) |
 | `joyeer_intrinsic_destroy_callback<T>(): Int` | The address of the per-type destroy helper, or `0` when none applies (always for a linear or trivial `T`) |
+| `joyeer_intrinsic_stack_block<T>(count: N): Int` | Uninitialized contiguous stack storage for `N` slots of `T` (an integer literal, at least 0), valid until the invocation returns, allocated once per invocation, never destroyed; `0` for `N == 0` or a `Void` `T`. Code must move or destroy each value stored in it, as for `stack_slot` |
+| `joyeer_intrinsic_place_address<T>(value: &place): Int` | The address of an `inout` place of type `T`, valid for the call it is an argument of. The place's type is exactly `T` (an `Int` place does not stand for `Int?`). It is accepted only as a direct argument of another call that does not store its arguments (not a structure initializer or an enum case), which holds the `inout` access for its duration, so a sibling argument that reads or writes the same place is `overlapping-access`; a binding, a return value or any other use is `type-checking.invalid-call-arguments`. The place is a local `var`, an `inout`, `mutating` or `consuming` receiver, or a field path of those; a `let`, a `borrowing` parameter or receiver, a constant or an rvalue is rejected. It is authorized exactly like the other layout intrinsics (the bundled preludes and `--runtime-module` units) |
+| `joyeer_intrinsic_borrow_address<T>(value: place): Int` | The read-only address of the local storage holding the value of a named readable place, whose type is exactly `T`: a local (`let` or `var`), any parameter, or a field path of those; not a subscript, a computed member, a top-level constant or an enum case. For a `borrowing` parameter that storage is the callee's copy aliasing the caller's; for a `String` it is the handle's address. It is accepted only as a direct argument of another call that does not store its arguments and is valid until that call returns; the call holds a read of the place, so a sibling argument that writes it is `overlapping-access`. An rvalue has no place and is `type-checking.invalid-call-arguments`, as is any other use. Writing through it is the library author's error, not checked ([0027](../docs/decisions/0027-library-dict.md)). It is authorized like the other layout intrinsics |
+| `joyeer_intrinsic_key_kind<K>(): Int` | The runtime key kind of an admitted dictionary key type, a constant per instance: 1 for `Int`, 2 for `Bool`, 3 for `String`, 4 for `UInt8`. Any other `K` is `type-checking.invalid-type-argument` when it is concrete, and a lowering error when an instance substitutes it; it never yields 0 ([0027](../docs/decisions/0027-library-dict.md)) |
+| `joyeer_intrinsic_slot_address<T>(base: Int, index: Int): Int` | `base + index * size_of<T>()` with no overflow or bounds check ([0026](../docs/decisions/0026-library-array.md)): the address of element `index` of a run of `T` slots starting at `base`. For a zero-size `T` it is `base`. The result is an ordinary integer, defined for any operands, but it is a valid place only when `base` is the start of a run of at least `n` `T` slots in one live block and `0 <= index < n` (`index == n` is the end address, which must not be accessed). Library code checks the index before it accesses the result, and keeps byte counts for allocation in checked arithmetic |
 
 For an `array_type` value `a`, `a[i]` calls the `array_element` addressor and then accesses the returned
 address as a place of the first type argument. Ordering, exclusivity (§4.4) and the consuming, borrowing,

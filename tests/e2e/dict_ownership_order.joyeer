@@ -1,0 +1,21 @@
+// Characterization of dictionary ownership (plan 0011 phase 4, decision 0027): replacing a value destroys the old
+// one at the assignment; a literal's duplicate key keeps the first entry's position and the last value and destroys
+// the earlier value while the literal is built; at scope end each dictionary destroys its entries last to first.
+struct Res {
+    var id: Int
+    deinit() {
+        print(value: self.id)
+    }
+}
+
+func main() {
+    var d: [String: Res] = [:]
+    &d["a"] = Res(id: 1)
+    &d["b"] = Res(id: 2)
+    print(value: 10)
+    &d["a"] = Res(id: 3)
+    print(value: 11)
+    let lit: [Int: Res] = [1: Res(id: 4), 2: Res(id: 5), 1: Res(id: 6)]
+    print(value: lit.count)
+    print(value: 12)
+}

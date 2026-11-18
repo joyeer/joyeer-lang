@@ -67,6 +67,18 @@ protected:
         return *found;
     }
 
+    // Calls from `function` to functions whose name contains `fragment`, such as a library role method.
+    size_t callsTo(const joyeer::ir::Function& function, const std::string& fragment) const {
+        size_t count = 0;
+        for (const auto& block : function.blocks) {
+            for (const auto& instruction : block.instructions) {
+                if (instruction.opcode != joyeer::ir::Opcode::call || !instruction.callee.has_value()) continue;
+                count += result.module->functions.at(*instruction.callee).name.find(fragment) != std::string::npos;
+            }
+        }
+        return count;
+    }
+
     size_t opcodeCount(
             const joyeer::ir::Function& function,
             joyeer::ir::Opcode opcode) const {
@@ -204,7 +216,7 @@ TEST_F(IRLoweringTest, VerifierRejectsUsedGenericPlaceholdersAndTypesContainingT
         auto type = placeholder->id;
         if (nested) {
             const auto id = static_cast<joyeer::ir::TypeId>(result.module->types.size());
-            result.module->types.push_back({id, "[T]", joyeer::typing::TypeKind::array,
+            result.module->types.push_back({id, "Box<T>", joyeer::typing::TypeKind::structure,
                                            joyeer::semantic::invalidSymbolId, {type}});
             type = id;
         }
@@ -407,13 +419,13 @@ TEST_F(IRLoweringTest, ReturningAnOwningLocalOfANoncopyableTypeMovesIt) {
     EXPECT_EQ(opcodeCount(make, joyeer::ir::Opcode::take), 1u);
 }
 
-TEST_F(IRLoweringTest, ArrayRemoveLastLowersToOneInstructionWithAnOwnedOptionalResult) {
+TEST_F(IRLoweringTest, ArrayRemoveLastLowersToALibraryCallWithAnOwnedOptionalResult) {
     ASSERT_NO_FATAL_FAILURE(lower("func pop(): Int? {\n"
                                   "    var numbers: [Int] = [1, 2]\n"
                                   "    return &numbers.removeLast()\n"
                                   "}\n"));
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
-    EXPECT_EQ(opcodeCount(function("pop"), joyeer::ir::Opcode::arrayRemoveLast), 1u);
+    EXPECT_EQ(opcodeCount(function("pop"), joyeer::ir::Opcode::call), 2u);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
 
@@ -471,6 +483,8 @@ protected:
             for (auto& block : candidate.blocks) {
                 for (auto& instruction : block.instructions) {
                     if (instruction.opcode != opcode) continue;
+                    if (opcode == joyeer::ir::Opcode::call && instruction.callee.has_value() &&
+                        module.functions[*instruction.callee].literalFactory) continue;
                     mutate(instruction, module);
                     return !joyeer::ir::Verifier().verify(module).succeeded();
                 }
@@ -513,27 +527,27 @@ TEST_F(NewOpcodeVerifierTest, TheLoweredModuleVerifies) {
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
 
-TEST_F(NewOpcodeVerifierTest, ArrayRemoveLastNeedsExactlyOneOperand) {
+TEST_F(NewOpcodeVerifierTest, ArrayRemoveLastLibraryCallsNeedTheirExactOperands) {
     lowerPrograms();
     using joyeer::ir::Opcode;
-    EXPECT_TRUE(rejects("pop", Opcode::arrayRemoveLast, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("pop", Opcode::call, [](auto& instruction, auto&) {
         instruction.operands.clear();
     }));
-    EXPECT_TRUE(rejects("pop", Opcode::arrayRemoveLast, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("pop", Opcode::call, [](auto& instruction, auto&) {
         instruction.operands.push_back(instruction.operands.front());
     }));
 }
 
-TEST_F(NewOpcodeVerifierTest, ArrayRemoveLastNeedsAnOptionalOfTheElementType) {
+TEST_F(NewOpcodeVerifierTest, ArrayLibraryCallsNeedTheirDeclaredResultType) {
     lowerPrograms();
     using joyeer::ir::Opcode;
-    EXPECT_TRUE(rejects("pop", Opcode::arrayRemoveLast, [](auto& instruction, auto& module) {
+    EXPECT_TRUE(rejects("pop", Opcode::call, [](auto& instruction, auto& module) {
         instruction.result->type = typeNamed(module, "Int");
     }));
-    EXPECT_TRUE(rejects("pop", Opcode::arrayRemoveLast, [](auto& instruction, auto& module) {
+    EXPECT_TRUE(rejects("pop", Opcode::call, [](auto& instruction, auto& module) {
         instruction.result->type = typeNamed(module, "Handle");
     }));
-    EXPECT_TRUE(rejects("pop", Opcode::arrayRemoveLast, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("pop", Opcode::call, [](auto& instruction, auto&) {
         instruction.result->category = joyeer::ir::ValueCategory::address;
     }));
 }
@@ -693,9 +707,10 @@ TEST_F(IRLoweringTest, RejectsInvalidTopLevelConstants) {
 TEST_F(IRLoweringTest, PreservesGraphSymbolIdentityAndFileLocalDebugSpans) {
     result = joyeer::testing::lowerGraph(joyeer::testing::collidingGraphSources());
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
-    ASSERT_EQ(result.module->sourceFiles.size(), 5u);
+    ASSERT_EQ(result.module->sourceFiles.size(), 6u);
     EXPECT_EQ(result.module->sourceFiles[3].fileName, "concurrency.joyeer");
-    EXPECT_EQ(result.module->sourceFiles.back().fileName, "roles.joyeer");
+    EXPECT_EQ(result.module->sourceFiles[4].fileName, "roles.joyeer");
+    EXPECT_EQ(result.module->sourceFiles.back().fileName, "collections.joyeer");
     EXPECT_FALSE(result.module->sourceInfo.has_value());
     std::unordered_map<joyeer::semantic::SymbolId, joyeer::ir::FunctionId> symbols;
     size_t helpers = 0;
@@ -787,11 +802,12 @@ TEST_F(IRLoweringTest, DictionaryGetBorrowsInputsAndOwnsItsResultWithoutExtraCop
           "return values.get(key: key)?\n}\n");
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+    // Since the dictionary switch (decision 0027) `get` is a call to the library's `dict_get` method; the dictionary
+    // and the key are borrowed, so neither is copied.
     const auto& lookup = function("lookup");
-    EXPECT_EQ(opcodeCount(lookup, joyeer::ir::Opcode::dictionaryGet), 1u);
+    EXPECT_EQ(callsTo(lookup, ".get"), 1u);
     EXPECT_EQ(opcodeCount(lookup, joyeer::ir::Opcode::copyValue), 0u);
-    EXPECT_EQ(opcodeCount(lookup, joyeer::ir::Opcode::constructDictionary), 0u);
-    EXPECT_EQ(opcodeCount(function("propagate"), joyeer::ir::Opcode::dictionaryGet), 1u);
+    EXPECT_EQ(callsTo(function("propagate"), ".get"), 1u);
     EXPECT_EQ(opcodeCount(function("propagate"), joyeer::ir::Opcode::copyValue), 0u);
 }
 
@@ -1444,6 +1460,59 @@ return text.utf8()
     EXPECT_EQ(opcodeCount(bytes, joyeer::ir::Opcode::returnValue), 1u);
 }
 
+// Compile-time regression (decision 0027 rule 4): the dictionary literal protocol once walked the function's blocks
+// forward and backward for every stored key and value, so a large literal amid many blocks cost entries x blocks. The
+// verifier's literal path work stays within a small multiple of the function's blocks, for constant entries and for
+// `?` entries whose String values also have cleanup uses on the early exits of later entries.
+TEST_F(IRLoweringTest, VerifyingALargeDictionaryLiteralAmidManyBlocksStaysLinear) {
+    constexpr int count = 60;
+    std::string branches;
+    for (int index = 0; index < count; ++index) {
+        branches += "    if pick(v: " + std::to_string(index) + ") > 0 { total = total + 1 }\n";
+    }
+    std::string constants;
+    std::string fallible;
+    for (int index = 0; index < count; ++index) {
+        const auto key = std::to_string(index);
+        constants += (index == 0 ? "" : ", ") + key + ": " + key;
+        fallible += (index == 0 ? "" : ", ") + key + ": make(v: " + key + ")?";
+    }
+    const std::string common =
+            "enum Failure {\n    Bad\n}\n"
+            "func pick(v: Int): Int {\n    if v < 0 {\n        return 0\n    }\n    return v\n}\n"
+            "func make(v: Int): Result<String, Failure> {\n    if v < 0 {\n        return .Err(.Bad)\n    }\n"
+            "    return .Ok(\"x\")\n}\n";
+    const std::vector<std::pair<const char*, std::string>> programs {
+        { "constant entries",
+          common + "func build(): Int {\n    var total: Int = 0\n" + branches + "    let items: [Int: Int] = [" +
+                  constants + "]\n" + branches + "    return items.count + total\n}\n" },
+        { "fallible String entries",
+          common + "func build(): Result<Int, Failure> {\n    var total: Int = 0\n" + branches +
+                  "    let items: [Int: String] = [" + fallible + "]\n" + branches +
+                  "    return .Ok(items.count + total)\n}\n" },
+        // The packing block on a cycle: every `?` value is defined in its own block, and the code after the loop is
+        // reached from the packing through the loop's exit.
+        { "fallible String entries in a loop",
+          common + "func build(): Result<Int, Failure> {\n    var total: Int = 0\n    var round: Int = 0\n"
+                  "    while round < 2 {\n        let items: [Int: String] = [" + fallible + "]\n"
+                  "        total = total + items.count\n        round = round + 1\n    }\n" + branches + branches +
+                  "    return .Ok(total)\n}\n" },
+    };
+    for (const auto& [name, program] : programs) {
+        SCOPED_TRACE(name);
+        ASSERT_NO_FATAL_FAILURE(lower(program));
+        ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+        const auto verification = joyeer::ir::Verifier().verify(*result.module);
+        ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+        size_t blocks = 0;
+        for (const auto& function : result.module->functions) blocks += function.blocks.size();
+        EXPECT_GT(function("build").blocks.size(), static_cast<size_t>(4 * count));
+        // A literal walks the function and builds a dominator tree at most once in each direction, a few steps
+        // per block and edge each; walking once per stored value cost over 100 steps per block here.
+        EXPECT_LE(verification.literalPathWork, 16 * blocks) << blocks << " blocks";
+    }
+}
+
 TEST_F(IRLoweringTest, LowersArrayAndDictionaryLiteralsWithStructuredTypes) {
     lower(R"JOYEER(func build(): Int {
 let values: [Int] = [1, 2, 3]
@@ -1456,17 +1525,21 @@ return values[0] + lookup["answer"]
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     const auto verification = joyeer::ir::Verifier().verify(*result.module);
     ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    // Both literals pack into a stack block and call their role's literal method (decisions 0026, 0027); both
+    // subscripts go through an addressor.
     const auto& build = function("build");
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::constructArray), 1u);
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::constructDictionary), 1u);
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::subscript), 2u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::stackBlock), 2u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::subscript), 0u);
+    EXPECT_EQ(callsTo(build, ".literal"), 2u);
+    EXPECT_EQ(callsTo(build, ".element"), 2u);
+    EXPECT_GE(opcodeCount(build, joyeer::ir::Opcode::fieldAddress), 2u);
 
     const auto arrayType = std::find_if(
             result.module->types.begin(),
             result.module->types.end(),
             [](const auto& type) { return type.name == "[Int]"; });
     ASSERT_NE(arrayType, result.module->types.end());
-    EXPECT_EQ(arrayType->kind, joyeer::typing::TypeKind::array);
+    EXPECT_EQ(arrayType->kind, joyeer::typing::TypeKind::structure);
     ASSERT_EQ(arrayType->arguments.size(), 1u);
     const auto elementType = std::find_if(
             result.module->types.begin(),
@@ -1490,7 +1563,7 @@ return values
     const auto verification = joyeer::ir::Verifier().verify(*result.module);
     ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
     const auto& build = function("build");
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::arrayAppend), 2u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::call), 3u);
     EXPECT_GE(opcodeCount(build, joyeer::ir::Opcode::copyValue), 1u);
     EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::returnValue), 1u);
 }
@@ -1510,11 +1583,125 @@ return lookup
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     const auto verification = joyeer::ir::Verifier().verify(*result.module);
     ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    // Each `&d[k] = v` calls the library's `dict_set` with an owned key and value (decision 0027): the unmarked `let`
+    // key and value are copied.
     const auto& build = function("build");
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::dictionarySet), 2u);
+    EXPECT_EQ(callsTo(build, ".insert"), 2u);
     EXPECT_GE(opcodeCount(build, joyeer::ir::Opcode::copyValue), 2u);
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::count), 1u);
     EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::returnValue), 1u);
+}
+
+// The library dictionary's addressor borrows the key (decision 0027): a lookup, a borrow and an in-place mutation
+// pass the String key raw to `dict_element`, so no lookup allocates a key copy.
+TEST_F(IRLoweringTest, DictionaryAccessBorrowsItsKeyWithoutACopy) {
+    lower(R"JOYEER(func read(values: [String: Int], key: String): Int {
+return values[key]
+}
+func mutate(values: inout [String: [Int]], key: String) {
+&values[key][0] = 1
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    for (const auto* name : { "read", "mutate" }) {
+        SCOPED_TRACE(name);
+        EXPECT_GE(callsTo(function(name), ".element"), 1u);
+        EXPECT_EQ(opcodeCount(function(name), joyeer::ir::Opcode::copyValue), 0u);
+    }
+}
+
+// The position of the first call from `function` to a function whose name contains `fragment`, in block order.
+size_t firstCallPosition(const joyeer::ir::Module& module, const joyeer::ir::Function& function,
+                         const std::string& fragment) {
+    size_t position = 0;
+    for (const auto& block : function.blocks) {
+        for (const auto& instruction : block.instructions) {
+            if (instruction.opcode == joyeer::ir::Opcode::call && instruction.callee.has_value() &&
+                module.functions.at(*instruction.callee).name.find(fragment) != std::string::npos) {
+                return position;
+            }
+            ++position;
+        }
+    }
+    ADD_FAILURE() << "no call to " << fragment;
+    return position;
+}
+
+// An index that may disturb the base runs before the base's element is addressed (spec 4.4.3's order), so a growth
+// in the index never leaves the outer element address dangling; a key the later operands may disturb is owned.
+TEST_F(IRLoweringTest, AnIndexThatMayDisturbTheBaseRunsBeforeTheBaseIsAddressed) {
+    lower(R"JOYEER(func growTable(outer: inout [Int: [String: Int]]): String {
+return "x"
+}
+func growList(items: inout [[Int]]): Int {
+return 0
+}
+func readTable(outer: inout [Int: [String: Int]]): Int {
+return outer[0][growTable(outer: &outer)]
+}
+func readList(items: inout [[Int]]): Int {
+return items[0][growList(items: &items)]
+}
+func readDeep(items: inout [[[Int]]], grid: inout [[Int]]): Int {
+return items[0][growList(items: &grid)][1]
+}
+func clobber(text: inout String): Int {
+return 7
+}
+func assign(outer: inout [String: [String: Int]], key: inout String) {
+&outer[key]["x"] = clobber(text: &key)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& module = *result.module;
+    EXPECT_LT(firstCallPosition(module, function("readTable"), "growTable"),
+              firstCallPosition(module, function("readTable"), ".element"));
+    EXPECT_LT(firstCallPosition(module, function("readList"), "growList"),
+              firstCallPosition(module, function("readList"), ".element"));
+    EXPECT_LT(firstCallPosition(module, function("readDeep"), "growList"),
+              firstCallPosition(module, function("readDeep"), ".element"));
+    // The outer String key is copied before `clobber` may reassign it.
+    EXPECT_GE(opcodeCount(function("assign"), joyeer::ir::Opcode::copyValue), 1u);
+}
+
+// The same order for a String byte read: an index that may reassign the string runs before the string is loaded.
+// A plain nested assignment or read borrows its lookup keys: only the key `dict_set` inserts is copied.
+TEST_F(IRLoweringTest, AStringIndexThatMayDisturbRunsBeforeTheStringIsLoadedAndPlainKeysAreBorrowed) {
+    lower(R"JOYEER(func clobber(text: inout String): Int {
+return 0
+}
+func readByte(s: inout String): UInt8 {
+return s[clobber(text: &s)]
+}
+func plainAssign(outer: inout [String: [String: Int]], k1: String, k2: String) {
+&outer[k1][k2] = 5
+}
+func plainRead(outer: [String: [String: Int]], k1: String, k2: String): Int {
+return outer[k1][k2]
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& read = function("readByte");
+    size_t position = 0;
+    std::optional<size_t> firstLoad;
+    for (const auto& block : read.blocks) {
+        for (const auto& instruction : block.instructions) {
+            if (instruction.opcode == joyeer::ir::Opcode::load && !firstLoad.has_value()) firstLoad = position;
+            ++position;
+        }
+    }
+    ASSERT_TRUE(firstLoad.has_value());
+    EXPECT_LT(firstCallPosition(*result.module, read, "clobber"), *firstLoad);
+    EXPECT_EQ(opcodeCount(function("plainAssign"), joyeer::ir::Opcode::copyValue), 1u);
+    EXPECT_EQ(opcodeCount(function("plainRead"), joyeer::ir::Opcode::copyValue), 0u);
 }
 
 TEST_F(IRLoweringTest, LowersMutableArrayElementsAsAddressProjections) {
@@ -1528,8 +1715,8 @@ return values[0]
     const auto verification = joyeer::ir::Verifier().verify(*result.module);
     ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
     const auto& increment = function("incrementFirst");
-    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::subscriptAddress), 1u);
-    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::subscript), 2u);
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::integerAddress), 3u);
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::call), 3u);
 }
 
 TEST_F(IRLoweringTest, LowersEnumMatchesAndPayloadBindings) {
@@ -2090,25 +2277,26 @@ let copy = value
             joyeer::lowering::DiagnosticId::missingReturn);
 }
 
-TEST_F(IRLoweringTest, ConsumeEmptyLowersToOneInstructionOnTheArrayAddress) {
+TEST_F(IRLoweringTest, ConsumeEmptyLowersToAConsumingLibraryCall) {
     ASSERT_NO_FATAL_FAILURE(lower("func end() {\n"
                                   "    var numbers: [Int] = []\n"
                                   "    consume numbers.consumeEmpty()\n"
                                   "}\n"));
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
-    EXPECT_EQ(opcodeCount(function("end"), joyeer::ir::Opcode::arrayConsumeEmpty), 1u);
+    EXPECT_EQ(opcodeCount(function("end"), joyeer::ir::Opcode::call), 2u);
+    EXPECT_EQ(opcodeCount(function("end"), joyeer::ir::Opcode::take), 1u);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
 
-TEST_F(NewOpcodeVerifierTest, ArrayConsumeEmptyNeedsExactlyOneArrayOperandAndNoResult) {
+TEST_F(NewOpcodeVerifierTest, ArrayConsumeEmptyLibraryCallsNeedTheirExactOperands) {
     ASSERT_NO_FATAL_FAILURE(lower("func end() {\n"
                                   "    var numbers: [Int] = []\n"
                                   "    consume numbers.consumeEmpty()\n"
                                   "}\n"));
-    EXPECT_TRUE(rejects("end", joyeer::ir::Opcode::arrayConsumeEmpty, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("end", joyeer::ir::Opcode::call, [](auto& instruction, auto&) {
         instruction.operands.clear();
     }));
-    EXPECT_TRUE(rejects("end", joyeer::ir::Opcode::arrayConsumeEmpty, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("end", joyeer::ir::Opcode::call, [](auto& instruction, auto&) {
         instruction.operands.push_back(instruction.operands.at(0));
     }));
 }
@@ -2120,7 +2308,7 @@ TEST_F(NewOpcodeVerifierTest, ArrayConsumeEmptyRejectsANonArrayATargetAndAnUnkno
                                   "    consume numbers.consumeEmpty()\n"
                                   "}\n"));
     using joyeer::ir::Opcode;
-    EXPECT_TRUE(rejects("end", Opcode::arrayConsumeEmpty, [](auto& instruction, auto& module) {
+    EXPECT_TRUE(rejects("end", Opcode::call, [](auto& instruction, auto& module) {
         const auto intType = typeNamed(module, "Int");
         for (auto& candidate : module.functions) {
             for (auto& block : candidate.blocks) {
@@ -2132,10 +2320,10 @@ TEST_F(NewOpcodeVerifierTest, ArrayConsumeEmptyRejectsANonArrayATargetAndAnUnkno
             }
         }
     }));
-    EXPECT_TRUE(rejects("end", Opcode::arrayConsumeEmpty, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("end", Opcode::call, [](auto& instruction, auto&) {
         instruction.targets.push_back(0);
     }));
-    EXPECT_TRUE(rejects("end", Opcode::arrayConsumeEmpty, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("end", Opcode::call, [](auto& instruction, auto&) {
         instruction.operands.at(0) = 987654;
     }));
 }

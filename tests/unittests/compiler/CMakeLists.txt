@@ -109,10 +109,22 @@ joyeer_discover_tests(CompilerCollectionRoleTests
         PROPERTIES LABELS collection-roles
 )
 
+add_executable(CompilerDictRoleTests dict_roles_test.cpp)
+target_link_libraries(CompilerDictRoleTests PRIVATE GTest::gtest_main JoyeerCompilerCore)
+joyeer_discover_tests(CompilerDictRoleTests
+        PROPERTIES LABELS collection-roles
+)
+
 add_executable(CompilerArrayCharacterizationTests array_characterization_test.cpp)
 target_link_libraries(CompilerArrayCharacterizationTests PRIVATE GTest::gtest_main JoyeerCompilerCore)
 joyeer_discover_tests(CompilerArrayCharacterizationTests
         PROPERTIES LABELS array-characterization
+)
+
+add_executable(CompilerDictCharacterizationTests dict_characterization_test.cpp)
+target_link_libraries(CompilerDictCharacterizationTests PRIVATE GTest::gtest_main JoyeerCompilerCore)
+joyeer_discover_tests(CompilerDictCharacterizationTests
+        PROPERTIES LABELS dict-characterization
 )
 
 add_executable(CompilerPlatformTests platform_test.cpp)
@@ -181,6 +193,18 @@ add_dependencies(LLVMBackendTests JoyeerRuntime)
 joyeer_discover_tests(LLVMBackendTests
         PROPERTIES LABELS llvm-backend
 )
+
+# A measurement tool, not a test (plan 0011 phase 3, decision 0026): builds a program against a library array
+# supplied as a source file. Build it explicitly: cmake --build <dir> --target array-addressor-probe
+add_executable(array-addressor-probe EXCLUDE_FROM_ALL
+        ${JOYEER_TESTS_DIR}/perf/array_addressor_probe.cpp
+)
+target_link_libraries(array-addressor-probe PRIVATE JoyeerCompilerCore)
+target_compile_definitions(array-addressor-probe PRIVATE
+        JOYEER_PROBE_RUNTIME_LIBRARY="$<TARGET_FILE:JoyeerRuntime>"
+        JOYEER_ROLES_SOURCE="${JOYEER_SOURCE_DIR}/lib/Runtime/roles.joyeer"
+)
+add_dependencies(array-addressor-probe JoyeerRuntime)
 
 add_executable(BackendAbiTests
         backend_abi_test.c
@@ -978,8 +1002,8 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "e2e;llvm-backend;runtime;ownership;consuming;deinit"
     )
 
-    # The destroy helper that runs a `deinit` has no debug scope of its own; at -O1 and above
-    # with full debug info the optimizer crashed until the helper was kept out of line.
+    # The destroy helper that runs a `deinit` carries an artificial debug scope of its own (it was once kept
+    # out of line instead); at -O1 and above with full debug info this must not crash the optimizer.
     foreach(level 0 1 2)
         add_test(NAME E2EExecutableDeinitFullDebugO${level}
                 COMMAND ${CMAKE_COMMAND}
@@ -1056,6 +1080,88 @@ if(JOYEER_CLANG_EXECUTABLE)
     add_joyeer_native_regression(
             E2EArrayEvaluationOrder array_evaluation_order
             "0\n40\n2\n42\n4\n4\n2\n5\n8\n1\n0\n30\n30\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EArrayTaskTransfer array_task_transfer
+            "25\n25\n0\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EArrayLibraryEdges array_library_edges
+            "4\n1\n3\n"
+            0 1 2 3)
+    # Dictionary characterization (plan 0011 phase 4, decision 0027 stage 1); outputs derived from the runtime
+    # source (lib/Runtime/core/dictionaries.joyeer), not taken from the compiler.
+    add_joyeer_native_regression(
+            E2EDictOwnershipOrder dict_ownership_order
+            "10\n1\n11\n4\n2\n12\n5\n6\n2\n3\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EDictSetOrder dict_set_order
+            "first\n2\nlate\nnone\n0\n2\n3\n7\n1\n11\n11\n1\n0\n2\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EDictLibraryEdges dict_library_edges
+            "2\n2\nsome\nnone\n32\nb\n1\n2\n"
+            0 1 2 3)
+    # Key operands of a nested target or read are evaluated, and owned, before the right side and later indexes (spec
+    # 4.4.3); outputs from the spec's order, not from a compiler.
+    add_joyeer_native_regression(
+            E2EDictKeyAliasing dict_key_aliasing
+            "41\n7\n2\n2\n1\n7\n2\n41\n300\n42\n300\n"
+            0 1 2 3)
+    # A String byte read whose index reassigns the string reads the new string ('b' is 98); from the spec's order.
+    add_joyeer_native_regression(
+            E2EStringIndexAliasing string_index_aliasing
+            "98\n98\n98\n98\n"
+            0 1 2 3)
+    # An early exit inside a literal drops the evaluated entries once; output of the builtin baseline (939d210).
+    add_joyeer_native_regression(
+            E2EDictLiteralEarlyExit dict_literal_early_exit
+            "1\nnone\n3\n3\n9\n1\n"
+            0 1 2 3)
+    # Sendability (decision 0027): a dictionary moves into a task and comes back as a result.
+    add_joyeer_native_regression(
+            E2EDictTaskTransfer dict_task_transfer
+            "25
+3
+4
+9
+"
+            0 1 2 3)
+    # Allocation differential (decision 0027): the live-block counts of the builtin dictionary at every checkpoint.
+    foreach(level IN ITEMS 0 1 2 3)
+        add_test(NAME E2EDictAllocationsO${level}
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/dict_allocations.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/dict_allocations-O${level}${CMAKE_EXECUTABLE_SUFFIX}
+                        "-DCOMPILER_ARGS=--module-name;app;--runtime-module;app;-O${level}"
+                        "-DEXPECTED_OUTPUT=11
+14
+19
+26
+27
+37
+38
+w1v1
+v1
+none
+9
+"
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+        )
+        set_tests_properties(E2EDictAllocationsO${level} PROPERTIES
+                LABELS "e2e;llvm-backend;runtime;ownership;regression"
+                TIMEOUT 60)
+    endforeach()
+    # The String destroy helper skips the runtime for the zero value only (plan 0011, 0027 stage 3).
+    add_joyeer_native_regression(
+            E2EStringMovedDrop string_moved_drop
+            "0\n14\nacccc\nreplaced\naccc\n0\n0\nxy\n7\nmn\nzw\ntu\n0\n9\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EArrayDivergingArgument array_diverging_argument
+            "7\n10\n10\n11\n12\n42\n"
             0 1 2 3)
     add_joyeer_native_regression(
             E2EManyBlocksDominance many_blocks_dominance
@@ -1265,6 +1371,39 @@ if(JOYEER_CLANG_EXECUTABLE)
     set_tests_properties(E2EDictionaryGetFullDebug PROPERTIES
             LABELS "e2e;llvm-backend;runtime;ownership;debug-info"
             TIMEOUT 60)
+    # The debug-scope prerequisite of the dictionary switch (decision 0027): every dictionary operation inlined at
+    # -O1 and -O2 with full debug info, which a test build verifies again after the optimization pipeline.
+    foreach(level IN ITEMS 1 2)
+        add_test(NAME E2EDictDebugScopesO${level}
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/dict_debug_scopes.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/dict-debug-scopes-O${level}${CMAKE_EXECUTABLE_SUFFIX}
+                        "-DCOMPILER_ARGS=-O${level};-gfull"
+                        "-DEXPECTED_OUTPUT=6\nagain\n2\none\nchanged\nv\nnone\n29\n3\n"
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+        )
+        set_tests_properties(E2EDictDebugScopesO${level} PROPERTIES
+                LABELS "e2e;llvm-backend;runtime;debug-info;optimization"
+                TIMEOUT 60)
+    endforeach()
+    # The verification runs: a debug location corrupted after optimization (a test-build fault injection) fails the
+    # compile instead of reaching the object file. Only where the backend was built with its test hooks.
+    if(JOYEER_BACKEND_TEST_HOOKS)
+        add_test(NAME E2EOptimizedDebugInfoIsVerified
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/dict_debug_scopes.joyeer
+                        "-DEXTRA_ARGS=-O2;-gfull;-o;${CMAKE_CURRENT_BINARY_DIR}/dict-debug-corrupted${CMAKE_EXECUTABLE_SUFFIX}"
+                        -DOUTPUT_TO_REMOVE=${CMAKE_CURRENT_BINARY_DIR}/dict-debug-corrupted${CMAKE_EXECUTABLE_SUFFIX}
+                        "-DEXPECTED_PATTERN=after optimization"
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+        )
+        set_tests_properties(E2EOptimizedDebugInfoIsVerified PROPERTIES
+                ENVIRONMENT "JOYEER_BACKEND_TEST_CORRUPT_DEBUG_INFO=1"
+                LABELS "e2e;llvm-backend;debug-info;optimization"
+                TIMEOUT 60)
+    endif()
     add_test(NAME E2EUnitValuesFullDebug
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
@@ -1354,6 +1493,12 @@ abcdabcd
             E2EAssignmentOrder assignment_order
             "2\n102\n11\n202\na!\n52\n6\n65\n30\n60\n7\n"
             0 1 2 3)
+    # A right side that initializes the target's root (spec 4.4.3): the replaced element is destroyed once; a
+    # dictionary drops its values in its slot order, an array from the last element to the first.
+    add_joyeer_native_regression(
+            E2EAssignmentInitializingRhs assignment_initializing_rhs
+            "1\n100\n3\n2\n1\n200\n3\n2\n1\n300\n2\n"
+            0 1 2 3)
     add_joyeer_native_regression(
             E2ECompoundAssignmentIndexOnce compound_assignment_index_once
             "index\nrhs\n9\nindex\nrhs\n6\nindex\nrhs\n20\n11\n20\n1\n"
@@ -1428,6 +1573,12 @@ abcdabcd
             E2EChannelDeadlock channel_deadlock "channel deadlock")
     add_joyeer_native_checked_trap(
             E2EUnitDictionaryMissing unit_dictionary_missing "dictionary key not found")
+    add_joyeer_native_checked_trap(
+            E2EDictTrapOrder dict_trap_order "^x[^0-9a-zA-Z]+Joyeer runtime error: dictionary key not found")
+    # CHANGED WITH 0027: the value is evaluated before the base is addressed, so `rhs` prints before the trap.
+    add_joyeer_native_checked_trap(
+            E2EDictNestedMissingTrap dict_nested_missing_trap
+            "^rhs[^0-9a-zA-Z]+Joyeer runtime error: dictionary key not found")
 
     # Runtime-loaded operands keep these checks from folding to unconditional
     # panic calls; E2EOptimizedOverflowTrap still covers constant overflow.
@@ -1509,12 +1660,13 @@ abcdabcd
     # Differential check: every self-contained native fixture must behave the
     # same (exit status, stdout, stderr) at -O0 through -O3. Fixtures that need
     # program arguments, a working directory, input files, or that are meant to
-    # fail compilation are excluded.
+    # fail compilation are excluded, as is dict_allocations, which needs runtime-module flags and is compared at
+    # every level by its own registration.
     file(GLOB joyeer_native_fixtures "${JOYEER_TESTS_DIR}/e2e/*.joyeer")
     set(joyeer_equivalence_excluded
             entry_argument_bytes entry_arguments entry_exit_status
             filesystem file-kind-device process read_file propagation_file
-            json_parser missing_main full_debug)
+            json_parser missing_main full_debug dict_allocations)
     foreach(fixture_path IN LISTS joyeer_native_fixtures)
         get_filename_component(fixture "${fixture_path}" NAME_WE)
         if(fixture IN_LIST joyeer_equivalence_excluded)
@@ -1576,6 +1728,15 @@ add_test(NAME GenericTypesInstantiationReport
 set_tests_properties(GenericTypesInstantiationReport PROPERTIES
         LABELS "diagnostics;generics;ir-lowering" TIMEOUT 60)
 
+add_test(NAME LibraryArrayInstantiationReport
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/library_array_report.joyeer
+                -DEXPECTED_FILE=${JOYEER_TESTS_DIR}/type-checking/library_array_report.txt
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyInstantiationReport.cmake)
+set_tests_properties(LibraryArrayInstantiationReport PROPERTIES
+        LABELS "diagnostics;generics;ir-lowering;library-containers" TIMEOUT 60)
+
 add_test(NAME DiagnosticsCliRejectsUnsatisfiedGenericConstraint
         COMMAND ${CMAKE_COMMAND}
                 -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
@@ -1597,6 +1758,10 @@ add_joyeer_rejected_regression(TypeDictionaryGetExclusivity type-checking
         dictionary_get_exclusivity type-checking.overlapping-access)
 add_joyeer_rejected_regression(TypeDictionaryGetArguments type-checking
         dictionary_get_arguments type-checking.invalid-call-arguments)
+add_joyeer_rejected_regression(TypeStringByteAssignment type-checking
+        string_byte_assignment type-checking.assignment-to-immutable)
+add_joyeer_rejected_regression(TypeStringByteConsume type-checking
+        string_byte_consume type-checking.invalid-consume-argument)
 add_joyeer_rejected_regression(TypeLoopControlOutside type-checking
         loop_control_outside type-checking.invalid-loop-control)
 add_joyeer_rejected_regression(TypeForInNotIterable type-checking
@@ -1639,6 +1804,8 @@ add_joyeer_rejected_regression(FlowRegressionPossibleInitialization semantic-ana
         regression_flow_possible_initialization semantic-analysis.initializing-initialized-storage)
 add_joyeer_rejected_regression(FlowRegressionCompoundTargetConsumed semantic-analysis
         regression_flow_compound_target_consumed semantic-analysis.use-after-consume)
+add_joyeer_rejected_regression(FlowRegressionAssignmentTargetConsumed semantic-analysis
+        regression_flow_assignment_target_consumed semantic-analysis.use-after-consume)
 
 add_test(NAME NameResolutionCliRejectsUndefinedName
         COMMAND ${CMAKE_COMMAND}

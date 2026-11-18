@@ -1,0 +1,41 @@
+// Dictionary lookup baseline with String keys (plan 0011 phase 4, decision 0027): distinct keys "k", "kx", "kxx", ...
+// at sizes 4 and 16, strict reads and `get(key:)` hits and misses. Key comparison is by length and bytes.
+func lookups(size: Int, rounds: Int): Int {
+    var keys: [String] = []
+    var text = "k"
+    var index = 0
+    while index < size * 2 {
+        &keys.append(element: text)
+        text = text + "x"
+        index = index + 1
+    }
+    var table: [String: Int] = [:]
+    index = 0
+    while index < size {
+        &table[keys[index]] = index + 7
+        index = index + 1
+    }
+    var total = 0
+    var round = 0
+    while round < rounds {
+        index = 0
+        while index < size {
+            total = total + table[keys[index]]
+            index = index + 1
+        }
+        index = 0
+        while index < size * 2 {
+            total = total + match table.get(key: keys[index]) {
+                .Some(value) => value,
+                .None => 2,
+            }
+            index = index + 1
+        }
+        round = round + 1
+    }
+    return total
+}
+
+func main() {
+    print(value: lookups(size: 4, rounds: 500000) + lookups(size: 16, rounds: 70000))
+}

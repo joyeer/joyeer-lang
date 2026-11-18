@@ -31,11 +31,13 @@ The model covers:
 - user `struct` and `enum` nominal types;
 - function types with exact parameter access effects, and one distinct
   `TypeKind::typeParameter` per generic parameter or protocol `Self`;
-- `[T]`, `[K: V]`, `T?`, and `Result<T, E>`;
+- the role-bound library structures `[K: V]`, `[T]` (the `array_type` role, sugar for the library
+  `Array<T>`), `T?`, and `Result<T, E>`;
 - a dedicated error type that suppresses cascading diagnostics.
 
-Built-in generic containers are compiler-known type constructors with fixed
-arity; user-defined generic types remain deferred. An application such as
+`[K: V]` (the `dict_type` role, sugar for the library `Dict<K, V>`, validated by the same collection-role path as
+the array's, [0027](../decisions/0027-library-dict.md)), `[T]`, `T?` and `Result<T, E>` are ordinary
+generic structures and enums of the bundled prelude, found through their `@compiler_role` and never by spelling. An application such as
 `Result<[Int], Error>` retains both nested concrete arguments; it is not
 collapsed to the name resolver's coarse `Result` symbol.
 
@@ -140,7 +142,8 @@ The current checker validates:
   same marker, storage and exclusivity rules as a call by name (`checkArgumentAccess`), and rejects
   labels (`labeled-function-value-call`), a non-parenthesized field, element or call callee
   (`not-callable`) and a `Never` parameter (`invalid-function-type`); a `Never` stored field of a
-  structure is `never-field-type`. Name resolution leaves a call of a
+  structure is `never-field-type`, and `Never` as an array element (`[Never]`, `Array<Never>`, an inferred
+  `[return]`) or as a dictionary key or value is `invalid-type-argument`. Name resolution leaves a call of a
   binding, parameter or field to the type checker;
 - Channels (decisions 0019/0023, spec 21.9): the ends are ordinary generic structures with `deinit`
   (noncopyable, not linear); creation and methods use their source signatures. A closed prelude

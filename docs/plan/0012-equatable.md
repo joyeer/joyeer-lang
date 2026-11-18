@@ -46,6 +46,9 @@ types it cannot compile (0024, "Equality is rejected").
   So `[Int] == [Int]`, `[Int: Int] == …` and optionals are accepted but do not lower. No fixture
   compares them.
 - **After 0024:** `Optional` and `Result` reject `==`, with help pointing to `match`.
+- **After the 0026 array switch:** arrays are ordinary role-bound structs, so the existing struct rule
+  rejects `[Int] == [Int]` during type checking rather than accepting it and failing LLVM verification.
+  No array equality implementation is added by plan 0011.
 - **Spec:** `Equatable` is reserved and unusable (§12.4, §20.2, `type-checking.reserved-protocol-name`).
   Generic code cannot use operators on `T` (§20.5).
 - **Gaps:** there are no default implementations, conditional conformances or operator declarations
@@ -94,9 +97,9 @@ types it cannot compile (0024, "Equality is rejected").
   Remove 0024's rejection and its `match` help.
 - [ ] Lower `x == nil` and `x != nil` as a tag test for every optional, including one whose payload
   is not `Equatable`, such as a function or a noncopyable type.
-- [ ] Give builtin `Array<T>` conformance when `T` conforms, through a runtime element-compare
-  callback, like the clone and destroy callbacks. Check `Dict` separately against the open question
-  below.
+- [ ] Give the role-bound library `Array<T>` conformance when `T` conforms, without reviving a compiler array
+  kind or dispatching on the name `Array`. Decide library witness iteration versus a runtime element-compare
+  callback in the equality decision. Check `Dict` separately against the open question below.
 - [ ] End-to-end fixtures for `Int?`, `Point?`, `Result<Int, String>`, `[Int]`, `[[String]]`, `== nil`
   on a function optional, and noncopyable payloads compared by borrowing.
 - [ ] Benchmark scalar, string and array equality in both profiles against the pre-change baseline.

@@ -380,11 +380,13 @@ private:
                 state.possiblyInitialized.insert(*symbol);
                 const auto parameterType = model->typeOf(*symbol);
                 // The ending method of a library container is exempt for its `self`: it consumes the
-                // container by returning, and its destroy runs `deinit` (decision 0025).
+                // container by returning, and its destroy runs `deinit` (decision 0025). So is the literal
+                // method, whose `self` is an inert zero value with nothing to end (decision 0026).
                 const auto* functionSymbol = function.has_value() ? model->semanticModel()->symbol(*function)
                                                                   : nullptr;
                 const bool endsContainer = parameter->isReceiver && functionSymbol != nullptr &&
-                        functionSymbol->libraryRole == semantic::LibraryRole::containerEnd;
+                        (functionSymbol->libraryRole == semantic::LibraryRole::containerEnd ||
+                         functionSymbol->libraryRole == semantic::LibraryRole::arrayLiteral);
                 if (parameter->accessEffect() == syntax::AccessEffect::consuming &&
                     parameterType.has_value() && model->isLinear(*parameterType) && !endsContainer) {
                     linearParameters.push_back(*symbol);
@@ -446,7 +448,20 @@ private:
         }
         if (!live) return;
         const auto* declaration = model->semanticModel()->symbol(symbol);
-        const auto ending = model->linearEndingMethod(*type);
+        // The handle's own ending method: looking through arrays, so nested and wrapped arrays name 'join', not
+        // the container's method.
+        const auto ending = model->linearEndingMethod(*type, true);
+        auto help = ending.has_value()
+                ? "end each handle with its consuming '" + *ending +
+                          "' method (or return it) on every path before this point"
+                : "consume it (or return it) on every path before this point; a function that only needs to use it can take it 'inout'";
+        if (model->isArrayRoleType(*type) && ending.has_value()) {
+            // A bare array: the elements are removed one by one, then the empty array is ended.
+            if (const auto containerEnding = model->linearEndingMethod(*type)) {
+                help = "end each handle with its consuming '" + *ending +
+                        "' method after removing it, then end the empty container with '" + *containerEnding + "'";
+            }
+        }
         diagnostics.push_back(Diagnostic {
             DiagnosticId::linearNotConsumed,
             Severity::error,
@@ -454,10 +469,7 @@ private:
             "'" + (declaration == nullptr ? std::string() : declaration->name) +
                     "' holds a linear value of type '" + model->types().displayName(*type) +
                     "' that is not consumed before " + where,
-            ending.has_value()
-                    ? "end each handle with its consuming '" + *ending +
-                              "' method (or return it) on every path before this point"
-                    : "consume it (or return it) on every path before this point; a function that only needs to use it can take it 'inout'",
+            std::move(help),
         });
     }
 
@@ -544,7 +556,6 @@ private:
     // A memberwise initializer, an enum case and `append` store their arguments, so a linear value
     // passed to one is moved in, not borrowed.
     static bool storesItsArguments(const semantic::Symbol& target) {
-        if (target.kind == semantic::SymbolKind::builtinMember) return target.name == "append";
         return target.callable.has_value() &&
                 (target.callable->kind == semantic::CallableKind::structureInitializer ||
                  target.callable->kind == semantic::CallableKind::enumCase);
@@ -830,6 +841,9 @@ private:
                             ? callableSymbol->callable->parameters[index].access
                             : index < valueEffects.size() ? valueEffects[index]
                                                           : syntax::AccessEffect::borrowing;
+                    const bool ownedArgument = target.has_value() &&
+                            model->isOwnedArgumentContext(*target, index);
+                    if (ownedArgument && !marked) effect = syntax::AccessEffect::borrowing;
                     if (marked && effect == syntax::AccessEffect::borrowing) {
                         effect = syntax::AccessEffect::consuming;
                     }
@@ -844,7 +858,8 @@ private:
                             const auto path = storagePath(argument->value);
                             if (path.has_value()) mutatedArguments.push_back(path->root);
                         } else if (effect == syntax::AccessEffect::borrowing &&
-                                   ((callableSymbol != nullptr && !storesItsArguments(*callableSymbol)) ||
+                                   ((callableSymbol != nullptr && !storesItsArguments(*callableSymbol) &&
+                                     !ownedArgument) ||
                                     // A function value never stores its arguments.
                                     (!target.has_value() && !valueEffects.empty()))) {
                             // A borrowed argument that is an owned linear temporary is dropped
@@ -1131,11 +1146,24 @@ private:
             const bool readableBeforeValue = state.reachable && !readFailure(read, state).has_value();
             analyzeExpression(expression->value, state);
             if (state.reachable) {
-                analyzeStorageRead(read, state, /*failedByRightSide=*/readableBeforeValue);
+                analyzeStorageRead(
+                        read, state, readableBeforeValue ? RightSide::consumedTheRead : RightSide::notBlamed);
             }
-        } else {
+        } else if (!assigned.has_value() || !state.reachable) {
             analyzeAssignmentTarget(expression->target, state);
             analyzeExpression(expression->value, state);
+        } else {
+            // Spec 4.4.3: the target's index operands, then the right side, and only then the access to the
+            // target, so a right side that consumes the target's root leaves nothing to assign into. The right
+            // side is blamed only when the target was accessible before it.
+            const auto target = storageRead(expression->target);
+            analyzeStorageOperands(expression->target, state);
+            const bool accessibleBeforeValue = state.reachable && !projectionTargetFails(target, state);
+            analyzeExpression(expression->value, state);
+            if (state.reachable && !assigned->projections.empty()) {
+                analyzeProjectionTarget(
+                        target, state, accessibleBeforeValue ? RightSide::consumedTheTarget : RightSide::notBlamed);
+            }
         }
         if (assigned.has_value()) activePaths.pop_back();
         if (state.reachable && assigned.has_value() && tracked.contains(assigned->root)) {
@@ -1476,12 +1504,14 @@ private:
         return std::nullopt;
     }
 
-    // `failedByRightSide` marks the old-value read of `x op= y` when `x` was readable before the right
-    // side, so a failure now is the right side's doing (spec 4.4.3).
+    // Whether a failure to access an assignment's storage is the right side's doing (spec 4.4.3): the old value
+    // of `x op= y`, or the projected target of `=`, was accessible before the right side ran.
+    enum class RightSide { notBlamed, consumedTheRead, consumedTheTarget };
+
     bool analyzeStorageRead(
             const syntax::ExprPtr& expression,
             const InitializationState& state,
-            bool failedByRightSide = false) {
+            RightSide blame = RightSide::notBlamed) {
         const auto failure = readFailure(expression, state);
         if (!failure.has_value()) return true;
         const auto path = storagePath(expression);
@@ -1499,9 +1529,12 @@ private:
                                 ? "' is used after all or part of its ownership was consumed"
                                 : "' is used before being initialized"),
                 consumed
-                        ? std::optional<std::string>(failedByRightSide
+                        ? std::optional<std::string>(blame == RightSide::consumedTheRead
                                 ? "the right side runs before the target's old value is read (spec 4.4.3): do "
                                   "not consume the target's storage in the right side"
+                                : blame == RightSide::consumedTheTarget
+                                ? "the right side runs before the target is assigned (spec 4.4.3): assign the whole "
+                                  "binding instead, or do not consume it in the right side"
                                 : "reinitialize the consumed storage before reading it")
                         : std::optional<std::string>(
                                 "initialize this binding on every continuing path before reading it"),
@@ -1511,25 +1544,28 @@ private:
         return false;
     }
 
-    void analyzeProjectionTarget(
+    // Whether assigning into the projected storage `expression` names fails in `state`: its root is not
+    // initialized, or a strictly shorter projection that overlaps it was consumed.
+    bool projectionTargetFails(
             const syntax::ExprPtr& expression,
-            const InitializationState& state) {
+            const InitializationState& state) const {
         const auto path = storagePath(expression);
-        if (!path.has_value() || !tracked.contains(path->root)) return;
-        if (!state.initialized.contains(path->root)) {
-            analyzeStorageRead(expression, state);
-            return;
-        }
-        const auto ancestor = std::find_if(
+        if (!path.has_value() || !tracked.contains(path->root)) return false;
+        if (!state.initialized.contains(path->root)) return true;
+        return std::any_of(
                 state.consumedProjections.begin(),
                 state.consumedProjections.end(),
                 [&](const auto& candidate) {
                     return candidate.projections.size() < path->projections.size() &&
                             pathsOverlap(candidate, *path);
                 });
-        if (ancestor != state.consumedProjections.end()) {
-            analyzeStorageRead(expression, state);
-        }
+    }
+
+    void analyzeProjectionTarget(
+            const syntax::ExprPtr& expression,
+            const InitializationState& state,
+            RightSide blame = RightSide::notBlamed) {
+        if (projectionTargetFails(expression, state)) analyzeStorageRead(expression, state, blame);
     }
 
     void addConsumedProjection(

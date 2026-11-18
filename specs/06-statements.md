@@ -31,7 +31,7 @@ for_stmt        ::= 'for' [ '&' ] pattern 'in' expression block
 ```
 
 The optional `&` requests an `inout` iteration over the source collection
-(when the collection — a built-in container such as `Array` — provides an
+(when the collection — a library container such as `Array` — provides an
 inout view). A user-extensible iteration protocol is reserved for a future
 version (Appendix A).
 

@@ -74,9 +74,12 @@ TEST_F(TypeContextTest, InternsConcreteBuiltinGenericApplications) {
 
     EXPECT_EQ(types->arrayType(types->intType()), array);
     EXPECT_EQ(types->optionalType(types->stringType()), optional);
-    EXPECT_EQ(type(array).kind, TypeKind::array);
+    EXPECT_EQ(type(array).kind, TypeKind::structure);
+    EXPECT_TRUE(types->isArray(array));
     EXPECT_EQ(type(array).arguments, std::vector { types->intType() });
-    EXPECT_EQ(type(dictionary).kind, TypeKind::dictionary);
+    // `[K: V]` is the library struct bound to `dict_type` (decision 0027).
+    EXPECT_EQ(type(dictionary).kind, TypeKind::structure);
+    EXPECT_TRUE(types->isDictionary(dictionary));
     EXPECT_TRUE(types->isResult(&type(result)));
     EXPECT_EQ(
             types->displayName(result),
@@ -84,7 +87,7 @@ TEST_F(TypeContextTest, InternsConcreteBuiltinGenericApplications) {
 }
 
 TEST_F(TypeContextTest, RejectsInvalidTypeConstructorArityAndSymbols) {
-    const auto arraySymbol = types->builtinSymbol("Array");
+    const auto arraySymbol = resolution.model->roleSymbol(joyeer::semantic::LibraryRole::arrayType);
     const auto intSymbol = types->builtinSymbol("Int");
     ASSERT_TRUE(arraySymbol.has_value());
     ASSERT_TRUE(intSymbol.has_value());
@@ -1548,6 +1551,121 @@ TEST_F(TypeCheckingTest, KeepsWidePayloadProductsSymbolic) {
                             checking.diagnostics[3].id,
                             joyeer::typing::TypeCheckingDiagnosticId::invalidAccessMarker);
                     }
+
+TEST_F(TypeCheckingTest, AStringByteIsReadOnly) {
+    // `s[i]` reads a byte (spec 2.2); there is no byte store, so writing one is a type error, not a
+    // backend failure.
+    check(R"JOYEER(func bump(byte: inout UInt8) { &byte = 1 }
+func main() {
+var text = "abc"
+&text[0] = 1
+&text[1] += 1
+bump(byte: &text[2])
+let first: UInt8 = text[0]
+print(value: first)
+}
+)JOYEER");
+
+    ASSERT_EQ(checking.diagnostics.size(), 3u) << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_EQ(checking.diagnostics[0].id, joyeer::typing::TypeCheckingDiagnosticId::assignmentToImmutable);
+    EXPECT_EQ(checking.diagnostics[1].id, joyeer::typing::TypeCheckingDiagnosticId::assignmentToImmutable);
+    EXPECT_EQ(checking.diagnostics[2].id, joyeer::typing::TypeCheckingDiagnosticId::invalidInoutArgument);
+    for (const auto& diagnostic : checking.diagnostics) {
+        ASSERT_TRUE(diagnostic.help.has_value()) << diagnostic.message;
+        EXPECT_NE(diagnostic.help->find("a String's bytes are read-only"), std::string::npos) << *diagnostic.help;
+    }
+    EXPECT_NE(checking.diagnostics[0].message.find("a byte of a String"), std::string::npos)
+            << checking.diagnostics[0].message;
+}
+
+TEST_F(TypeCheckingTest, AStringByteCannotBeConsumed) {
+    // Consuming would move the byte out of the String; a copy of it in a binding can be used or consumed instead.
+    check(R"JOYEER(struct Holder {
+var byte: UInt8
+}
+func eat(value: consuming UInt8) { print(value: value) }
+func main() {
+var text = "abc"
+let first = consume text[0]
+eat(value: consume text[1])
+let f: (consuming UInt8): () = eat
+f(consume (text)[2])
+let held = Holder(byte: consume text[0])
+print(value: first)
+let second = text[1]
+eat(value: consume second)
+print(value: held.byte)
+}
+)JOYEER");
+
+    ASSERT_EQ(checking.diagnostics.size(), 4u) << joyeer::typing::dump(checking.diagnostics);
+    for (const auto& diagnostic : checking.diagnostics) {
+        EXPECT_EQ(diagnostic.id, joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument)
+                << diagnostic.message;
+        EXPECT_NE(diagnostic.message.find("cannot consume a byte of a String"), std::string::npos)
+                << diagnostic.message;
+        ASSERT_TRUE(diagnostic.help.has_value()) << diagnostic.message;
+        EXPECT_NE(diagnostic.help->find("let byte = s[i]"), std::string::npos) << *diagnostic.help;
+    }
+}
+
+TEST_F(TypeCheckingTest, AStringByteOfANonConsumableBaseReportsOnlyTheByte) {
+    // Making the base consumable would not help, so the byte is the only report, whatever the base.
+    check(R"JOYEER(struct Holder {
+var byte: UInt8
+}
+func eat(value: consuming UInt8) { print(value: value) }
+func make(): String { return "z" }
+func borrowed(text: String, other: inout String) {
+let a = consume text[0]
+eat(value: consume text[1])
+let held = Holder(byte: consume other[0])
+let q = consume make()[0]
+print(value: a)
+print(value: held.byte)
+print(value: q)
+}
+)JOYEER");
+
+    ASSERT_EQ(checking.diagnostics.size(), 4u) << joyeer::typing::dump(checking.diagnostics);
+    for (const auto& diagnostic : checking.diagnostics) {
+        EXPECT_NE(diagnostic.message.find("cannot consume a byte of a String"), std::string::npos)
+                << diagnostic.message;
+    }
+}
+
+TEST_F(TypeCheckingTest, AStringByteIsReadOnlyThroughEveryBaseAndBinding) {
+    // Nested bases, an inout parameter, a parenthesized target, and `let` bindings: making the binding mutable would
+    // not help, so every one reports the String byte, once, with its help. Reading a byte of a `var` is fine.
+    check(R"JOYEER(struct Box {
+var text: String
+}
+func edit(text: inout String, texts: inout [String], box: inout Box, table: inout [String: String]) {
+&text[0] = 1
+&texts[0][1] = 2
+&box.text[0] = 3
+&table["k"][0] = 4
+&(text)[0] = 5
+}
+func main() {
+let fixed = "abc"
+&fixed[0] = 6
+let frozen = Box(text: "abc")
+&frozen.text[0] = 7
+var open = "abc"
+let byte: UInt8 = open[1]
+print(value: byte)
+}
+)JOYEER");
+
+    ASSERT_EQ(checking.diagnostics.size(), 7u) << joyeer::typing::dump(checking.diagnostics);
+    for (const auto& diagnostic : checking.diagnostics) {
+        EXPECT_EQ(diagnostic.id, joyeer::typing::TypeCheckingDiagnosticId::assignmentToImmutable) << diagnostic.message;
+        EXPECT_NE(diagnostic.message.find("a byte of a String"), std::string::npos) << diagnostic.message;
+        ASSERT_TRUE(diagnostic.help.has_value()) << diagnostic.message;
+        EXPECT_NE(diagnostic.help->find("spec 2.1.1"), std::string::npos) << *diagnostic.help;
+    }
+}
 
                     TEST_F(TypeCheckingTest, EnforcesInoutCallArgumentConventions) {
                         check(R"JOYEER(func update(value: inout Int) { &value = 1 }
@@ -3967,7 +4085,8 @@ protected:
 
         resolution = joyeer::semantic::NameResolver().resolve({
                 { "app", { userParse.root } },
-                { "$role-prelude", { roleParse.root }, false, false, true, true } });
+                { "$role-prelude", { roleParse.root }, false, false, true,
+                  joyeer::semantic::ReplacedPrelude::roles } });
         if (resolution.succeeded()) checking = joyeer::typing::TypeChecker().check(resolution.model);
     }
 

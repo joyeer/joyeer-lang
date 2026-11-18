@@ -15,6 +15,12 @@ func atomicAdd(address: Int, value: Int): Int
 @c_extern(symbol: "joyeer_intrinsic_atomic_load")
 func atomicLoad(address: Int): Int
 
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+func store64(address: Int, value: UInt64): Void
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+func load64(address: Int): UInt64
+
 struct Pair {
     var first: Int
     var second: UInt8
@@ -32,6 +38,9 @@ struct Box<T> {
     var inner: T
 }
 
+struct Empty {
+}
+
 func sizeOf<T>(value: T): Int {
     return joyeer_intrinsic_size_of<T>()
 }
@@ -42,6 +51,61 @@ func roundTrip<T>(value: consuming T): T {
     let moved = joyeer_intrinsic_move_out<T>(address: block)
     release(address: block)
     return moved
+}
+
+func slotOf<T>(base: Int, index: Int, sample: T): Int {
+    return joyeer_intrinsic_slot_address<T>(base: base, index: index)
+}
+
+// A dictionary entry as decision 0027 lays it out: the key, then the value (DictEntry<K, V>).
+struct Entry<K, V> {
+    var key: K
+    var value: V
+}
+
+enum Shape {
+    Dot,
+    Line(Int, UInt8),
+}
+
+struct Mixed {
+    var flag: UInt8
+    var wide: Int
+    var small: Bool
+}
+
+func alignUp(value: Int, alignment: Int): Int {
+    return (value + alignment - 1) / alignment * alignment
+}
+
+func probe(address: Int): Int {
+    return address
+}
+
+// The ordinary struct layout of Entry<K, V> equals the runtime's dictionary entry layout: the value at
+// alignTo(keySize, valueAlign), and the size rounded up to the larger alignment (lib/Runtime/core/dictionaries.joyeer).
+func entryMatches<K, V>(key: consuming K, value: consuming V): Bool {
+    var entry = Entry(key: consume key, value: consume value)
+    let base = probe(address: joyeer_intrinsic_place_address<Entry<K, V>>(value: &entry))
+    let valueAt = probe(address: joyeer_intrinsic_place_address<V>(value: &entry.value))
+    let offset = alignUp(value: joyeer_intrinsic_size_of<K>(), alignment: joyeer_intrinsic_align_of<V>())
+    var widest = joyeer_intrinsic_align_of<K>()
+    if joyeer_intrinsic_align_of<V>() > widest { widest = joyeer_intrinsic_align_of<V>() }
+    let size = alignUp(value: offset + joyeer_intrinsic_size_of<V>(), alignment: widest)
+    let valueOffsetMatches = joyeer_intrinsic_size_of<V>() == 0 || valueAt - base == offset
+    return valueOffsetMatches && joyeer_intrinsic_size_of<Entry<K, V>>() == size
+}
+
+func readBorrowed(value: Int): Int {
+    return load64(address: joyeer_intrinsic_borrow_address<Int>(value: value)) as Int
+}
+
+func countWord(handle: Int): Int {
+    return load64(address: handle + 8) as Int
+}
+
+func countOf(text: String): Int {
+    return countWord(handle: joyeer_intrinsic_borrow_address<String>(value: text))
 }
 
 func discard<T>(value: consuming T) {
@@ -60,6 +124,9 @@ func exercise(): Int {
     if joyeer_intrinsic_size_of<Void>() != 0 { return 6 }
     if joyeer_intrinsic_size_of<Box<Pair>>() != 16 { return 7 }
     if sizeOf(value: 1.5) != 8 { return 8 }
+    if joyeer_intrinsic_size_of<[Int]>() != 24 { return 24 }
+    if joyeer_intrinsic_size_of<[String]>() != 24 { return 25 }
+    if joyeer_intrinsic_align_of<[[Int]]>() != 8 { return 26 }
 
     let back = roundTrip(value: consume Pair(first: 41, second: 1))
     if back.first != 41 { return 9 }
@@ -73,6 +140,72 @@ func exercise(): Int {
     let text = roundTrip(value: consume "hello")
     if text.count != 5 { return 13 }
     if joyeer_intrinsic_size_of<Bool>() != 1 { return 14 }
+
+    // slot_address is base + index * size, unchecked; a zero-size element stays at base (decision 0026).
+    if joyeer_intrinsic_slot_address<Int>(base: 1000, index: 3) != 1024 { return 15 }
+    if joyeer_intrinsic_slot_address<Pair>(base: 1000, index: 2) != 1032 { return 16 }
+    if joyeer_intrinsic_slot_address<Void>(base: 1000, index: 5) != 1000 { return 17 }
+    if joyeer_intrinsic_slot_address<Empty>(base: 0, index: 5) != 0 { return 18 }
+    if slotOf(base: 1000, index: 1, sample: "x") != 1016 { return 19 }
+    if joyeer_intrinsic_slot_address<Int>(base: 1000, index: 0 - 1) != 992 { return 20 }
+
+    // stack_block is contiguous stack storage for a constant number of slots; none for zero or a unit type.
+    let block = joyeer_intrinsic_stack_block<Int>(count: 4)
+    var filled = 0
+    while filled < 4 {
+        joyeer_intrinsic_move_in<Int>(
+                address: joyeer_intrinsic_slot_address<Int>(base: block, index: filled), value: consume (filled * 10))
+        filled = filled + 1
+    }
+    var summed = 0
+    var read = 0
+    while read < 4 {
+        summed = summed + joyeer_intrinsic_move_out<Int>(
+                address: joyeer_intrinsic_slot_address<Int>(base: block, index: read))
+        read = read + 1
+    }
+    if summed != 60 { return 21 }
+    if joyeer_intrinsic_stack_block<Int>(count: 0) != 0 { return 22 }
+    if joyeer_intrinsic_stack_block<Void>(count: 3) != 0 { return 23 }
+
+    // place_address is the address of an inout place, valid for the call it is an argument of: a store through it is
+    // seen by the place afterwards, for a local and for a field of a struct, whatever the optimization level.
+    var cell = 5
+    store64(address: joyeer_intrinsic_place_address<Int>(value: &cell), value: 9)
+    if cell != 9 { return 24 }
+    var pair = Pair(first: 1, second: 2)
+    store64(address: joyeer_intrinsic_place_address<Int>(value: &pair.first), value: 77)
+    if pair.first != 77 { return 25 }
+    if pair.second != 2 { return 26 }
+    if load64(address: joyeer_intrinsic_place_address<Int>(value: &pair.first)) != 77 { return 27 }
+
+    // borrow_address is the read-only address of a named place, for a local, a field, a borrowing parameter and a
+    // String handle ({data, count}), valid for the call it is an argument of (decision 0027).
+    let fixed = 41
+    if load64(address: joyeer_intrinsic_borrow_address<Int>(value: fixed)) != 41 { return 28 }
+    if load64(address: joyeer_intrinsic_borrow_address<Int>(value: pair.first)) != 77 { return 29 }
+    if readBorrowed(value: 123) != 123 { return 30 }
+    if countOf(text: "abcde") != 5 { return 31 }
+
+    // key_kind is the runtime key kind of the four admitted key types (decision 0027).
+    if joyeer_intrinsic_key_kind<Int>() != 1 { return 32 }
+    if joyeer_intrinsic_key_kind<Bool>() != 2 { return 33 }
+    if joyeer_intrinsic_key_kind<String>() != 3 { return 34 }
+    if joyeer_intrinsic_key_kind<UInt8>() != 4 { return 35 }
+
+    // The entry layout for every admitted key and a spread of values, including padding and a zero-size value.
+    if !entryMatches(key: consume 1, value: consume ()) { return 36 }
+    if !entryMatches(key: consume 1 as UInt8, value: consume 2) { return 37 }
+    if !entryMatches(key: consume true, value: consume 3 as UInt8) { return 38 }
+    if !entryMatches(key: consume "k", value: consume 4) { return 39 }
+    if !entryMatches(key: consume 5, value: consume "v") { return 40 }
+    if !entryMatches(key: consume 6 as UInt8, value: consume Mixed(flag: 1, wide: 2, small: true)) { return 41 }
+    let some: Int? = 8
+    if !entryMatches(key: consume 7, value: consume some) { return 42 }
+    if !entryMatches(key: consume "list", value: consume [1, 2]) { return 43 }
+    let line: Shape = .Line(9, 10)
+    if !entryMatches(key: consume false, value: consume line) { return 44 }
+    if !entryMatches(key: consume 1 as UInt8, value: consume true) { return 45 }
 
     // destroy_at runs the deinit exactly once.
     discard(value: consume Token(id: 8))

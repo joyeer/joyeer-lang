@@ -1,0 +1,42 @@
+// dict_lookup_string.joyeer over the prototype `Table<K, V>` of dict_table_prelude.joyeer (decision 0027, stage 3).
+// Built only by benchmark_dicts.py through the array-addressor-probe tool. Prints 72720000.
+func lookups(size: Int, rounds: Int): Int {
+    var keys: [String] = []
+    var text = "k"
+    var index = 0
+    while index < size * 2 {
+        &keys.append(element: text)
+        text = text + "x"
+        index = index + 1
+    }
+    var table: Table<String, Int> = emptyTable(key: "", value: 0)
+    index = 0
+    while index < size {
+        let inserted = keys[index]
+        &table.set(key: consume inserted, value: consume (index + 7))
+        index = index + 1
+    }
+    var total = 0
+    var round = 0
+    while round < rounds {
+        index = 0
+        while index < size {
+            total = total + table.at(key: keys[index])
+            index = index + 1
+        }
+        index = 0
+        while index < size * 2 {
+            total = total + match table.get(key: keys[index]) {
+                .Some(value) => value,
+                .None => 2,
+            }
+            index = index + 1
+        }
+        round = round + 1
+    }
+    return total
+}
+
+func main() {
+    print(value: lookups(size: 4, rounds: 500000) + lookups(size: 16, rounds: 70000))
+}

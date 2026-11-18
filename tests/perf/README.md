@@ -20,6 +20,26 @@ be compared against a baseline on the same machine and configuration.
   `measure` commands, same interleaved paired comparison and bootstrap) with its own workloads. Each program
   prints one checksum, computed independently in Python, and a run with another output is rejected.
 
+- `array_index_flat`/`array_index_library` and `array_drop_flat`/`array_drop_library` with
+  `benchmark_addressor.py` (decision 0026): the builtin array against a minimal library array
+  (`array_buffer_prelude.joyeer`), built by the `array-addressor-probe` tool
+  (`cmake --build <dir> --target array-addressor-probe`, defined when `JOYEER_BUILD_UNITTESTS` is on), which supplies
+  the library through the collections-prelude test seam. To compare the actual product switch instead,
+  pass `--compiler <builtin-joyeer> --candidate-compiler <library-joyeer>` instead of `--probe`.
+  The same flat program is then compiled by each compiler. `--workload index|drop`, `--debug none|lines|full`. The report treats the builtin
+  array as the baseline, so a ratio above 1 is a cost of the library array. The results and the gate numbers are in
+  decision 0026, Section 4.
+
+- `dict_*.joyeer` and `benchmark_dicts.py` (plan 0011, phase 4, decision 0027): Int-key lookup at sizes 1, 4, 16 and
+  64 (strict reads, `get` hits and misses), String-key lookup at sizes 4 and 16, insertion with growth to 16 and
+  replacement, a four-entry literal with a duplicate key, and nested destruction of `[String: [Int]]`. The same
+  `build` and `measure` commands as `benchmark_arrays.py`; each program prints one checksum computed independently in
+  Python. Each program runs for 0.2 s or more at `-O2` on a desktop x64 machine, so process startup (about 90 ms on
+  Windows) does not dilute the ratios. The `prototype` command (0027, stage 3) builds each program except the literal against its `*_table` twin,
+  written over the role-less `Table<K, V>` of `dict_table_prelude.joyeer` with explicit method calls, through
+  `array-addressor-probe` with the prelude appended to `lib/Runtime/collections.joyeer`, and measures the pair. Its
+  result is a go or no-go verdict only; the gates of 0027 bind at the switch.
+
 Record the numbers in the decision or the pull request that changes the runtime, with the machine,
 the operating system and the build configuration.
 

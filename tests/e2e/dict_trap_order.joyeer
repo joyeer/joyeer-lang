@@ -1,0 +1,20 @@
+// Characterization of when a missing key traps (plan 0011 phase 4, decision 0027): the key operand is evaluated
+// first, then the lookup traps before any later argument is evaluated. Prints x, then traps; 20 is never printed.
+func noisyKey(text: String): String {
+    print(value: text)
+    return text
+}
+
+func noisy(value: Int): Int {
+    print(value: value)
+    return value
+}
+
+func pair(first: Int, second: Int): Int {
+    return first + second
+}
+
+func main() {
+    let table: [String: Int] = ["a": 1]
+    print(value: pair(first: table[noisyKey(text: "x")], second: noisy(value: 20)))
+}

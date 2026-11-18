@@ -18,6 +18,59 @@ namespace joyeer::typing {
 
 namespace {
 
+// The collection structure role that owns a method role (decisions 0025-0027), or `none`.
+semantic::LibraryRole collectionOwnerRole(semantic::LibraryRole method) {
+    switch (method) {
+        case semantic::LibraryRole::arrayElement:
+        case semantic::LibraryRole::arrayCopy:
+        case semantic::LibraryRole::containerEnd:
+        case semantic::LibraryRole::arrayLiteral:
+            return semantic::LibraryRole::arrayType;
+        case semantic::LibraryRole::dictElement:
+        case semantic::LibraryRole::dictSet:
+        case semantic::LibraryRole::dictGet:
+        case semantic::LibraryRole::dictCopy:
+        case semantic::LibraryRole::dictLiteral:
+            return semantic::LibraryRole::dictType;
+        default:
+            return semantic::LibraryRole::none;
+    }
+}
+
+// The annotation name of a collection role (decisions 0025-0027).
+const char* collectionRoleName(semantic::LibraryRole role) {
+    switch (role) {
+        case semantic::LibraryRole::arrayType: return "array_type";
+        case semantic::LibraryRole::arrayElement: return "array_element";
+        case semantic::LibraryRole::arrayCopy: return "array_copy";
+        case semantic::LibraryRole::containerEnd: return "container_end";
+        case semantic::LibraryRole::arrayLiteral: return "array_literal";
+        case semantic::LibraryRole::dictType: return "dict_type";
+        case semantic::LibraryRole::dictElement: return "dict_element";
+        case semantic::LibraryRole::dictSet: return "dict_set";
+        case semantic::LibraryRole::dictGet: return "dict_get";
+        case semantic::LibraryRole::dictCopy: return "dict_copy";
+        case semantic::LibraryRole::dictLiteral: return "dict_literal";
+        case semantic::LibraryRole::dictEntry: return "dict_entry";
+        default: return "unknown";
+    }
+}
+
+// The method roles a collection structure role requires exactly once.
+std::vector<semantic::LibraryRole> requiredCollectionMethodRoles(semantic::LibraryRole collection) {
+    switch (collection) {
+        case semantic::LibraryRole::arrayType:
+            return { semantic::LibraryRole::arrayElement, semantic::LibraryRole::arrayCopy,
+                     semantic::LibraryRole::containerEnd, semantic::LibraryRole::arrayLiteral };
+        case semantic::LibraryRole::dictType:
+            return { semantic::LibraryRole::dictElement, semantic::LibraryRole::dictSet,
+                     semantic::LibraryRole::dictGet, semantic::LibraryRole::dictCopy,
+                     semantic::LibraryRole::dictLiteral };
+        default:
+            return {};
+    }
+}
+
 void combineHash(size_t& seed, size_t value) {
     seed ^= value + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
 }
@@ -61,8 +114,6 @@ TypeContext::TypeContext(const semantic::SemanticModel& model): model(model) {
                 std::string(descriptor.name), TypeKind::enumeration, registeredType);
     }
 
-    registerGenericBuiltin("Array", TypeKind::array, 1);
-    registerGenericBuiltin("Dict", TypeKind::dictionary, 2);
     for (const auto& [name, kind] : {
             std::pair {"Int8", TypeKind::int8}, {"Int16", TypeKind::int16},
             {"Int32", TypeKind::int32}, {"Int64", TypeKind::int64},
@@ -116,15 +167,26 @@ TypeId TypeContext::ioErrorType() const {
 }
 
 TypeId TypeContext::arrayType(TypeId element) {
-    const auto symbol = builtinSymbol("Array");
-    assert(symbol.has_value());
+    const auto symbol = model.roleSymbol(semantic::LibraryRole::arrayType);
+    if (!symbol.has_value()) return errorTypeId;
     return typeForSymbol(*symbol, { element }).value_or(errorTypeId);
 }
 
+bool TypeContext::isArray(const TypeRecord* record) const {
+    return record != nullptr && record->kind == TypeKind::structure &&
+            record->symbol == model.roleSymbol(semantic::LibraryRole::arrayType) &&
+            record->arguments.size() == 1;
+}
+
 TypeId TypeContext::dictionaryType(TypeId key, TypeId value) {
-    const auto symbol = builtinSymbol("Dict");
-    assert(symbol.has_value());
+    const auto symbol = model.roleSymbol(semantic::LibraryRole::dictType);
+    if (!symbol.has_value()) return errorTypeId;
     return typeForSymbol(*symbol, { key, value }).value_or(errorTypeId);
+}
+
+bool TypeContext::isDictionary(const TypeRecord* record) const {
+    return record != nullptr && record->kind == TypeKind::structure &&
+            record->symbol == model.roleSymbol(semantic::LibraryRole::dictType) && record->arguments.size() == 2;
 }
 
 TypeId TypeContext::optionalType(TypeId wrapped) {
@@ -312,15 +374,17 @@ std::string TypeContext::displayName(TypeId id, bool disambiguateNominals) const
         return "Result<" + displayName(value->arguments[0], disambiguateNominals) + ", " +
                 displayName(value->arguments[1], disambiguateNominals) + ">";
     }
+    if (isArray(value)) {
+        return "[" + displayName(value->arguments[0], disambiguateNominals) + "]";
+    }
+    if (isDictionary(value)) {
+        return "[" + displayName(value->arguments[0], disambiguateNominals) + ": " +
+                displayName(value->arguments[1], disambiguateNominals) + "]";
+    }
 
     switch (value->kind) {
         case TypeKind::error:
             return "<error>";
-        case TypeKind::array:
-            return "[" + displayName(value->arguments[0], disambiguateNominals) + "]";
-        case TypeKind::dictionary:
-            return "[" + displayName(value->arguments[0], disambiguateNominals) + ": " +
-                    displayName(value->arguments[1], disambiguateNominals) + "]";
         case TypeKind::typeParameter: {
             const auto* declaration = model.symbol(value->symbol);
             if (declaration != nullptr && declaration->kind == semantic::SymbolKind::protocol) return "Self";
@@ -355,7 +419,8 @@ std::string TypeContext::displayName(TypeId id, bool disambiguateNominals) const
                 // every diagnostic (decision 0024): `Result<A, B>` of the prelude is not the user's.
                 if (declaration->libraryRole == semantic::LibraryRole::none &&
                     (value->kind == TypeKind::structure || value->kind == TypeKind::enumeration)) {
-                    for (const auto role : {semantic::LibraryRole::optional, semantic::LibraryRole::result}) {
+                    for (const auto role : {semantic::LibraryRole::optional, semantic::LibraryRole::result,
+                                           semantic::LibraryRole::arrayType, semantic::LibraryRole::dictType}) {
                         const auto roleSymbol = model.roleSymbol(role);
                         const auto* roleDeclaration = roleSymbol.has_value() ? model.symbol(*roleSymbol) : nullptr;
                         if (roleDeclaration == nullptr || roleDeclaration->name != name) continue;
@@ -498,23 +563,68 @@ syntax::FunctionDeclSyntax::Ptr TypeCheckedModel::deinitializerOf(TypeId type) c
 }
 
 bool TypeCheckedModel::isArrayRoleType(TypeId type) const {
-    const auto* record = typeContext.type(type);
-    if (record == nullptr || record->kind != TypeKind::structure || record->arguments.size() != 1) return false;
-    const auto* symbol = semanticModelValue->symbol(record->symbol);
-    return symbol != nullptr && symbol->libraryRole == semantic::LibraryRole::arrayType;
+    return typeContext.isArray(type);
+}
+
+bool TypeCheckedModel::isOwnedArgumentContext(semantic::SymbolId function, size_t parameter) const {
+    const auto* method = semanticModelValue->symbol(function);
+    const auto* owner = method != nullptr && method->containingSymbol.has_value()
+            ? semanticModelValue->symbol(*method->containingSymbol) : nullptr;
+    const auto* signature = callable(function);
+    const auto record = owner != nullptr ? collectionRoles.find(owner->id) : collectionRoles.end();
+    if (method == nullptr || method->kind != semantic::SymbolKind::method || owner == nullptr ||
+        record == collectionRoles.end() ||
+        !method->callable.has_value() || parameter >= method->callable->parameters.size() ||
+        method->callable->parameters[parameter].access != syntax::AccessEffect::consuming ||
+        signature == nullptr || parameter >= signature->parameters.size()) {
+        return false;
+    }
+    // An owned argument context is a consuming parameter declared with exactly one of the type parameters the
+    // collection owns elements of (decision 0026 A2).
+    const auto* declared = typeContext.type(signature->parameters[parameter]);
+    return declared != nullptr && declared->kind == TypeKind::typeParameter &&
+            std::find(record->second.ownedParameters.begin(), record->second.ownedParameters.end(),
+                      declared->symbol) != record->second.ownedParameters.end();
 }
 
 std::optional<semantic::SymbolId> TypeCheckedModel::arrayRoleMethod(
         TypeId type, semantic::LibraryRole role) const {
     if (!isArrayRoleType(type)) return std::nullopt;
-    const auto found = arrayRoleMethods.find(typeContext.type(type)->symbol);
-    if (found == arrayRoleMethods.end()) return std::nullopt;
-    switch (role) {
-        case semantic::LibraryRole::arrayElement: return found->second[0];
-        case semantic::LibraryRole::arrayCopy: return found->second[1];
-        case semantic::LibraryRole::containerEnd: return found->second[2];
-        default: return std::nullopt;
-    }
+    return collectionRoleMethod(type, role);
+}
+
+bool TypeCheckedModel::isCollectionRoleType(TypeId type) const {
+    if (isArrayRoleType(type)) return true;
+    const auto* record = typeContext.type(type);
+    return record != nullptr && record->kind == TypeKind::structure && collectionRoles.contains(record->symbol);
+}
+
+bool TypeCheckedModel::isDictRoleType(TypeId type) const {
+    const auto* record = typeContext.type(type);
+    if (record == nullptr || record->kind != TypeKind::structure) return false;
+    const auto found = collectionRoles.find(record->symbol);
+    return found != collectionRoles.end() && found->second.kind == semantic::LibraryRole::dictType;
+}
+
+std::optional<std::array<semantic::SymbolId, 2>> TypeCheckedModel::dictEntryFields() const {
+    return dictEntryFieldSymbols;
+}
+
+std::optional<TypeId> TypeCheckedModel::dictEntryType(TypeId dictionary) const {
+    const auto found = dictEntryTypes.find(dictionary);
+    if (found == dictEntryTypes.end()) return std::nullopt;
+    return found->second;
+}
+
+std::optional<semantic::SymbolId> TypeCheckedModel::collectionRoleMethod(
+        TypeId type, semantic::LibraryRole role) const {
+    const auto* record = typeContext.type(type);
+    if (record == nullptr || record->kind != TypeKind::structure) return std::nullopt;
+    const auto found = collectionRoles.find(record->symbol);
+    if (found == collectionRoles.end()) return std::nullopt;
+    const auto method = found->second.methods.find(role);
+    if (method == found->second.methods.end()) return std::nullopt;
+    return method->second;
 }
 
 bool TypeCheckedModel::isDeclaredLinear(TypeId type) const {
@@ -542,7 +652,7 @@ bool TypeCheckedModel::isLinear(TypeId type) const {
     return isLinear(type, visiting, clean);
 }
 
-std::optional<std::string> TypeCheckedModel::linearEndingMethod(TypeId type) const {
+std::optional<std::string> TypeCheckedModel::linearEndingMethod(TypeId type, bool leaf) const {
     std::unordered_set<TypeId> visited;
     std::function<std::optional<std::string>(TypeId)> visit = [&](TypeId id) -> std::optional<std::string> {
         if (!visited.insert(id).second || !isLinear(id)) return std::nullopt;
@@ -550,7 +660,7 @@ std::optional<std::string> TypeCheckedModel::linearEndingMethod(TypeId type) con
         if (record == nullptr) return std::nullopt;
         const auto arguments = record->arguments;
         const auto* declaration = semanticModelValue->symbol(record->symbol);
-        if (declaration != nullptr && declaration->libraryRole == semantic::LibraryRole::arrayType &&
+        if (!leaf && declaration != nullptr && declaration->libraryRole == semantic::LibraryRole::arrayType &&
             declaration->memberScope.has_value()) {
             const auto* members = semanticModelValue->scope(*declaration->memberScope);
             for (const auto& [name, symbol] : members->values) {
@@ -566,7 +676,8 @@ std::optional<std::string> TypeCheckedModel::linearEndingMethod(TypeId type) con
                 if (method->libraryRole == semantic::LibraryRole::storedConsumer) return name;
             }
         }
-        if (const auto structure = structureDeclaration(id)) {
+        const bool arrayRole = declaration != nullptr && declaration->libraryRole == semantic::LibraryRole::arrayType;
+        if (const auto structure = structureDeclaration(id); structure != nullptr && !(leaf && arrayRole)) {
             for (const auto& field : structure->fields) {
                 const auto symbol = semanticModelValue->declaredSymbol(field);
                 const auto fieldType = symbol.has_value() ? typeOf(*symbol) : std::optional<TypeId>();
@@ -592,12 +703,6 @@ bool TypeCheckedModel::isLinear(
     visiting.push_back(id);
     bool linear = false;
     switch (type->kind) {
-        case TypeKind::array:
-        case TypeKind::dictionary:
-            for (const auto argument : type->arguments) {
-                if (isLinear(argument, visiting, clean)) { linear = true; break; }
-            }
-            break;
         case TypeKind::typeParameter: {
             const auto* parameter = semanticModelValue->symbol(type->symbol);
             linear = parameter != nullptr && parameter->mustTransferParameter;
@@ -606,9 +711,13 @@ bool TypeCheckedModel::isLinear(
         case TypeKind::structure: {
             const auto structure = structureDeclaration(id);
             if (structure == nullptr) break;
-            if (isArrayRoleType(id)) {
-                // Owns its element through an address, so the element decides (decision 0025).
-                linear = isLinear(type->arguments[0], visiting, clean);
+            if (isCollectionRoleType(id)) {
+                // Owns its elements through an address, so they decide (decisions 0025, 0027). The arguments are
+                // copied first: the recursion can intern types and invalidate `type`.
+                const auto arguments = type->arguments;
+                for (const auto argument : arguments) {
+                    if (isLinear(argument, visiting, clean)) { linear = true; break; }
+                }
                 break;
             }
             if (structure->isLinear) { linear = true; break; }
@@ -697,16 +806,6 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
     const auto name = "'" + typeContext.displayName(id) + "'";
 
     switch (type->kind) {
-        case TypeKind::array:
-        case TypeKind::dictionary:
-            for (const auto argument : type->arguments) {
-                if (noncopyableReason(argument, visiting, clean).has_value()) {
-                    reason = name + " holds the noncopyable type '" +
-                            typeContext.displayName(argument) + "'";
-                    break;
-                }
-            }
-            break;
         case TypeKind::typeParameter: {
             // Copyable only when its constraint says so (spec 20.5). `Self` in a protocol is never
             // copied: requirements have no bodies.
@@ -732,11 +831,15 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
             }
             const auto structure = structureDeclaration(id);
             if (structure == nullptr) break;
-            if (isArrayRoleType(id)) {
-                // Copyable exactly when the owned type is, although it declares `deinit` (decision 0025).
-                if (noncopyableReason(type->arguments[0], visiting, clean).has_value()) {
-                    reason = name + " holds the noncopyable type '" +
-                            typeContext.displayName(type->arguments[0]) + "'";
+            if (isCollectionRoleType(id)) {
+                // Copyable exactly when the owned types are, although it declares `deinit` (decisions 0025, 0027).
+                // The arguments are copied first: the recursion can intern types and invalidate `type`.
+                const auto arguments = type->arguments;
+                for (const auto argument : arguments) {
+                    if (noncopyableReason(argument, visiting, clean).has_value()) {
+                        reason = name + " holds the noncopyable type '" + typeContext.displayName(argument) + "'";
+                        break;
+                    }
                 }
                 break;
             }
@@ -981,6 +1084,8 @@ private:
     // `consume` access expressions that appear where a value is stored (see permitMove).
     std::unordered_set<const syntax::Node*> permittedMoves;
     bool insideDeinit = false;
+    // Calls that are direct arguments of another call, where `place_address` may appear.
+    std::unordered_set<const syntax::Node*> permittedPlaceAddress;
     // Type parameters with constraints, checked for conflicting requirements once all are known.
     std::vector<semantic::SymbolId> constrainedParameters;
     // A call of a protocol requirement on a type parameter, inside a generic function or method. When
@@ -1018,6 +1123,97 @@ private:
             std::move(fixIt),
             std::move(notes),
         });
+    }
+
+    // The closed shape of a dictionary method role (decision 0027, Decision 3). Every role but `dict_get` is private:
+    // only the compiler calls it.
+    [[nodiscard]] bool dictMethodRoleMatches(const semantic::Symbol& symbol, const TypedCallableSignature& signature,
+                                             const semantic::Symbol& owner, std::string& failure) {
+        const auto* ownerParameters = model->genericParameters(owner.id);
+        if (ownerParameters == nullptr || ownerParameters->size() != 2) {
+            failure = std::string("the ") + collectionRoleName(symbol.libraryRole) +
+                    " role requires a method of a dict_type struct with two type parameters";
+            return false;
+        }
+        const auto key = model->typeContext.typeParameterType((*ownerParameters)[0]);
+        const auto value = model->typeContext.typeParameterType((*ownerParameters)[1]);
+        const auto receiver = symbol.callable->receiver->access;
+        const auto& written = symbol.callable->parameters;
+        const auto* result = model->typeContext.type(signature.result);
+        const bool returnsSelf = result != nullptr && result->kind == TypeKind::structure &&
+                result->symbol == owner.id && result->arguments == std::vector<TypeId> { key, value };
+        const bool isPrivate = symbol.visibility == syntax::Visibility::private_;
+        const auto labelled = [&](std::initializer_list<const char*> labels) {
+            if (written.size() != labels.size()) return false;
+            size_t index = 0;
+            for (const auto* label : labels) {
+                if (written[index++].label != std::optional<std::string>(label)) return false;
+            }
+            return true;
+        };
+        const auto accesses = [&](syntax::AccessEffect access) {
+            return std::all_of(written.begin(), written.end(),
+                               [access](const auto& parameter) { return parameter.access == access; });
+        };
+        switch (symbol.libraryRole) {
+            case semantic::LibraryRole::dictElement:
+                // The one addressor: read, borrow, consume and mutate a stored value; traps on a missing key.
+                if (isPrivate && receiver == syntax::AccessEffect::borrowing && labelled({ "key" }) &&
+                    accesses(syntax::AccessEffect::borrowing) &&
+                    signature.parameters == std::vector<TypeId> { key } &&
+                    signature.result == model->typeContext.intType()) {
+                    return true;
+                }
+                failure = "the dict_element role requires 'private borrowing func name(key: K): Int'";
+                return false;
+            case semantic::LibraryRole::dictSet:
+                // Insert-or-replace: the runtime adopts the owned key and value.
+                if (isPrivate && receiver == syntax::AccessEffect::inout && labelled({ "key", "value" }) &&
+                    accesses(syntax::AccessEffect::consuming) &&
+                    signature.parameters == std::vector<TypeId> { key, value } &&
+                    signature.result == model->typeContext.voidType()) {
+                    return true;
+                }
+                failure = "the dict_set role requires 'private mutating func name(key: consuming K, value: "
+                        "consuming V): Void'";
+                return false;
+            case semantic::LibraryRole::dictGet: {
+                // The one public method role: user code calls it as `d.get(key: k)`.
+                const auto optional = model->semanticModelValue->roleSymbol(semantic::LibraryRole::optional);
+                if (symbol.name == "get" && symbol.visibility == syntax::Visibility::public_ &&
+                    receiver == syntax::AccessEffect::borrowing && labelled({ "key" }) &&
+                    accesses(syntax::AccessEffect::borrowing) &&
+                    signature.parameters == std::vector<TypeId> { key } && result != nullptr &&
+                    result->kind == TypeKind::enumeration && optional.has_value() && result->symbol == *optional &&
+                    result->arguments == std::vector<TypeId> { value }) {
+                    return true;
+                }
+                failure = "the dict_get role requires 'public borrowing func get(key: K): Optional<V>'";
+                return false;
+            }
+            case semantic::LibraryRole::dictCopy:
+                if (isPrivate && receiver == syntax::AccessEffect::borrowing && written.empty() && returnsSelf) {
+                    return true;
+                }
+                failure = "the dict_copy role requires 'private borrowing func name(): Self' returning the declaring "
+                        "type";
+                return false;
+            case semantic::LibraryRole::dictLiteral:
+                // Called on an inert zero value with the packed entries.
+                if (isPrivate && receiver == syntax::AccessEffect::consuming && labelled({ "address", "count" }) &&
+                    accesses(syntax::AccessEffect::borrowing) &&
+                    signature.parameters == std::vector<TypeId> { model->typeContext.intType(),
+                                                                  model->typeContext.intType() } &&
+                    returnsSelf) {
+                    return true;
+                }
+                failure = "the dict_literal role requires 'private consuming func name(address: Int, count: Int): "
+                        "Self' returning the declaring type";
+                return false;
+            default:
+                failure = "not a dictionary method role";
+                return false;
+        }
     }
 
     void validatePreludeContracts() {
@@ -1184,30 +1380,42 @@ private:
                     }
                     break;
                 }
-                case semantic::LibraryRole::arrayType: {
-                    // The library array (decision 0025): three private Int words, one owned type parameter and
-                    // the three method roles the compiler calls.
+                case semantic::LibraryRole::arrayType:
+                case semantic::LibraryRole::dictType: {
+                    // The library array (decisions 0025, 0026) and dictionary (decision 0027): three private Int
+                    // words, the owned type parameters (the element, or the key and the value) and the method roles
+                    // the compiler calls.
+                    const bool isDict = symbol.libraryRole == semantic::LibraryRole::dictType;
+                    const std::string roleName = collectionRoleName(symbol.libraryRole);
+                    const size_t owned = isDict ? 2 : 1;
                     if (node->kind != syntax::Kind::structDecl) {
-                        roleFailure = "the array_type role requires a struct";
+                        roleFailure = "the " + roleName + " role requires a struct";
                         break;
                     }
                     if (++roleDeclarations[symbol.libraryRole] > 1) {
                         report(TypeCheckingDiagnosticId::invalidPrelude, symbol.span,
-                               "the compiler prelude declares a second struct for the array_type role");
+                               "the compiler prelude declares a second struct for the " + roleName + " role");
                     }
-                    if (parameters == nullptr || parameters->size() != 1 ||
-                        !model->constraints(parameters->front()).empty()) {
-                        roleFailure = "the array_type role requires exactly one unconstrained type parameter";
+                    if (parameters == nullptr || parameters->size() != owned ||
+                        std::any_of(parameters->begin(), parameters->end(),
+                                    [&](const auto parameter) { return !model->constraints(parameter).empty(); })) {
+                        roleFailure = "the " + roleName + " role requires exactly " + (isDict ? "two" : "one") +
+                                " unconstrained type parameter" + (isDict ? "s" : "");
                         break;
                     }
                     if (symbol.visibility != syntax::Visibility::public_) {
-                        roleFailure = "the array_type role requires a public struct";
+                        roleFailure = "the " + roleName + " role requires a public struct";
+                        break;
+                    }
+                    if (isDict && symbol.acceptsLinearArguments) {
+                        // The dictionary owns no linear key or value (decision 0027): no transfer marker.
+                        roleFailure = "the dict_type role's type parameters take no linear marker";
                         break;
                     }
                     const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
                     if (structure->deinitializer == nullptr) {
-                        roleFailure = "the array_type role requires a deinit that destroys the elements and "
-                                "frees the storage";
+                        roleFailure = "the " + roleName + " role requires a deinit that destroys the " +
+                                (isDict ? "entries" : "elements") + " and frees the storage";
                         break;
                     }
                     static const char* const wordNames[3] = { "address", "count", "capacity" };
@@ -1222,53 +1430,118 @@ private:
                                 fieldType == model->typeContext.intType();
                     }
                     if (!shaped) {
-                        roleFailure = "the array_type role requires the private Int fields address, count and "
-                                "capacity, in that order";
+                        roleFailure = "the " + roleName + " role requires the private Int fields address, count "
+                                "and capacity, in that order";
                         break;
                     }
+                    // Every method role the collection requires, each exactly once (decision 0026's four for an
+                    // array, decision 0027's five for a dictionary); the record keeps them for lowering and
+                    // instance discovery.
                     std::unordered_map<semantic::LibraryRole, int> methodRoles;
-                    std::array<semantic::SymbolId, 3> roleMethods { semantic::invalidSymbolId,
-                            semantic::invalidSymbolId, semantic::invalidSymbolId };
+                    TypeCheckedModel::CollectionRole record;
+                    record.kind = symbol.libraryRole;
+                    record.ownedParameters = *parameters;
                     for (const auto& member : model->semanticModelValue->symbols()) {
-                        if (member.kind == semantic::SymbolKind::method && member.containingSymbol == symbol.id) {
+                        if (member.kind == semantic::SymbolKind::method && member.containingSymbol == symbol.id &&
+                            collectionOwnerRole(member.libraryRole) == symbol.libraryRole) {
                             ++methodRoles[member.libraryRole];
-                            if (member.libraryRole == semantic::LibraryRole::arrayElement) roleMethods[0] = member.id;
-                            if (member.libraryRole == semantic::LibraryRole::arrayCopy) roleMethods[1] = member.id;
-                            if (member.libraryRole == semantic::LibraryRole::containerEnd) roleMethods[2] = member.id;
+                            record.methods[member.libraryRole] = member.id;
                         }
                     }
-                    for (const auto& [role, roleName] : std::array<std::pair<semantic::LibraryRole, const char*>, 3> {{
-                             { semantic::LibraryRole::arrayElement, "array_element" },
-                             { semantic::LibraryRole::arrayCopy, "array_copy" },
-                             { semantic::LibraryRole::containerEnd, "container_end" } }}) {
+                    for (const auto role : requiredCollectionMethodRoles(symbol.libraryRole)) {
                         if (methodRoles[role] != 1) {
-                            roleFailure = std::string("the array_type role requires exactly one method with the role ") +
-                                    roleName;
+                            roleFailure = "the " + roleName + " role requires exactly one method with the role " +
+                                    collectionRoleName(role);
                             break;
                         }
                     }
+                    if (roleFailure.empty() && isDict) {
+                        // The entry struct a literal packs; its own role checks its shape.
+                        const auto entry = model->semanticModelValue->roleSymbol(semantic::LibraryRole::dictEntry);
+                        if (!entry.has_value()) {
+                            roleFailure = "the dict_type role requires a private dict_entry struct";
+                        } else {
+                            record.entry = *entry;
+                        }
+                    }
                     matches = roleFailure.empty();
-                    if (matches) model->arrayRoleMethods[symbol.id] = roleMethods;
+                    if (matches) model->collectionRoles[symbol.id] = std::move(record);
+                    break;
+                }
+                case semantic::LibraryRole::dictEntry: {
+                    // The entry a dictionary literal packs (decision 0027): its ordinary struct layout is the
+                    // runtime's entry layout, so the shape is closed, and it is never a value.
+                    if (node->kind != syntax::Kind::structDecl) {
+                        roleFailure = "the dict_entry role requires a struct";
+                        break;
+                    }
+                    if (++roleDeclarations[symbol.libraryRole] > 1) {
+                        report(TypeCheckingDiagnosticId::invalidPrelude, symbol.span,
+                               "the compiler prelude declares a second struct for the dict_entry role");
+                    }
+                    if (symbol.visibility != syntax::Visibility::private_) {
+                        roleFailure = "the dict_entry role requires a private struct";
+                        break;
+                    }
+                    const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
+                    bool shaped = parameters != nullptr && parameters->size() == 2 &&
+                            !symbol.acceptsLinearArguments &&
+                            std::none_of(parameters->begin(), parameters->end(), [&](const auto parameter) {
+                                return !model->constraints(parameter).empty();
+                            }) &&
+                            structure->fields.size() == 2 && structure->deinitializer == nullptr &&
+                            structure->methods.empty() && !structure->isLinear;
+                    static const char* const entryFieldNames[2] = { "key", "value" };
+                    std::array<semantic::SymbolId, 2> entryFields {};
+                    for (size_t index = 0; shaped && index < 2; ++index) {
+                        const auto& field = structure->fields[index];
+                        const auto fieldSymbol = model->semanticModelValue->declaredSymbol(field);
+                        const auto fieldType = fieldSymbol.has_value() ? model->typeOf(*fieldSymbol)
+                                                                       : std::optional<TypeId>();
+                        shaped = field->name != nullptr && field->name->rawValue == entryFieldNames[index] &&
+                                fieldType == model->typeContext.typeParameterType((*parameters)[index]);
+                        if (shaped) entryFields[index] = *fieldSymbol;
+                    }
+                    matches = shaped;
+                    // Lowering packs a literal through these two fields (decision 0027).
+                    if (matches) model->dictEntryFieldSymbols = entryFields;
+                    if (!matches) {
+                        roleFailure = "the dict_entry role requires exactly the fields 'key: K' then 'value: V' of "
+                                "its two unconstrained, unmarked type parameters, no methods and no deinit";
+                    }
                     break;
                 }
                 case semantic::LibraryRole::arrayElement:
                 case semantic::LibraryRole::arrayCopy:
-                case semantic::LibraryRole::containerEnd: {
-                    const std::string roleName = symbol.libraryRole == semantic::LibraryRole::arrayElement
-                            ? "array_element"
-                            : symbol.libraryRole == semantic::LibraryRole::arrayCopy ? "array_copy" : "container_end";
+                case semantic::LibraryRole::arrayLiteral:
+                case semantic::LibraryRole::containerEnd:
+                case semantic::LibraryRole::dictElement:
+                case semantic::LibraryRole::dictSet:
+                case semantic::LibraryRole::dictGet:
+                case semantic::LibraryRole::dictCopy:
+                case semantic::LibraryRole::dictLiteral: {
+                    const std::string roleName = collectionRoleName(symbol.libraryRole);
                     const auto* owner = symbol.containingSymbol.has_value() ? symbolOf(*symbol.containingSymbol)
                                                                             : nullptr;
+                    // Fails closed: a method role missing from `collectionOwnerRole` has no owner role and is rejected.
+                    const auto ownerRole = collectionOwnerRole(symbol.libraryRole);
                     if (symbol.kind != semantic::SymbolKind::method || owner == nullptr ||
-                        owner->libraryRole != semantic::LibraryRole::arrayType || !symbol.callable.has_value() ||
+                        ownerRole == semantic::LibraryRole::none || owner->libraryRole != ownerRole ||
+                        !symbol.callable.has_value() ||
                         !symbol.callable->receiver.has_value() || signature == nullptr) {
-                        roleFailure = "the " + roleName + " role requires a method of an array_type struct";
+                        roleFailure = "the " + roleName + " role requires a method of " +
+                                (ownerRole == semantic::LibraryRole::dictType ? "a dict_type" : "an array_type") +
+                                " struct";
                         break;
                     }
                     const auto receiver = symbol.callable->receiver->access;
                     const auto& written = symbol.callable->parameters;
                     const auto* ownerParameters = model->genericParameters(owner->id);
                     const auto* result = model->typeContext.type(signature->result);
+                    if (ownerRole == semantic::LibraryRole::dictType) {
+                        matches = dictMethodRoleMatches(symbol, *signature, *owner, roleFailure);
+                        break;
+                    }
                     if (symbol.libraryRole == semantic::LibraryRole::arrayElement) {
                         matches = receiver == syntax::AccessEffect::borrowing && written.size() == 1 &&
                                 written[0].label == std::optional<std::string>("index") &&
@@ -1285,6 +1558,23 @@ private:
                                         model->typeContext.typeParameterType(ownerParameters->front()) };
                         if (!matches) roleFailure = "the array_copy role requires 'borrowing func name(): Self' returning "
                                 "the declaring type";
+                    } else if (symbol.libraryRole == semantic::LibraryRole::arrayLiteral) {
+                        // `consuming func name(address: Int, count: Int): Self`, called on an inert zero value.
+                        matches = symbol.visibility == syntax::Visibility::private_ &&
+                                receiver == syntax::AccessEffect::consuming && written.size() == 2 &&
+                                written[0].label == std::optional<std::string>("address") &&
+                                written[1].label == std::optional<std::string>("count") &&
+                                written[0].access == syntax::AccessEffect::borrowing &&
+                                written[1].access == syntax::AccessEffect::borrowing &&
+                                signature->parameters == std::vector<TypeId> { model->typeContext.intType(),
+                                                                               model->typeContext.intType() } &&
+                                result != nullptr && result->kind == TypeKind::structure &&
+                                result->symbol == owner->id && ownerParameters != nullptr &&
+                                ownerParameters->size() == 1 &&
+                                result->arguments == std::vector<TypeId> {
+                                        model->typeContext.typeParameterType(ownerParameters->front()) };
+                        if (!matches) roleFailure = "the array_literal role requires 'private consuming func name(address: Int, "
+                                "count: Int): Self' returning the declaring type";
                     } else {
                         matches = receiver == syntax::AccessEffect::consuming && written.empty() &&
                                 signature->result == model->typeContext.voidType();
@@ -1437,26 +1727,6 @@ private:
 
         for (const auto& symbol : model->semanticModelValue->symbols()) {
             if (symbol.kind != semantic::SymbolKind::builtinMember) continue;
-            if (symbol.name == "get" && symbol.callable.has_value()) {
-                model->symbolTypes[symbol.id] = model->typeContext.anyType();
-                model->callables[symbol.id] = TypedCallableSignature {
-                    semantic::CallableKind::function,
-                    true,
-                    { model->typeContext.anyType() },
-                    model->typeContext.anyType(),
-                };
-                continue;
-            }
-            if (symbol.name == "removeLast" && symbol.callable.has_value()) {
-                model->symbolTypes[symbol.id] = model->typeContext.anyType();
-                model->callables[symbol.id] = TypedCallableSignature {
-                    semantic::CallableKind::function,
-                    true,
-                    {},
-                    model->typeContext.anyType(),
-                };
-                continue;
-            }
             if ((symbol.name == "send" || symbol.name == "receive") && symbol.callable.has_value()) {
                 model->symbolTypes[symbol.id] = model->typeContext.anyType();
                 model->callables[symbol.id] = TypedCallableSignature {
@@ -1488,39 +1758,19 @@ private:
                 };
                 continue;
             }
-            if (symbol.name == "consumeEmpty" && symbol.callable.has_value()) {
-                model->symbolTypes[symbol.id] = model->typeContext.voidType();
-                model->callables[symbol.id] = TypedCallableSignature {
-                    semantic::CallableKind::function,
-                    true,
-                    {},
-                    model->typeContext.voidType(),
-                };
-                continue;
-            }
             if (symbol.name == "utf8" && symbol.callable.has_value()) {
-                const auto result = model->typeContext.arrayType(
-                        model->typeContext.uint8Type());
-                model->symbolTypes[symbol.id] = result;
+                model->symbolTypes[symbol.id] = model->typeContext.anyType();
                 model->callables[symbol.id] = TypedCallableSignature {
                     semantic::CallableKind::function,
                     true,
                     {},
-                    result,
+                    model->typeContext.anyType(),
                 };
                 continue;
             }
             if (!symbol.declaredType.has_value()) continue;
             const auto type = model->typeContext.typeForSymbol(*symbol.declaredType);
             if (type.has_value()) model->symbolTypes[symbol.id] = *type;
-            if (symbol.name == "append" && symbol.callable.has_value()) {
-                model->callables[symbol.id] = TypedCallableSignature {
-                    semantic::CallableKind::function,
-                    true,
-                    { model->typeContext.anyType() },
-                    model->typeContext.voidType(),
-                };
-            }
         }
     }
 
@@ -1576,6 +1826,33 @@ private:
                 const auto resolved = model->typeContext.typeForSymbol(*symbol, arguments);
                 if (resolved.has_value()) {
                     result = *resolved;
+                    // `Array<Never>` is the same rejected type as `[Never]` and reads the same.
+                    if (arguments.size() == 1 && arguments[0] == model->typeContext.neverType()) {
+                        if (const auto* arrayDeclaration = model->semanticModelValue->symbol(*symbol);
+                            arrayDeclaration != nullptr &&
+                            arrayDeclaration->libraryRole == semantic::LibraryRole::arrayType) {
+                            result = rejectNeverElement(arguments[0], syntaxType->span);
+                            break;
+                        }
+                    }
+                    // `Dict<Never, V>` and `Dict<K, Never>` read the same as `[Never: V]` and `[K: Never]`.
+                    if (arguments.size() == 2 && nominal->arguments.size() == 2 &&
+                        (arguments[0] == model->typeContext.neverType() ||
+                         arguments[1] == model->typeContext.neverType())) {
+                        if (const auto* dictionaryDeclaration = model->semanticModelValue->symbol(*symbol);
+                            dictionaryDeclaration != nullptr &&
+                            dictionaryDeclaration->libraryRole == semantic::LibraryRole::dictType) {
+                            const auto key = rejectNeverDictionaryPart(arguments[0], nominal->arguments[0]->span,
+                                                                       "key");
+                            const auto value = rejectNeverDictionaryPart(arguments[1], nominal->arguments[1]->span,
+                                                                         "value");
+                            if (!genericLibraryKey(key, syntaxType->span)) {
+                                rejectInvalidDictionaryKey(key, nominal->arguments[0]->span);
+                            }
+                            result = model->typeContext.dictionaryType(key, value);
+                            break;
+                        }
+                    }
                     if (!arguments.empty()) {
                         if (const auto* generic = model->semanticModelValue->symbol(*symbol);
                             generic != nullptr && !generic->typeParameters.empty() &&
@@ -1585,7 +1862,8 @@ private:
                         }
                     }
                     const auto* record = model->typeContext.type(result);
-                    if (record != nullptr && record->kind == TypeKind::dictionary) {
+                    if (model->typeContext.isDictionary(record) && !nominal->arguments.empty() &&
+                        !genericLibraryKey(record->arguments[0], syntaxType->span)) {
                         rejectInvalidDictionaryKey(record->arguments[0], nominal->arguments[0]->span);
                     }
                     break;
@@ -1605,18 +1883,18 @@ private:
             }
             case syntax::Kind::arrayType: {
                 const auto array = std::static_pointer_cast<syntax::ArrayTypeSyntax>(syntaxType);
-                result = model->typeContext.arrayType(resolveType(array->element).value_or(
-                        model->typeContext.errorType()));
+                result = model->typeContext.arrayType(rejectNeverElement(
+                        resolveType(array->element).value_or(model->typeContext.errorType()), syntaxType->span));
                 break;
             }
             case syntax::Kind::dictionaryType: {
                 const auto dictionary =
                         std::static_pointer_cast<syntax::DictionaryTypeSyntax>(syntaxType);
-                const auto key = resolveType(dictionary->key).value_or(
-                        model->typeContext.errorType());
-                const auto value = resolveType(dictionary->value).value_or(
-                        model->typeContext.errorType());
-                rejectInvalidDictionaryKey(key, dictionary->key->span);
+                const auto key = rejectNeverDictionaryPart(resolveType(dictionary->key).value_or(
+                        model->typeContext.errorType()), dictionary->key->span, "key");
+                const auto value = rejectNeverDictionaryPart(resolveType(dictionary->value).value_or(
+                        model->typeContext.errorType()), dictionary->value->span, "value");
+                if (!genericLibraryKey(key, syntaxType->span)) rejectInvalidDictionaryKey(key, dictionary->key->span);
                 result = model->typeContext.dictionaryType(key, value);
                 break;
             }
@@ -2438,7 +2716,9 @@ private:
                        "'Never' has no values, so a generic function cannot take or hold one (spec 2.9)");
                 continue;
             }
-            if (model->isLinear(argument) && !targetSymbol.acceptsLinearArguments) {
+            // A dictionary's linear key or value is reported once, as `linear-collection-element`.
+            if (model->isLinear(argument) && !targetSymbol.acceptsLinearArguments &&
+                targetSymbol.libraryRole != semantic::LibraryRole::dictType) {
                 report(TypeCheckingDiagnosticId::linearTypeArgument, span,
                        "type parameter '" + parameter + "' of '" + targetSymbol.name + "' cannot be the linear type " +
                                argumentName,
@@ -2605,7 +2885,19 @@ private:
 
     void instantiate() {
         std::vector<std::pair<semantic::NodeId, const GenericCall*>> calls;
-        for (const auto& [node, call] : model->genericCalls) calls.emplace_back(node, &call);
+        for (const auto& [node, call] : model->genericCalls) {
+            const auto source = model->semanticModelValue->node(node);
+            // The arguments are checked, but a diverging argument prevents the call from reaching its instance.
+            if (source != nullptr && source->kind == syntax::Kind::callExpr &&
+                std::any_of(std::static_pointer_cast<syntax::CallExprSyntax>(source)->arguments.begin(),
+                            std::static_pointer_cast<syntax::CallExprSyntax>(source)->arguments.end(),
+                            [&](const auto& argument) {
+                                return model->typeOf(argument->value) == model->typeContext.neverType();
+                            })) {
+                continue;
+            }
+            calls.emplace_back(node, &call);
+        }
         std::sort(calls.begin(), calls.end(), [](const auto& left, const auto& right) {
             return left.second->span.sourceId != right.second->span.sourceId
                     ? left.second->span.sourceId < right.second->span.sourceId
@@ -2734,6 +3026,7 @@ private:
                 if (deinitializer == nullptr) continue;
                 const auto deinit = model->semanticModelValue->declaredSymbol(deinitializer);
                 if (!deinit.has_value() || model->genericParameters(*deinit) == nullptr) continue;
+                const auto arguments = record->arguments;
                 // The role-lowered uses of a library array reach its element addressor and, when copyable,
                 // its copy method with no source call (decision 0025).
                 std::vector<semantic::SymbolId> required { *deinit };
@@ -2746,14 +3039,38 @@ private:
                         copy.has_value() && model->isCopyable(id)) {
                         required.push_back(*copy);
                     }
+                    if (const auto literal = model->arrayRoleMethod(id, semantic::LibraryRole::arrayLiteral)) {
+                        required.push_back(*literal);
+                    }
+                }
+                if (model->isDictRoleType(id)) {
+                    // The role-lowered uses of a dictionary reach its addressor, `dict_set`, its literal method and,
+                    // when copyable, its copy method; `dict_get` only through user calls (decision 0027).
+                    for (const auto role : { semantic::LibraryRole::dictElement, semantic::LibraryRole::dictSet,
+                                             semantic::LibraryRole::dictLiteral }) {
+                        if (const auto method = model->collectionRoleMethod(id, role)) required.push_back(*method);
+                    }
+                    if (const auto copy = model->collectionRoleMethod(id, semantic::LibraryRole::dictCopy);
+                        copy.has_value() && model->isCopyable(id)) {
+                        required.push_back(*copy);
+                    }
+                    // The entry has no `deinit`, so this loop would not intern it; a literal packs it.
+                    // `record` may be stale: `isCopyable` above can intern types and grow the type table.
+                    const auto found = model->collectionRoles.find(symbol->id);
+                    if (!model->dictEntryTypes.contains(id) && found != model->collectionRoles.end() &&
+                        found->second.entry.has_value()) {
+                        if (const auto entry = model->typeContext.typeForSymbol(*found->second.entry, arguments)) {
+                            model->dictEntryTypes[id] = *entry;
+                        }
+                    }
                 }
                 for (const auto method : required) {
                     if (model->genericParameters(method) == nullptr ||
-                        model->instanceIndex(method, record->arguments).has_value()) {
+                        model->instanceIndex(method, arguments).has_value()) {
                         continue;
                     }
-                    const GenericCall call { method, record->arguments, std::nullopt, deinitializer->span };
-                    if (!require(call, record->arguments, std::nullopt)) return std::nullopt;
+                    const GenericCall call { method, arguments, std::nullopt, deinitializer->span };
+                    if (!require(call, arguments, std::nullopt)) return std::nullopt;
                     added = true;
                 }
             }
@@ -3068,7 +3385,8 @@ private:
             const auto& parameter = declaration->parameters[index];
             const auto effect = parameter->accessEffect();
             const auto buffer = nativeBufferKind(signature.parameters[index],
-                    [&](TypeId id) { return model->typeContext.type(id); });
+                    [&](TypeId id) { return model->typeContext.type(id); },
+                    [&](TypeId id) { return model->isArrayRoleType(id); });
             if (binding->passesPointer(static_cast<uint32_t>(index))) {
                 if (!importing || buffer != NativeBufferKind::bytes ||
                     (effect != syntax::AccessEffect::borrowing && effect != syntax::AccessEffect::inout)) {
@@ -3125,20 +3443,24 @@ private:
     void validateNativeSymbols() {
         std::unordered_map<std::string, semantic::SymbolId> declarations;
         std::unordered_set<std::string> exports;
+        std::unordered_set<std::string> conflicting;
         for (const auto& symbol : model->semanticModelValue->symbols()) {
             const auto* binding = model->nativeBinding(symbol.id);
             if (binding == nullptr) continue;
             const auto [previous, inserted] = declarations.emplace(binding->symbol, symbol.id);
             if (!inserted && model->nativeBinding(previous->second)->dataSymbol != binding->dataSymbol) {
-                report(TypeCheckingDiagnosticId::conflictingNativeSymbol, binding->span,
-                       "native symbol '" + binding->symbol + "' is declared as both a function and a data symbol");
+                if (conflicting.insert(binding->symbol).second) {
+                    report(TypeCheckingDiagnosticId::conflictingNativeSymbol, binding->span,
+                           "native symbol '" + binding->symbol + "' is declared as both a function and a data symbol");
+                }
             } else if (!inserted) {
                 const auto& left = model->callables.at(previous->second);
                 const auto& right = model->callables.at(symbol.id);
                 const auto compatible = [&](TypeId a, TypeId b) {
                     const auto lookup = [&](TypeId id) { return model->typeContext.type(id); };
-                    const auto leftBuffer = nativeBufferKind(a, lookup);
-                    const auto rightBuffer = nativeBufferKind(b, lookup);
+                    const auto isArray = [&](TypeId id) { return model->isArrayRoleType(id); };
+                    const auto leftBuffer = nativeBufferKind(a, lookup, isArray);
+                    const auto rightBuffer = nativeBufferKind(b, lookup, isArray);
                     if (leftBuffer != NativeBufferKind::none || rightBuffer != NativeBufferKind::none) {
                         return leftBuffer == rightBuffer;
                     }
@@ -3161,8 +3483,10 @@ private:
                         !std::equal(left.parameters.begin(), left.parameters.end(),
                                 right.parameters.begin(), right.parameters.end(), compatible) ||
                         !compatible(left.result, right.result) || !sameEffects) {
-                    report(TypeCheckingDiagnosticId::conflictingNativeSymbol, binding->span,
-                           "incompatible C signatures for native symbol '" + binding->symbol + "'");
+                    if (conflicting.insert(binding->symbol).second) {
+                        report(TypeCheckingDiagnosticId::conflictingNativeSymbol, binding->span,
+                               "incompatible C signatures for native symbol '" + binding->symbol + "'");
+                    }
                 }
             }
             if (binding->kind == NativeBindingKind::cExport &&
@@ -3184,7 +3508,9 @@ private:
         if (ownerSymbol != nullptr &&
             (ownerSymbol->libraryRole == semantic::LibraryRole::optional ||
              ownerSymbol->libraryRole == semantic::LibraryRole::result ||
-             ownerSymbol->libraryRole == semantic::LibraryRole::arrayType) &&
+             ownerSymbol->libraryRole == semantic::LibraryRole::arrayType ||
+             ownerSymbol->libraryRole == semantic::LibraryRole::dictType ||
+             ownerSymbol->libraryRole == semantic::LibraryRole::dictEntry) &&
             model->semanticModelValue->isPreludeSource(declaration->span)) {
             // The role enums are closed: an extension would add members the role's shape rules never saw.
             report(TypeCheckingDiagnosticId::invalidPrelude, declaration->span,
@@ -3405,7 +3731,7 @@ private:
         if (isForInSourceBinding(declaration) && initializer.has_value() &&
             *initializer != model->typeContext.errorType()) {
             const auto* sourceType = model->typeContext.type(*initializer);
-            if (sourceType == nullptr || (sourceType->kind != TypeKind::array &&
+            if (sourceType == nullptr || (!model->isArrayRoleType(*initializer) &&
                                           sourceType->kind != TypeKind::string)) {
                 report(
                         TypeCheckingDiagnosticId::notIterable,
@@ -3421,7 +3747,7 @@ private:
         // Iterating an array of linear elements would drop them; there is no consuming iteration.
         if (isForInSourceBinding(declaration) && bindingType != model->typeContext.errorType()) {
             const auto* sourceType = model->typeContext.type(bindingType);
-            if (sourceType != nullptr && sourceType->kind == TypeKind::array &&
+            if (sourceType != nullptr && model->isArrayRoleType(bindingType) &&
                 sourceType->arguments.size() == 1 && model->isLinear(sourceType->arguments[0])) {
                 report(TypeCheckingDiagnosticId::linearCollectionElement,
                        declaration->initializer == nullptr ? declaration->span
@@ -3489,7 +3815,7 @@ private:
         const auto* type = model->typeContext.type(id);
         if (type == nullptr) return;
         const auto arguments = type->arguments;
-        if (type->kind == TypeKind::dictionary &&
+        if (model->typeContext.isDictionary(type) &&
             std::any_of(arguments.begin(), arguments.end(),
                         [this](TypeId argument) { return model->isLinear(argument); })) {
             report(TypeCheckingDiagnosticId::linearCollectionElement, span,
@@ -3719,7 +4045,7 @@ private:
                             "'consume' is only valid on an argument, the receiver of a consuming "
                             "method call, or where a value is stored (a binding, an assignment, "
                             "or an aggregate element)");
-                    } else if (!isConsumable(access->operand)) {
+                    } else if (!isConsumable(access->operand) && !isSubscript(access->operand)) {
                         report(
                             TypeCheckingDiagnosticId::invalidConsumeArgument,
                             access->operand->span,
@@ -3727,11 +4053,24 @@ private:
                             "or temporary");
                     }
                 }
+                const auto diagnosticsBeforeOperand = diagnostics.size();
                 result = checkExpression(
                         access->operand,
                         expected,
                         consumes ? ReceiverMarker::consume : ReceiverMarker::inout)
                         .value_or(model->typeContext.errorType());
+                // A subscript is judged once its base is typed: a String byte reports only itself, since a
+                // consumable base would not help.
+                if (consumes && !isMemberCall(access->operand) && permittedMoves.contains(expression.get()) &&
+                    isSubscript(access->operand) &&
+                    !(diagnosticsBeforeOperand == diagnostics.size() && rejectConsumedStringByte(access->operand)) &&
+                    !isStringByte(access->operand) && !isConsumable(access->operand)) {
+                    report(
+                        TypeCheckingDiagnosticId::invalidConsumeArgument,
+                        access->operand->span,
+                        "consuming argument must be an owning local, consuming parameter, "
+                        "or temporary");
+                }
                 break;
             }
             case syntax::Kind::propagateExpr:
@@ -4361,12 +4700,14 @@ private:
     bool containsFunctionType(TypeId type) const {
         const auto* record = model->typeContext.type(type);
         if (record == nullptr) return false;
+        if (model->isArrayRoleType(type)) return containsFunctionType(record->arguments[0]);
+        if (model->typeContext.isDictionary(record)) {
+            const auto arguments = record->arguments;
+            return std::any_of(arguments.begin(), arguments.end(),
+                               [this](TypeId argument) { return containsFunctionType(argument); });
+        }
         switch (record->kind) {
             case TypeKind::function: return true;
-            case TypeKind::array:
-            case TypeKind::dictionary:
-                return std::any_of(record->arguments.begin(), record->arguments.end(),
-                        [this](TypeId argument) { return containsFunctionType(argument); });
             case TypeKind::enumeration:
                 // Role-bound enums are looked through: an optional function value stays a function value.
                 if (!model->typeContext.isOptional(record) && !model->typeContext.isResult(record)) return false;
@@ -4376,18 +4717,46 @@ private:
         }
     }
 
+    // The library dictionary's own generic body writes `Dict<K, V>` over its type parameters (decision 0027, Decision 4):
+    // the key rules do not apply to the dictionary's own key parameter in a bundled prelude, and to nothing else.
+    bool genericLibraryKey(TypeId key, SourceSpan span) const {
+        const auto* record = model->typeContext.type(key);
+        const auto dictionary = model->semanticModelValue->roleSymbol(semantic::LibraryRole::dictType);
+        if (record == nullptr || record->kind != TypeKind::typeParameter || !dictionary.has_value() ||
+            !model->semanticModelValue->isPreludeSource(span)) {
+            return false;
+        }
+        const auto* declaration = model->semanticModelValue->symbol(*dictionary);
+        return declaration != nullptr && std::find(declaration->typeParameters.begin(),
+                                                   declaration->typeParameters.end(),
+                                                   record->symbol) != declaration->typeParameters.end();
+    }
+
+    // A key outside the four admitted types (decision 0027, Decision 4), a function-type key and a type-parameter key
+    // are rejected where the dictionary type is written; a literal whose key type came from a context is not checked
+    // again.
     void rejectInvalidDictionaryKey(TypeId key, SourceSpan span) {
+        // One diagnostic per key: a function type, then a bare type parameter, then any other key outside the
+        // admitted four (a type built from a parameter is outside them whatever the parameter is).
+        if (key == model->typeContext.errorType() || key == model->typeContext.neverType()) return;
         if (containsFunctionType(key)) {
             report(TypeCheckingDiagnosticId::invalidFunctionType, span,
                    "a function type cannot be a dictionary key: function values have no equality",
                    "key the dictionary by a name or a number and store the function value as the value");
+            return;
         }
-        if (model->typeContext.mentionsTypeParameter(key)) {
+        if (const auto* record = model->typeContext.type(key);
+            record != nullptr && record->kind == TypeKind::typeParameter) {
             report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
-                   "a dictionary key cannot be the type parameter type '" +
-                           model->typeContext.displayName(key) + "'",
+                   "a dictionary key cannot be the type parameter type '" + model->typeContext.displayName(key) + "'",
                    "keys are restricted to Int, Bool, UInt8 and String, and no protocol states that "
                    "yet (spec 20.5)");
+            return;
+        }
+        if (!admittedKeyKind(key)) {
+            report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
+                   "'" + model->typeContext.displayName(key) + "' cannot be a dictionary key",
+                   "keys are restricted to Int, Bool, UInt8 and String, closed until plan 0012 (spec 2.6, 20.5)");
         }
     }
 
@@ -4609,6 +4978,19 @@ private:
             const syntax::CallExprSyntax::Ptr& expression,
             ReceiverMarker receiverMarker = ReceiverMarker::none,
             std::optional<TypeId> expectedResult = std::nullopt) {
+        // A `place_address` call is accepted only as a direct argument of another call (decision 0026), and not of
+        // an initializer or enum case, which would store the address beyond the call (stage 2b review).
+        const auto outerTarget = model->callTarget(expression);
+        const auto* outerSymbol = outerTarget.has_value() ? model->semanticModelValue->symbol(*outerTarget) : nullptr;
+        const bool outerStores = outerSymbol != nullptr && storesItsArguments(*outerSymbol);
+        for (const auto& argument : expression->arguments) {
+            if (outerStores) break;
+            auto direct = argument->value;
+            while (direct != nullptr && direct->kind == syntax::Kind::parenthesizedExpr) {
+                direct = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(direct)->expression;
+            }
+            if (direct != nullptr && direct->kind == syntax::Kind::callExpr) permittedPlaceAddress.insert(direct.get());
+        }
         const auto* savedCallee = currentCallee;
         currentCallee = expression->callee.get();
         const auto calleeType = checkExpression(expression->callee).value_or(
@@ -4840,7 +5222,8 @@ private:
             } else if (requiredReceiver == syntax::AccessEffect::consuming &&
                        semanticTarget != nullptr &&
                        (semanticTarget->kind == semantic::SymbolKind::builtinMember ||
-                        semanticTarget->libraryRole == semantic::LibraryRole::storedConsumer)) {
+                        semanticTarget->libraryRole == semantic::LibraryRole::storedConsumer ||
+                        semanticTarget->libraryRole == semantic::LibraryRole::containerEnd)) {
                 // A builtin consuming member works on the receiver's storage in place, so it needs a
                 // named place: not a temporary, an array element or a file-scope constant.
                 const auto path = storagePath(member->base);
@@ -4870,7 +5253,6 @@ private:
         }
         collectCallReceiverAccess(expression, semanticTarget, accesses);
 
-        std::optional<TypeId> receiverArgumentType;
         std::optional<TypeId> receiverResultType;
         if (semanticTarget != nullptr &&
             semanticTarget->kind == semantic::SymbolKind::builtinMember &&
@@ -4881,32 +5263,27 @@ private:
             const auto* baseType = base.has_value()
                     ? model->typeContext.type(*base)
                     : nullptr;
-            if (semanticTarget->name == "append" &&
-                baseType != nullptr && baseType->kind == TypeKind::array &&
-                baseType->arguments.size() == 1) {
-                receiverArgumentType = baseType->arguments[0];
-            } else if (semanticTarget->name == "removeLast" &&
-                       baseType != nullptr && baseType->kind == TypeKind::array &&
-                       baseType->arguments.size() == 1) {
-                const auto elementType = baseType->arguments[0];
-                receiverResultType = model->typeContext.optionalType(elementType);
-            } else if (semanticTarget->name == "get" &&
-                       baseType != nullptr && baseType->kind == TypeKind::dictionary &&
-                       baseType->arguments.size() == 2) {
-                receiverArgumentType = baseType->arguments[0];
-                // Copy the value type out first: creating the Optional can grow the type table and
-                // invalidate `baseType`.
+            if (semanticTarget->name == "utf8" &&
+                       baseType != nullptr && baseType->kind == TypeKind::string) {
+                receiverResultType = model->typeContext.arrayType(model->typeContext.uint8Type());
+                model->symbolTypes[semanticTarget->id] = *receiverResultType;
+                model->callables.at(semanticTarget->id).result = *receiverResultType;
+            }
+        }
+        // `d.get(key:)` of a library dictionary returns a copy of the stored value (decision 0027): keyed on the
+        // callee's role, a noncopyable value is rejected here, before any instance of the method is demanded.
+        if (semanticTarget != nullptr && semanticTarget->libraryRole == semantic::LibraryRole::dictGet &&
+            expression->callee->kind == syntax::Kind::memberExpr) {
+            const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+            const auto base = model->typeOf(member->base);
+            const auto* baseType = base.has_value() ? model->typeContext.type(*base) : nullptr;
+            if (baseType != nullptr && baseType->arguments.size() == 2) {
                 const auto valueType = baseType->arguments[1];
-                receiverResultType = model->typeContext.optionalType(valueType);
                 if (const auto reason = model->noncopyableReason(valueType)) {
-                    report(
-                            TypeCheckingDiagnosticId::copyOfNoncopyable,
-                            expression->span,
-                            "'get' returns a copy of the stored value, and '" +
-                                    model->typeContext.displayName(valueType) +
-                                    "' is noncopyable: " + *reason,
-                            "a noncopyable element cannot be read without removing it, which "
-                            "is not supported yet");
+                    report(TypeCheckingDiagnosticId::copyOfNoncopyable, expression->span,
+                           "'get' returns a copy of the stored value, and '" +
+                                   model->typeContext.displayName(valueType) + "' is noncopyable: " + *reason,
+                           "a noncopyable element cannot be read without removing it, which is not supported yet");
                 }
             }
         }
@@ -4933,10 +5310,7 @@ private:
             const auto parameterIndex = semanticTarget == nullptr
                     ? std::optional<size_t>()
                     : parameterIndexForArgument(*semanticTarget, *argument, index);
-            const auto expected = receiverArgumentType.has_value() &&
-                                  parameterIndex == std::optional<size_t>(0)
-                    ? receiverArgumentType
-                    : signature != nullptr && parameterIndex.has_value() &&
+            const auto expected = signature != nullptr && parameterIndex.has_value() &&
                       *parameterIndex < signature->parameters.size()
                     ? std::optional<TypeId>(signature->parameters[*parameterIndex])
                     : std::optional<TypeId>();
@@ -4945,9 +5319,17 @@ private:
                     : checkExpression(argument->value, expected);
             // A memberwise initializer, an enum case and `append` store their argument, so it
             // is an owned context; every other parameter borrows or is marked `consume`.
-            const auto storesArgument = semanticTarget != nullptr && storesItsArguments(*semanticTarget);
+            const auto roleOwnedArgument = semanticTarget != nullptr && parameterIndex.has_value() &&
+                    model->isOwnedArgumentContext(semanticTarget->id, *parameterIndex);
+            const auto storesArgument = semanticTarget != nullptr &&
+                    (storesItsArguments(*semanticTarget) || roleOwnedArgument);
             if (storesArgument) requireStoredArgument(*argument, actual);
-            if (semanticTarget != nullptr && parameterIndex.has_value() &&
+            if (roleOwnedArgument &&
+                (argument->accessMarker == nullptr || consumesArgument(*argument))) {
+                collectCallArgumentAccess(*argument,
+                        consumesArgument(*argument) ? syntax::AccessEffect::consuming
+                                                    : syntax::AccessEffect::borrowing, accesses);
+            } else if (semanticTarget != nullptr && parameterIndex.has_value() &&
                 !(storesArgument && consumesArgument(*argument))) {
                 checkCallArgumentAccess(*semanticTarget, *parameterIndex, *argument);
                 const auto effect = semanticTarget->callable->parameters[*parameterIndex].access;
@@ -5092,17 +5474,89 @@ private:
             checkCallArgumentAccess(target, index, *argument);
         };
         if (name == "joyeer_intrinsic_needs_destroy") return model->typeContext.boolType();
+        if (name == "joyeer_intrinsic_key_kind") {
+            // Only the four admitted key types have a key kind; a generic one is checked per instance in lowering.
+            const auto* written = model->typeContext.type(type);
+            const bool parameter = written != nullptr && written->kind == TypeKind::typeParameter;
+            if (type != error && type != model->typeContext.neverType() && !parameter && !admittedKeyKind(type)) {
+                report(TypeCheckingDiagnosticId::invalidTypeArgument, expression->typeArguments[0]->span,
+                       "'" + name + "' needs a dictionary key type, but '" + model->typeContext.displayName(type) +
+                               "' is not one",
+                       "keys are restricted to Int, Bool, UInt8 and String (spec 20.5)");
+            }
+            return model->typeContext.intType();
+        }
         if (name == "joyeer_intrinsic_size_of" || name == "joyeer_intrinsic_align_of" ||
             name == "joyeer_intrinsic_stack_slot" || name == "joyeer_intrinsic_clone_callback" ||
             name == "joyeer_intrinsic_destroy_callback") {
             return model->typeContext.intType();
         }
         if (expression->arguments.empty()) return error;
+        if (name == "joyeer_intrinsic_borrow_address") {
+            // `borrow_address<T>(value: place)`: the read-only address of a named readable place (a local, any
+            // parameter, or a field path of those), valid for the call it is a direct argument of; an rvalue has no
+            // place. Read-only is the library author's duty, as `place_address`'s direct-argument rule is checked
+            // here and not in the verifier (decision 0027).
+            if (expression->arguments.size() != 1) return error;
+            if (!permittedPlaceAddress.contains(expression.get())) {
+                report(TypeCheckingDiagnosticId::invalidCallArguments, expression->span,
+                       "'" + name + "' may only be a direct argument of a call",
+                       "write f(address: " + name + "<T>(value: place)), not a binding or a return value");
+            }
+            const auto& placeArgument = expression->arguments[0];
+            const auto actual = checkExpression(placeArgument->value,
+                    type == error ? std::nullopt : std::optional<TypeId>(type));
+            if (actual.has_value() && type != error) requireAssignable(*actual, type, placeArgument->value->span);
+            requireExactPlaceType(actual, type, name, placeArgument->value->span);
+            if (!isNamedLocalPlace(placeArgument->value)) {
+                report(TypeCheckingDiagnosticId::invalidCallArguments, placeArgument->value->span,
+                       "'" + name + "' needs a named place: a local, a parameter or a field path of those",
+                       "bind the value to a local first");
+            }
+            checkCallArgumentAccess(target, 0, *placeArgument);
+            return model->typeContext.intType();
+        }
+        if (name == "joyeer_intrinsic_place_address") {
+            // `place_address<T>(&place)`: the address of an `inout` place, as an `Int`, for passing the place to a
+            // runtime function. It must be a direct argument of a call, so that call holds the `inout` access for
+            // its duration; a stored or returned address would outlive the access (decision 0026).
+            if (expression->arguments.size() != 1) return error;
+            if (!permittedPlaceAddress.contains(expression.get())) {
+                report(TypeCheckingDiagnosticId::invalidCallArguments, expression->span,
+                       "'" + name + "' may only be a direct argument of a call",
+                       "write f(address: " + name + "<T>(value: &place)), not a binding or a return value");
+            }
+            const auto& placeArgument = expression->arguments[0];
+            const auto actual = checkExpression(placeArgument->value,
+                    type == error ? std::nullopt : std::optional<TypeId>(type));
+            if (actual.has_value() && type != error) requireAssignable(*actual, type, placeArgument->value->span);
+            requireExactPlaceType(actual, type, name, placeArgument->value->span);
+            checkCallArgumentAccess(target, 0, *placeArgument);
+            return model->typeContext.intType();
+        }
         checkAddress(0);
-        if (name == "joyeer_intrinsic_clone_at" || name == "joyeer_intrinsic_destroy_range") {
+        if (name == "joyeer_intrinsic_stack_block") {
+            // `stack_block<T>(count: N)`: contiguous stack storage for `N` slots, valid until the invocation
+            // returns and never destroyed. The count is a literal so the storage is sized at compile time and is
+            // allocated once per invocation, not on a loop's back edge (decision 0026).
+            if (expression->arguments.size() != 1) return error;
+            const auto& countArgument = expression->arguments[0];
+            const auto literal = countArgument->value != nullptr && countArgument->value->kind == syntax::Kind::literalExpr
+                    ? std::static_pointer_cast<syntax::LiteralExprSyntax>(countArgument->value) : nullptr;
+            if (literal == nullptr || literal->literal == nullptr || literal->literal->kind != decimalLiteral) {
+                report(TypeCheckingDiagnosticId::invalidCallArguments, countArgument->value->span,
+                       "the count of a stack block must be a non-negative integer literal",
+                       "write " + name + "<T>(count: 8)");
+                return error;
+            }
+            return model->typeContext.intType();
+        }
+        if (name == "joyeer_intrinsic_clone_at" || name == "joyeer_intrinsic_destroy_range" ||
+            name == "joyeer_intrinsic_slot_address") {
             if (expression->arguments.size() != 2) return error;
             checkAddress(1);
-            return model->typeContext.voidType();
+            return name == "joyeer_intrinsic_slot_address" ? model->typeContext.intType()
+                                                           : model->typeContext.voidType();
         }
         if (name == "joyeer_intrinsic_move_in") {
             if (expression->arguments.size() != 2) return error;
@@ -5290,6 +5744,31 @@ private:
             syntax::AccessEffect effect,
             std::vector<CallAccess>& accesses,
             bool sustained = true) const {
+        // A direct `place_address(&place)` argument holds `place` inout while the enclosing call runs, so a
+        // sibling argument that reads or writes the same place conflicts (decision 0026).
+        auto direct = argument.value;
+        while (direct != nullptr && direct->kind == syntax::Kind::parenthesizedExpr) {
+            direct = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(direct)->expression;
+        }
+        if (direct != nullptr && direct->kind == syntax::Kind::callExpr) {
+            const auto inner = std::static_pointer_cast<syntax::CallExprSyntax>(direct);
+            const auto innerTarget = model->callTarget(inner);
+            const auto* innerSymbol = innerTarget.has_value() ? model->semanticModelValue->symbol(*innerTarget) : nullptr;
+            const bool place = innerSymbol != nullptr && innerSymbol->name == "joyeer_intrinsic_place_address";
+            const bool borrowed = innerSymbol != nullptr && innerSymbol->name == "joyeer_intrinsic_borrow_address";
+            if ((place || borrowed) && innerSymbol->kind == semantic::SymbolKind::builtinFunction &&
+                inner->arguments.size() == 1) {
+                // `borrow_address` holds a read of its place for the call (decision 0027).
+                const auto placePath = storagePath(inner->arguments[0]->value);
+                if (placePath.has_value()) {
+                    collectSubscriptIndexAccesses(inner->arguments[0]->value, accesses);
+                    accesses.push_back(CallAccess { *placePath,
+                            place ? syntax::AccessEffect::inout : syntax::AccessEffect::borrowing,
+                            argument.value->span, true });
+                    return;
+                }
+            }
+        }
         const auto path = storagePath(argument.value);
         if (path.has_value()) {
             collectSubscriptIndexAccesses(argument.value, accesses);
@@ -5478,12 +5957,16 @@ private:
                     const auto parameterIndex = symbol == nullptr
                             ? std::optional<size_t>()
                             : parameterIndexForArgument(*symbol, *argument, index);
-                    const auto effect = symbol != nullptr &&
+                    auto effect = symbol != nullptr &&
                                         symbol->callable.has_value() &&
                                         parameterIndex.has_value()
                             ? symbol->callable->parameters[*parameterIndex].access
                             : index < valueEffects.size() ? valueEffects[index]
                                                           : syntax::AccessEffect::borrowing;
+                    if (symbol != nullptr && parameterIndex.has_value() && argument->accessMarker == nullptr &&
+                        model->isOwnedArgumentContext(symbol->id, *parameterIndex)) {
+                        effect = syntax::AccessEffect::borrowing;
+                    }
                     collectCallArgumentAccess(*argument, effect, accesses, false);
                 }
                 break;
@@ -5606,14 +6089,56 @@ private:
         bool writable = true;
         bool requiresMarker = false;
         std::string immutableName;
-        // The place is the `count` of a library array, read-only outside the array's own file.
+        // The place is the `count` of a library array or dictionary, read-only outside the collection's own file.
         bool libraryReadOnly = false;
+        bool dictionaryCount = false;
+        // The place is a byte of a String, which `s[i]` only reads (spec 2.1.1).
+        bool stringByte = false;
     };
 
     static std::optional<std::string> readOnlyHelp(const StorageAccess& storage) {
+        if (storage.stringByte) {
+            return "a String's bytes are read-only (spec 2.1.1): build a new String instead";
+        }
         if (!storage.libraryReadOnly) return std::nullopt;
+        if (storage.dictionaryCount) {
+            return "a dictionary's 'count' changes only by inserting with '&d[key] = value'";
+        }
         return "an array's 'count' changes only through the array's own methods, such as append or removeLast";
     }
+
+    // Whether `expression`, through parentheses, is `s[i]` of a String: a byte, which is only ever read.
+    bool isStringByte(const syntax::ExprPtr& expression) const {
+        auto current = expression;
+        while (current != nullptr && current->kind == syntax::Kind::parenthesizedExpr) {
+            current = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(current)->expression;
+        }
+        if (current == nullptr || current->kind != syntax::Kind::subscriptExpr) return false;
+        const auto base = model->typeOf(std::static_pointer_cast<syntax::SubscriptExprSyntax>(current)->base);
+        return base.has_value() && *base == model->typeContext.stringType();
+    }
+
+    // `consume s[i]` would move a byte out of a String, whose bytes are read-only (spec 2.1.1). Reported once per
+    // operand, whichever of the marker and the argument checks sees it first with its type known.
+    // Returns whether `operand` is a String byte, so a caller reports nothing else about consuming it.
+    bool rejectConsumedStringByte(const syntax::ExprPtr& operand) {
+        if (!isStringByte(operand)) return false;
+        if (!reportedStringByteConsumes.insert(operand.get()).second) return true;
+        report(TypeCheckingDiagnosticId::invalidConsumeArgument, operand->span, "cannot consume a byte of a String",
+               "a String's bytes are read-only (spec 2.1.1): copy the byte into a binding ('let byte = s[i]') and "
+               "use or consume that");
+        return true;
+    }
+
+    // Whether `expression`, through parentheses, is a subscript.
+    static bool isSubscript(const syntax::ExprPtr& expression) {
+        auto current = expression;
+        while (current != nullptr && current->kind == syntax::Kind::parenthesizedExpr) {
+            current = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(current)->expression;
+        }
+        return current != nullptr && current->kind == syntax::Kind::subscriptExpr;
+    }
+    std::unordered_set<const syntax::ExprSyntax*> reportedStringByteConsumes;
 
     StorageAccess analyzeStorage(const syntax::ExprPtr& expression) const {
         if (expression == nullptr) return StorageAccess { false, false, "<invalid>" };
@@ -5646,6 +6171,9 @@ private:
                     result.writable = false;
                     result.immutableName = symbol->name;
                     result.libraryReadOnly = true;
+                    if (const auto base = model->typeOf(member->base); base.has_value()) {
+                        result.dictionaryCount = model->typeContext.isDictionary(model->typeContext.type(*base));
+                    }
                 }
                 return result;
             }
@@ -5654,6 +6182,12 @@ private:
                         std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
                 auto result = analyzeStorage(subscript->base);
                 result.requiresMarker = true;
+                // Every String byte is read-only, so a `let` base reports the byte, not the binding: making it
+                // mutable would not help.
+                if (isStringByte(expression)) {
+                    result.writable = false;
+                    result.stringByte = true;
+                }
                 return result;
             }
             case syntax::Kind::accessExpr:
@@ -5682,7 +6216,7 @@ private:
             const auto base = model->typeOf(
                     std::static_pointer_cast<syntax::SubscriptExprSyntax>(path)->base);
             const auto* baseType = base.has_value() ? model->typeContext.type(*base) : nullptr;
-            if (baseType != nullptr && baseType->kind == TypeKind::dictionary) {
+            if (model->typeContext.isDictionary(baseType)) {
                 report(TypeCheckingDiagnosticId::invalidOperatorOperands, assignment->span,
                        "compound assignment to a dictionary element is not supported; "
                        "read it with 'get' and assign the result");
@@ -5712,8 +6246,9 @@ private:
             report(
                     TypeCheckingDiagnosticId::assignmentToImmutable,
                     target == nullptr ? SourceSpan {} : target->span,
-                    "cannot assign through immutable binding or field '" +
-                            storage.immutableName + "'",
+                    storage.stringByte ? std::string("cannot assign to a byte of a String")
+                                       : "cannot assign through immutable binding or field '" +
+                                                 storage.immutableName + "'",
                     readOnlyHelp(storage));
             return;
         }
@@ -5787,7 +6322,7 @@ private:
                     argument.value->span,
                     "initializing argument must be a whole mutable owning local or consuming parameter");
         }
-        if (required == syntax::AccessEffect::consuming &&
+        if (required == syntax::AccessEffect::consuming && !rejectConsumedStringByte(argument.value) &&
             !isConsumable(argument.value)) {
             report(
                     TypeCheckingDiagnosticId::invalidConsumeArgument,
@@ -5839,7 +6374,6 @@ private:
     }
 
     static bool storesItsArguments(const semantic::Symbol& target) {
-        if (target.kind == semantic::SymbolKind::builtinMember) return target.name == "append";
         return target.callable.has_value() &&
                 (target.callable->kind == semantic::CallableKind::structureInitializer ||
                  target.callable->kind == semantic::CallableKind::enumCase);
@@ -5926,7 +6460,7 @@ private:
             requireNoImplicitCopy(argument.value, type);
             return;
         }
-        if (!isConsumable(argument.value)) {
+        if (!rejectConsumedStringByte(argument.value) && !isConsumable(argument.value)) {
             report(
                     TypeCheckingDiagnosticId::invalidConsumeArgument,
                     argument.value->span,
@@ -6095,19 +6629,17 @@ private:
                 indexType = model->typeContext.intType();
                 result = model->typeContext.uint8Type();
                 break;
-            case TypeKind::array:
-                indexType = model->typeContext.intType();
-                result = baseType->arguments[0];
-                break;
-            case TypeKind::dictionary:
-                indexType = baseType->arguments[0];
-                result = baseType->arguments[1];
-                break;
             case TypeKind::structure:
                 if (model->isArrayRoleType(base)) {
                     // A library array subscripts like a builtin one (decision 0025).
                     indexType = model->typeContext.intType();
                     result = baseType->arguments[0];
+                    break;
+                }
+                if (model->typeContext.isDictionary(baseType)) {
+                    // A library dictionary subscripts by its key to its value (decision 0027).
+                    indexType = baseType->arguments[0];
+                    result = baseType->arguments[1];
                     break;
                 }
                 [[fallthrough]];
@@ -6638,15 +7170,96 @@ private:
         return result;
     }
 
+    // A place `borrow_address` may take (decision 0027): a local binding, a parameter (including `self`) or a field path
+    // of those; never a subscript, a computed member, a top-level constant or an enum case.
+    bool isNamedLocalPlace(const syntax::ExprPtr& expression) const {
+        if (expression == nullptr) return false;
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return isNamedLocalPlace(std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+        }
+        if (expression->kind == syntax::Kind::nameExpr) {
+            const auto symbol = model->referencedSymbol(expression);
+            const auto* declared = symbol.has_value() ? model->semanticModelValue->symbol(*symbol) : nullptr;
+            if (declared == nullptr) return false;
+            if (declared->kind == semantic::SymbolKind::parameter ||
+                declared->kind == semantic::SymbolKind::patternBinding) {
+                return true;
+            }
+            const auto* scope = model->semanticModelValue->scope(declared->ownerScope);
+            return declared->kind == semantic::SymbolKind::binding && scope != nullptr &&
+                    scope->kind != semantic::ScopeKind::file && scope->kind != semantic::ScopeKind::module &&
+                    scope->kind != semantic::ScopeKind::prelude;
+        }
+        if (expression->kind == syntax::Kind::memberExpr) {
+            const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression);
+            const auto symbol = model->referencedSymbol(member);
+            const auto* declared = symbol.has_value() ? model->semanticModelValue->symbol(*symbol) : nullptr;
+            return declared != nullptr && declared->kind == semantic::SymbolKind::structureField &&
+                    isNamedLocalPlace(member->base);
+        }
+        return false;
+    }
+
+    // The place of `borrow_address` or `place_address` has exactly the type the intrinsic names: assignability would
+    // let an `Int` place stand for an `Int?` layout (stage 2b review).
+    void requireExactPlaceType(std::optional<TypeId> actual, TypeId type, const std::string& name, SourceSpan span) {
+        const auto error = model->typeContext.errorType();
+        if (!actual.has_value() || *actual == type || *actual == error || type == error) return;
+        if (!model->typeContext.isAssignable(*actual, type)) return;  // already reported as a type mismatch
+        report(TypeCheckingDiagnosticId::typeMismatch, span,
+               "the place of '" + name + "' has type '" + model->typeContext.displayName(*actual) +
+                       "', not exactly '" + model->typeContext.displayName(type) + "'",
+               "name the place's own type as the type argument");
+    }
+
+    // The four dictionary key types the runtime compares by kind (decision 0027, spec 20.5).
+    bool admittedKeyKind(TypeId type) const {
+        const auto* record = model->typeContext.type(type);
+        return record != nullptr && (record->kind == TypeKind::integer || record->kind == TypeKind::boolean ||
+                                     record->kind == TypeKind::string || record->kind == TypeKind::uint8);
+    }
+
+    // `Never` has no values, so an array of it could only be empty and every operation on one would bind a value
+    // that cannot exist: it is rejected like `Never` in any other generic (decision 0026, revision 5).
+    TypeId rejectNeverElement(TypeId element, SourceSpan span, bool literal = false) {
+        if (element != model->typeContext.neverType()) return element;
+        report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
+               "the element type of an array cannot be 'Never'",
+               literal ? "'Never' has no values (spec 2.9); give the literal a contextual element type, or put "
+                         "an element that has a value first"
+                       : "'Never' has no values, so an array of it could never hold one (spec 2.9)");
+        return model->typeContext.errorType();
+    }
+
+    // The same rule for a dictionary's key or value type (decision 0026, A11).
+    TypeId rejectNeverDictionaryPart(TypeId type, SourceSpan span, const char* part, bool literal = false) {
+        if (type != model->typeContext.neverType()) return type;
+        report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
+               std::string("the ") + part + " type of a dictionary cannot be 'Never'",
+               literal ? "'Never' has no values (spec 2.9); give the literal a contextual type, or put an entry "
+                         "that has a value first"
+                       : "'Never' has no values, so a dictionary of it could never hold an entry (spec 2.9)");
+        return model->typeContext.errorType();
+    }
+
     TypeId checkArray(
             const syntax::ArrayExprSyntax::Ptr& expression,
             std::optional<TypeId> expected) {
         std::optional<TypeId> elementType;
         if (expected.has_value()) {
+            // An optional context (`[T]?`) gives the literal its element type too: one layer, as the value is
+            // promoted through one.
             const auto* expectedType = model->typeContext.type(*expected);
-            if (expectedType != nullptr && expectedType->kind == TypeKind::array) {
+            if (model->typeContext.isOptional(expectedType) && !expectedType->arguments.empty()) {
+                expectedType = model->typeContext.type(expectedType->arguments[0]);
+            }
+            if (model->typeContext.isArray(expectedType)) {
                 elementType = expectedType->arguments[0];
             }
+        }
+        // The annotation was already rejected (for example `[Never]`): no follow-on error for its literal.
+        if (expression->elements.empty() && expected.has_value() && *expected == model->typeContext.errorType()) {
+            return model->typeContext.errorType();
         }
         if (expression->elements.empty() && !elementType.has_value()) {
             report(
@@ -6656,6 +7269,8 @@ private:
             return model->typeContext.errorType();
         }
 
+        const bool annotationRejected = expected.has_value() && *expected == model->typeContext.errorType();
+        const auto diagnosticsBefore = diagnostics.size();
         for (const auto& element : expression->elements) {
             permitMove(element);
             const auto actual = checkExpression(element, elementType).value_or(
@@ -6667,7 +7282,13 @@ private:
                 requireAssignable(actual, *elementType, element->span);
             }
         }
-        return model->typeContext.arrayType(*elementType);
+        // An element type of `Never` is reported once: not again when the annotation was already rejected or an
+        // element already produced an error (`[return, 1]`).
+        if (*elementType == model->typeContext.neverType() &&
+            (annotationRejected || diagnostics.size() != diagnosticsBefore)) {
+            return model->typeContext.errorType();
+        }
+        return model->typeContext.arrayType(rejectNeverElement(*elementType, expression->span, true));
     }
 
     TypeId checkDictionary(
@@ -6676,12 +7297,22 @@ private:
         std::optional<TypeId> keyType;
         std::optional<TypeId> valueType;
         if (expected.has_value()) {
+            // An optional context (`[K: V]?`) gives the literal its key and value types too: one layer, as the value
+            // is promoted through one.
             const auto* expectedType = model->typeContext.type(*expected);
-            if (expectedType != nullptr && expectedType->kind == TypeKind::dictionary) {
+            if (model->typeContext.isOptional(expectedType) && !expectedType->arguments.empty()) {
+                expectedType = model->typeContext.type(expectedType->arguments[0]);
+            }
+            if (model->typeContext.isDictionary(expectedType)) {
                 keyType = expectedType->arguments[0];
                 valueType = expectedType->arguments[1];
             }
         }
+        // A key type from the context was checked where the context wrote it.
+        const bool contextualKey = keyType.has_value();
+        // The annotation was already rejected (for example `[String: Never]`): no follow-on error for its literal.
+        const bool annotationRejected = expected.has_value() && *expected == model->typeContext.errorType();
+        if (expression->entries.empty() && annotationRejected) return model->typeContext.errorType();
         if (expression->entries.empty() && (!keyType.has_value() || !valueType.has_value())) {
             report(
                     TypeCheckingDiagnosticId::missingContextualType,
@@ -6690,6 +7321,7 @@ private:
             return model->typeContext.errorType();
         }
 
+        const auto diagnosticsBefore = diagnostics.size();
         for (const auto& entry : expression->entries) {
             permitMove(entry->value);
             const auto actualKey = checkExpression(entry->key, keyType).value_or(
@@ -6703,9 +7335,18 @@ private:
             if (!valueType.has_value()) valueType = actualValue;
             else requireAssignable(actualValue, *valueType, entry->value->span);
         }
-        rejectInvalidDictionaryKey(*keyType, expression->entries.empty()
-                ? expression->span : expression->entries.front()->key->span);
-        return model->typeContext.dictionaryType(*keyType, *valueType);
+        // `Never` is reported once: not again when the annotation was rejected or an entry already had an error.
+        if ((*keyType == model->typeContext.neverType() || *valueType == model->typeContext.neverType()) &&
+            (annotationRejected || diagnostics.size() != diagnosticsBefore)) {
+            return model->typeContext.errorType();
+        }
+        const auto key = rejectNeverDictionaryPart(*keyType, expression->span, "key", true);
+        const auto value = rejectNeverDictionaryPart(*valueType, expression->span, "value", true);
+        if (!contextualKey) {
+            rejectInvalidDictionaryKey(key, expression->entries.empty()
+                    ? expression->span : expression->entries.front()->key->span);
+        }
+        return model->typeContext.dictionaryType(key, value);
     }
 };
 
@@ -6727,8 +7368,6 @@ const char* typeKindName(TypeKind kind) {
         case TypeKind::uint8: return "uint8";
         case TypeKind::structure: return "structure";
         case TypeKind::enumeration: return "enumeration";
-        case TypeKind::array: return "array";
-        case TypeKind::dictionary: return "dictionary";
         case TypeKind::function: return "function";
         case TypeKind::typeParameter: return "type-parameter";
         case TypeKind::int8: return "int8";

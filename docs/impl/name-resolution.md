@@ -99,19 +99,23 @@ ambiguous.
 The current prelude declares:
 
 - types: `Void`, `Never`, `Bool`, `String`, `Int`/`UInt`, signed/unsigned
-  8/16/32/64-bit integers, `Float`, `Double`, `Array`, `Dict`,
+  8/16/32/64-bit integers, `Float`, `Double`,
   `IOError`, `FileSystemError`, `FileKind`,
   `ProcessStatus`, and `ProcessError`;
-- `String.count`, `Array.count`, and `Dict.count`;
-- `String.utf8()` and mutating `Array.append(element:)`;
-- borrowing `Dict.get(key:)`, with concrete key/result types supplied by typing;
+- `String.count` and `String.utf8()`;
 - `Optional` and `Result`, declared as ordinary enums in the always-loaded role prelude
   `lib/Runtime/roles.joyeer` and bound by `@compiler_role(optional_type)` / `@compiler_role(result_type)`
   ([0024](../decisions/0024-library-optional-and-result.md)); `T?` and `nil` bind to the role, not the name;
-- the roles `array_type`, `array_element`, `array_copy` and `container_end`
-  ([0025](../decisions/0025-library-collection-capabilities.md)), accepted only in a bundled prelude. No bundled
-  declaration uses them until Phase 3 of plan 0011; the type checker validates the shape and the second field
+- the roles `array_type`, `array_element`, `array_copy`, `container_end` and `array_literal`
+  ([0025](../decisions/0025-library-collection-capabilities.md)), accepted only in a bundled prelude.
+  `lib/Runtime/collections.joyeer` declares the real `Array<T>` with these roles
+  ([0026](../decisions/0026-library-array.md)); the type checker validates the shape and the second field
   (`count`) of an `array_type` struct is marked readable from any file, while writing it elsewhere is rejected;
+- the dictionary roles `dict_type`, `dict_element`, `dict_set`, `dict_get`, `dict_copy`, `dict_literal` and
+  `dict_entry` ([0027](../decisions/0027-library-dict.md)), accepted only in a bundled prelude. The resolver records
+  the `dict_type` struct and its entry, and marks `count` readable as for the array. `lib/Runtime/collections.joyeer`
+  declares the real `Dict<K, V>`; `[K: V]` and dictionary literals bind to the role, and a prelude without it is
+  reported (`invalid-prelude`, once) only when a program mentions a dictionary;
 - the builtin `IOError`, `FileSystemError`, `FileKind`, `ProcessStatus`, and
   `ProcessError` cases;
 - builtin functions: `print(value:)`, `byteToInt(value:)`, and
@@ -121,6 +125,12 @@ The current prelude declares:
   only the enumerations they return (`IOError`, `FileSystemError`, `FileKind`,
   `ProcessStatus`, `ProcessError`, `StderrError`, `StdinError`).
 - the builtin marker protocol `Copyable`, distinct from a runtime type.
+
+`[T]` and literals bind to the array role symbol, not a lookup of `Array` in the user's scope.
+Nominal `Array<T>` remains shadowable; a user declaration of that name prints qualified.
+A missing array role is `invalid-prelude` at the collections source. The third bundled prelude is
+runtime-authorized, has its own dense source ID, and is independent of a supplied concurrency prelude.
+Tests replace it through `ReplacedPrelude::collections`, not by replacing the enum-role prelude.
 
 Protocols have type-namespace symbols and member scopes holding requirement
 methods. A generic function introduces distinct type-parameter symbols in its

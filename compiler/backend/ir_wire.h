@@ -3,12 +3,14 @@
 
 #include "compiler/ir/ir.h"
 
+#include <limits>
 #include <string_view>
 #include <type_traits>
 
 namespace joyeer::llvmbackend::wire {
 
-inline constexpr uint32_t version = 20;
+// 25: the builtin dictionary slots (opcodes 39-41, `subscript_addr` 50, type kind 11) are removed (decision 0027).
+inline constexpr uint32_t version = 25;
 
 // This private wire format carries Joyeer IR, not LLVM assembly. Both sides
 // allocate their own C++ objects; only borrowed bytes cross the backend C ABI.
@@ -58,7 +60,8 @@ template<class Archive> void fields(Archive& archive, NativeBinding& value) {
 }
 template<class Archive> void fields(Archive& archive, ir::Function& value) {
     archive(value.id, value.symbol, value.name, value.parameters, value.resultType,
-            value.returnsValue, value.elementAddressor, value.isExternal, value.entry, value.blocks,
+            value.returnsValue, value.elementAddressor, value.literalFactory, value.alwaysInline,
+            value.isExternal, value.entry, value.blocks,
             value.debugLocation, value.debugScope, value.entryDebugVariableBindings,
             value.isRootModule, value.runtimeContext, value.coreContext, value.nativeBinding);
 }
@@ -70,7 +73,7 @@ template<class Archive> void fields(Archive& archive, ir::FieldDefinition& value
     archive(value.symbol, value.name, value.type, value.isMutable);
 }
 template<class Archive> void fields(Archive& archive, ir::StructureDefinition& value) {
-    archive(value.symbol, value.type, value.name, value.fields, value.deinitializer, value.inertZero,
+    archive(value.symbol, value.type, value.name, value.fields, value.deinitializer, value.role,
             value.copier);
 }
 template<class Archive> void fields(Archive& archive, ir::EnumCaseDefinition& value) {
@@ -145,6 +148,18 @@ private:
                 bits |= static_cast<uint64_t>(static_cast<unsigned char>(bytes[index])) << (index * 8);
             }
             bytes.remove_prefix(8);
+            if constexpr (std::is_enum_v<Value>) {
+                using Underlying = std::underlying_type_t<Value>;
+                if (bits > static_cast<uint64_t>(std::numeric_limits<Underlying>::max())) {
+                    valid = false;
+                    return;
+                }
+            } else if constexpr (std::is_unsigned_v<Value>) {
+                if (bits > static_cast<uint64_t>(std::numeric_limits<Value>::max())) {
+                    valid = false;
+                    return;
+                }
+            }
             value = static_cast<Value>(bits);
         } else {
             // Patterns are recursive; reject malformed input before exhausting

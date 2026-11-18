@@ -29,6 +29,15 @@
 
 namespace {
 
+TEST(RuntimeTest, ArrayHandleMatchesTheLibraryThreeWordABI) {
+    EXPECT_EQ(sizeof(void*), 8u);
+    EXPECT_EQ(sizeof(JoyeerArray), 24u);
+    EXPECT_EQ(alignof(JoyeerArray), 8u);
+    EXPECT_EQ(offsetof(JoyeerArray, data), 0u);
+    EXPECT_EQ(offsetof(JoyeerArray, count), 8u);
+    EXPECT_EQ(offsetof(JoyeerArray, capacity), 16u);
+}
+
 TEST(NativeBufferTest, CopiesBinaryBuffersAndStringListsWithRuntimeOwnership) {
     const auto baseline = joyeer_runtime_active_allocations();
     const uint8_t data[] {0, 255, 65};

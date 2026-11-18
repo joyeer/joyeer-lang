@@ -19,6 +19,13 @@ separate_arguments(JOYEER_LLVM_DEFINITIONS NATIVE_COMMAND
 target_compile_definitions(JoyeerBackend PRIVATE
         JOYEER_BACKEND_BUILD
 )
+# Test builds verify the optimized module again, debug info included (decisions 0026, 0027). A separate option,
+# not BUILD_TESTING: release presets build tests too, and the hook must stay out of packages.
+if(JOYEER_BACKEND_TEST_HOOKS)
+        target_compile_definitions(JoyeerBackend PRIVATE
+                JOYEER_VERIFY_OPTIMIZED_IR
+        )
+endif()
 target_compile_options(JoyeerBackend PRIVATE
         ${JOYEER_LLVM_DEFINITIONS}
 )

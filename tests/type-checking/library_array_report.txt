@@ -1,0 +1,9 @@
+$collections-prelude.Array<Int>.append | required by main at library_array_report.joyeer:3 | 16 IR instructions
+$collections-prelude.Array<Int>.deinit | required by <default argument> at lib/Runtime/collections.joyeer:80 | 21 IR instructions
+$collections-prelude.Array<Int>.duplicate | required by <default argument> at lib/Runtime/collections.joyeer:80 | 17 IR instructions
+$collections-prelude.Array<Int>.element | required by <default argument> at lib/Runtime/collections.joyeer:80 | 30 IR instructions
+$collections-prelude.Array<Int>.literal | required by <default argument> at lib/Runtime/collections.joyeer:80 | 23 IR instructions
+$collections-prelude.Array<Int>.removeLast | required by main at library_array_report.joyeer:4 | 19 IR instructions
+Int? | enum | 2 cases
+Result<Void, ChannelClosed> | enum | 2 cases
+[Int] | struct | 3 fields

@@ -1,0 +1,12 @@
+// Dictionary literal baseline (plan 0011 phase 4, decision 0027): a four-entry literal with one duplicate key, built,
+// read and dropped each round.
+func main() {
+    var total = 0
+    var round = 0
+    while round < 5000000 {
+        let table: [Int: Int] = [1: round, 2: round + 1, 1: round + 2, 3: 4]
+        total = total + table[1] + table.count
+        round = round + 1
+    }
+    print(value: total)
+}

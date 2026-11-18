@@ -9,7 +9,7 @@ llvm::Value* Builder::helper(ir::TypeId id, bool clone) {
 
 void Builder::copy(ir::TypeId id, llvm::Value* destination, llvm::Value* sourceAddress) {
     if (destruction->requiresDestruction(id)) {
-        builder.CreateCall(clones.at(id), {destination, sourceAddress});
+        implicitCallLocation(builder.CreateCall(clones.at(id), {destination, sourceAddress}));
     } else if (!unit(id)) {
         builder.CreateStore(builder.CreateLoad(llvmType(id), sourceAddress, temporary()), destination);
     }
@@ -58,10 +58,14 @@ void Builder::emitOwnership() {
     for (const auto& type : source.types) {
         if (source.isRuntimeObject && !usedTypes.contains(type.id)) continue;
         if (!destruction->requiresDestruction(type.id)) continue;
+        // A dictionary entry is never a value (decision 0027), so nothing clones or destroys one.
+        if (const auto found = structures.find(type.id);
+            found != structures.end() && found->second->role == ir::StructureRole::dictEntry) {
+            continue;
+        }
         auto* cloneType = llvm::FunctionType::get(builder.getVoidTy(), {pointer(), pointer()}, false);
         auto* destroyType = llvm::FunctionType::get(builder.getVoidTy(), {pointer()}, false);
-        const auto linkage = source.isRuntimeObject
-                ? llvm::GlobalValue::InternalLinkage : llvm::GlobalValue::ExternalLinkage;
+        const auto linkage = llvm::GlobalValue::InternalLinkage;
         clones.emplace(type.id, llvm::Function::Create(cloneType,
                 linkage, "joyeer_clone_type_" + std::to_string(type.id), module()));
         destroys.emplace(type.id, llvm::Function::Create(destroyType,
@@ -73,32 +77,35 @@ void Builder::emitOwnership() {
 // helper calls the `deinit` of a struct that declares one.
 void Builder::emitOwnershipBodies() {
     for (const auto& [id, function] : clones) {
-        // Like a destroy helper that calls a `deinit`: this helper has no debug scope, and the copier has one.
         if (const auto found = structures.find(id);
-            found != structures.end() && found->second->copier.has_value()) {
-            function->addFnAttr(llvm::Attribute::NoInline);
+            found != structures.end() && found->second->copier.has_value() &&
+            sourceFunctions.at(*found->second->copier)->alwaysInline) {
+            function->addFnAttr(llvm::Attribute::AlwaysInline);
         }
         activeFunction = function;
         prologue = llvm::BasicBlock::Create(context(), "entry", function);
         builder.SetInsertPoint(prologue);
+        ownershipDebug(id);
         emitClone(id);
         builder.CreateRetVoid();
     }
     for (const auto& [id, function] : destroys) {
-        // A helper that calls a `deinit` carries no debug scope of its own, so inlining the
-        // `deinit` into it (and it into a caller) corrupts the inlined debug scopes.
         if (const auto found = structures.find(id);
-            found != structures.end() && found->second->deinitializer.has_value()) {
-            function->addFnAttr(llvm::Attribute::NoInline);
+            found != structures.end() && found->second->deinitializer.has_value() &&
+            sourceFunctions.at(*found->second->deinitializer)->alwaysInline) {
+            function->addFnAttr(llvm::Attribute::AlwaysInline);
         }
         activeFunction = function;
         prologue = llvm::BasicBlock::Create(context(), "entry", function);
         builder.SetInsertPoint(prologue);
+        ownershipDebug(id);
         emitDestroy(id);
         builder.CreateRetVoid();
     }
     activeFunction = nullptr;
     prologue = nullptr;
+    subprogram = nullptr;
+    builder.SetCurrentDebugLocation(nullptr);
 }
 
 void Builder::emitClone(ir::TypeId id) {
@@ -107,13 +114,9 @@ void Builder::emitClone(ir::TypeId id) {
     destination->setName("destination");
     sourceAddress->setName("source");
     const auto kind = type(id).kind;
-    if (kind == typing::TypeKind::string || kind == typing::TypeKind::array ||
-            kind == typing::TypeKind::dictionary) {
-        const auto name = kind == typing::TypeKind::string ? "joyeer_string_clone_abi"
-
-                : kind == typing::TypeKind::array ? "joyeer_array_clone_abi" : "joyeer_dictionary_clone_abi";
+    if (kind == typing::TypeKind::string) {
         auto* value = builder.CreateLoad(llvmType(id), sourceAddress, "value");
-        call(name, builder.getVoidTy(), {destination,
+        call("joyeer_string_clone_abi", builder.getVoidTy(), {destination,
                 builder.CreateExtractValue(value, 0, "data"), builder.CreateExtractValue(value, 1, "count")});
         return;
     }
@@ -161,18 +164,24 @@ void Builder::emitDestroy(ir::TypeId id) {
     auto* address = activeFunction->getArg(0);
     address->setName("value");
     const auto kind = type(id).kind;
-    if (kind == typing::TypeKind::string || kind == typing::TypeKind::array ||
-            kind == typing::TypeKind::dictionary) {
-        const auto name = kind == typing::TypeKind::string ? "joyeer_string_destroy_abi"
-
-                : kind == typing::TypeKind::array ? "joyeer_array_destroy_abi" : "joyeer_dictionary_destroy_abi";
-        call(name, builder.getVoidTy(), {address});
+    if (kind == typing::TypeKind::string) {
+        // A String with a null `data` owns no block: every allocating producer stores a non-null block,
+        // and the zero value (moved-from, zero-initialized, or an unassigned native output) owns nothing.
+        // Test it inline so dropping a moved-from String costs no runtime call.
+        auto* data = builder.CreateLoad(builder.getPtrTy(), address, "data");
+        auto* release = llvm::BasicBlock::Create(context(), "release", activeFunction);
+        auto* done = llvm::BasicBlock::Create(context(), "done", activeFunction);
+        builder.CreateCondBr(builder.CreateIsNotNull(data), release, done);
+        builder.SetInsertPoint(release);
+        call("joyeer_string_destroy_abi", builder.getVoidTy(), {address});
+        builder.CreateBr(done);
+        builder.SetInsertPoint(done);
         return;
     }
     if (kind == typing::TypeKind::structure) {
         const auto& definition = *structures.at(id);
         const auto& fields = definition.fields;
-        if (definition.deinitializer.has_value() && definition.inertZero) {
+        if (definition.deinitializer.has_value() && ir::isInertZero(definition.role)) {
             // No live flag: the `deinit` runs on the zero value too and does nothing there, and the
             // zero-fill at the end of this helper makes a second destroy harmless (decision 0025).
             builder.CreateCall(functions.at(*definition.deinitializer), {address});

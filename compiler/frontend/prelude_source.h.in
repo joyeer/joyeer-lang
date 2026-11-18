@@ -4,6 +4,7 @@
 namespace joyeer::semantic {
 inline constexpr char concurrencyPreludeSource[] = R"JOYEER_PRELUDE(@JOYEER_PRELUDE_SOURCE@)JOYEER_PRELUDE";
 inline constexpr char rolePreludeSource[] = R"JOYEER_PRELUDE(@JOYEER_ROLE_PRELUDE_SOURCE@)JOYEER_PRELUDE";
+inline constexpr char collectionsPreludeSource[] = R"JOYEER_PRELUDE(@JOYEER_COLLECTIONS_PRELUDE_SOURCE@)JOYEER_PRELUDE";
 }
 
 #endif
