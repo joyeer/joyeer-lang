@@ -4045,7 +4045,7 @@ private:
                             "'consume' is only valid on an argument, the receiver of a consuming "
                             "method call, or where a value is stored (a binding, an assignment, "
                             "or an aggregate element)");
-                    } else if (!isConsumable(access->operand)) {
+                    } else if (!isConsumable(access->operand) && !isSubscript(access->operand)) {
                         report(
                             TypeCheckingDiagnosticId::invalidConsumeArgument,
                             access->operand->span,
@@ -4059,9 +4059,17 @@ private:
                         expected,
                         consumes ? ReceiverMarker::consume : ReceiverMarker::inout)
                         .value_or(model->typeContext.errorType());
-                if (consumes && diagnosticsBeforeOperand == diagnostics.size() &&
-                    permittedMoves.contains(expression.get())) {
-                    rejectConsumedStringByte(access->operand);
+                // A subscript is judged once its base is typed: a String byte reports only itself, since a
+                // consumable base would not help.
+                if (consumes && !isMemberCall(access->operand) && permittedMoves.contains(expression.get()) &&
+                    isSubscript(access->operand) &&
+                    !(diagnosticsBeforeOperand == diagnostics.size() && rejectConsumedStringByte(access->operand)) &&
+                    !isStringByte(access->operand) && !isConsumable(access->operand)) {
+                    report(
+                        TypeCheckingDiagnosticId::invalidConsumeArgument,
+                        access->operand->span,
+                        "consuming argument must be an owning local, consuming parameter, "
+                        "or temporary");
                 }
                 break;
             }
@@ -6112,11 +6120,23 @@ private:
 
     // `consume s[i]` would move a byte out of a String, whose bytes are read-only (spec 2.1.1). Reported once per
     // operand, whichever of the marker and the argument checks sees it first with its type known.
-    void rejectConsumedStringByte(const syntax::ExprPtr& operand) {
-        if (!isStringByte(operand) || !reportedStringByteConsumes.insert(operand.get()).second) return;
+    // Returns whether `operand` is a String byte, so a caller reports nothing else about consuming it.
+    bool rejectConsumedStringByte(const syntax::ExprPtr& operand) {
+        if (!isStringByte(operand)) return false;
+        if (!reportedStringByteConsumes.insert(operand.get()).second) return true;
         report(TypeCheckingDiagnosticId::invalidConsumeArgument, operand->span, "cannot consume a byte of a String",
                "a String's bytes are read-only (spec 2.1.1): copy the byte into a binding ('let byte = s[i]') and "
                "use or consume that");
+        return true;
+    }
+
+    // Whether `expression`, through parentheses, is a subscript.
+    static bool isSubscript(const syntax::ExprPtr& expression) {
+        auto current = expression;
+        while (current != nullptr && current->kind == syntax::Kind::parenthesizedExpr) {
+            current = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(current)->expression;
+        }
+        return current != nullptr && current->kind == syntax::Kind::subscriptExpr;
     }
     std::unordered_set<const syntax::ExprSyntax*> reportedStringByteConsumes;
 
@@ -6302,8 +6322,7 @@ private:
                     argument.value->span,
                     "initializing argument must be a whole mutable owning local or consuming parameter");
         }
-        if (required == syntax::AccessEffect::consuming) rejectConsumedStringByte(argument.value);
-        if (required == syntax::AccessEffect::consuming &&
+        if (required == syntax::AccessEffect::consuming && !rejectConsumedStringByte(argument.value) &&
             !isConsumable(argument.value)) {
             report(
                     TypeCheckingDiagnosticId::invalidConsumeArgument,
@@ -6441,8 +6460,7 @@ private:
             requireNoImplicitCopy(argument.value, type);
             return;
         }
-        rejectConsumedStringByte(argument.value);
-        if (!isConsumable(argument.value)) {
+        if (!rejectConsumedStringByte(argument.value) && !isConsumable(argument.value)) {
             report(
                     TypeCheckingDiagnosticId::invalidConsumeArgument,
                     argument.value->span,
