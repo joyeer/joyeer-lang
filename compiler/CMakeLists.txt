@@ -1,3 +1,22 @@
+# The IR verifier and the IR code it depends on. Both the compiler core and the backend compile
+# these sources (the backend with its own CRT; see backend/CMakeLists.txt), so they share this list.
+set(JOYEER_IR_VERIFIER_SOURCES
+	${CMAKE_CURRENT_SOURCE_DIR}/ir/destruction.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/ir/dominance.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/ir/opcode.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/ir/verifier.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/ir/verifier/aggregates.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/ir/verifier/calls.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/ir/verifier/capabilities.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/ir/verifier/debuginfo.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/ir/verifier/definitions.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/ir/verifier/function.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/ir/verifier/instructions.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/ir/verifier/internal.h
+	${CMAKE_CURRENT_SOURCE_DIR}/ir/verifier/literals.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/ir/verifier/module.cpp
+)
+
 add_subdirectory(backend)
 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
@@ -53,10 +72,20 @@ add_library(JoyeerCompilerCore OBJECT
 	frontend/typechecking.h
 	ir/constants.cpp
 	ir/constants.h
-	ir/ir.cpp
+	ir/debuginfo.h
+	ir/definitions.h
+	ir/destruction.h
+	ir/dominance.h
+	ir/dump.cpp
+	ir/dump.h
 	ir/ir.h
 	ir/irlowering.cpp
 	ir/irlowering.h
+	ir/module.h
+	ir/opcode.h
+	ir/value.h
+	ir/verifier.h
+	${JOYEER_IR_VERIFIER_SOURCES}
 )
 target_include_directories(JoyeerCompilerCore PUBLIC ${JOYEER_SOURCE_DIR} ${JOYEER_RUNTIME_INCLUDE_DIR})
 target_include_directories(JoyeerCompilerCore PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
