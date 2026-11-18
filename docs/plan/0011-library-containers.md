@@ -1,6 +1,6 @@
 # 0011: Library enums and collections
 
-- Status: in progress (updated 2026-11-16)
+- Status: in progress (updated 2026-11-18)
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0023](../decisions/0023-library-concurrency.md) (completed concurrency-library migration),
@@ -162,7 +162,7 @@ remain separate gates.
   e79cd36); the wire is 25; role reviews and Windows x64 and Linux x86_64 validation.
 - [ ] Benchmark both profiles, run all role reviewers and full platform validation, and
   update supported features and runtime/IR notes. Done on Windows x64 and Linux x86_64 for the switch and the
-  cleanup (2026-11-18); remaining: macOS validation.
+  cleanup, and again after merging `main` (2026-11-18 log entries, last at a14b5f2); remaining: macOS validation.
 
 ## Open questions
 
@@ -850,3 +850,28 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   `fern test` 7/7 (Debug: Compression.Interoperability, Release: ValidationScriptTests, Fern.Manifest,
   Fern.Workspace and Compression.Interoperability passed only on rerun, while two other sessions ran their own
   validations on the machine); Linux x86_64 fresh WSL clone 1952/1952 and 7/7 in each, no reruns. macOS not run.
+- 2026-11-18: Merged `main` (#29, the verifier's dominator tree; #30, `op=` index operands analyzed once) as 2a27377.
+  Conflicts: `analyzeAssignment` keeps #30's order for `op=` and this branch's order for `=`; the literal protocols
+  use `DominanceAnalysis`; both sides' fixtures stay. Validation at 2a27377: Windows AMD64 Debug and Release `ctest`
+  1999/1999 and `fern test` 7/7 (ValidationScriptTests, Fern.Manifest, Fern.Workspace passed only on rerun, with
+  the reviewers and the Linux run on the machine); Linux x86_64 fresh WSL clone 1975/1975 and 7/7, no reruns.
+  Type-system and IR/backend reviews of the merge: nothing blocking. Their findings, each fixed test-first:
+  `=` blamed its right side for a target consumed before the statement and underlined the `&` (test d9db4a9 observed
+  failing; fix 9fef5b6 passes the blame as `RightSide`, as #30 does for `op=`); and, older than the merge, the
+  dictionary literal protocol's rule 4 walked the function per stored value, so a Debug compile of a 1600-entry
+  literal amid 3200 `if` blocks took 77 s and an 800-entry `?` literal in a loop before 6400 `if`s 42.7 s. A step
+  counter (ad8a830, `VerificationResult::literalPathWork`) and a bound test (2b3ceff, e316b86 observed failing:
+  101040, 65581 and 69908 steps against 8 per block) came first; 05d8bdd walks once per literal, and 34cb81b answers
+  the walks that avoid a defining block with a `DominanceAnalysis` rooted at the packing block, in each direction,
+  checked against avoiding walks on 2000 random graphs (30caf1d, which also sets the bound to 16 per block after
+  seeing about 12). Those programs now take 2.3 s and 4.3 s (the array controls 1.8 s and 4.0 s). Also: a
+  durable `=` rejection fixture, a pinned unreachable `op=`, cross-block dominance and self-loop cases for both
+  literal protocols (d552c5c, d6602c9; each fails with its check disabled), and IR notes (f5a97e2, 7d518da).
+  Re-reviews: both clean. Recorded, not fixed: a literal whose values need the walks still costs O(blocks), so many
+  such literals in one function cost literals x blocks; the array literal protocol has no use-once rule (lowering
+  never stores a value twice); a rejected `op=` on a dictionary element skips type checking its right side and
+  leaks an internal deferred-reference error, which is on `main` since #10 and was proposed as its own task.
+  Validation at a14b5f2: Windows AMD64 Debug and Release `ctest` 2005/2005 and `fern test` 7/7 (Debug:
+  Compression.Interoperability and E2EOptimizationEquivalence_integer_conversions timed out once and passed on
+  rerun, the latter in 1.2 s, a program with no literals; Release: Fern.Workspace); Linux x86_64 fresh WSL clone
+  1981/1981 and 7/7 in each, no reruns. macOS not run.
