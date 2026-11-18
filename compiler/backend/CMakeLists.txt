@@ -8,8 +8,9 @@ add_library(JoyeerBackend SHARED
         native_host.cpp
         native_debug.cpp
         # Compile the verifier with the backend's CRT and visibility; reusing
-        # compiler-core objects would mix /MD with /MT on Windows.
-        ../ir/ir.cpp
+        # compiler-core objects would mix /MD with /MT on Windows. The list is
+        # set in compiler/CMakeLists.txt.
+        ${JOYEER_IR_VERIFIER_SOURCES}
 )
 target_include_directories(JoyeerBackend PUBLIC ${JOYEER_SOURCE_DIR} ${JOYEER_RUNTIME_INCLUDE_DIR})
 

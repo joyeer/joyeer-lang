@@ -122,7 +122,9 @@ runtime C ABI headers are included as `joyeer/runtime.h` and `joyeer/native.h`.
 
 `compiler/backend/` remains the shared `JoyeerBackend` C ABI library. Its LLVM
 dependencies, exception handling, allocation, and Windows `/MT` compilation
-are separate from the compiler core. The verifier in `compiler/ir/ir.cpp`
+are separate from the compiler core. The IR verifier (`compiler/ir/verifier.cpp`,
+`compiler/ir/verifier/`, and the IR sources it needs, listed once as
+`JOYEER_IR_VERIFIER_SOURCES` in `compiler/CMakeLists.txt`)
 is compiled privately into this target with its own CRT and hidden visibility;
 it is the same implementation, not a second verifier or a reused frontend
 object file. `lib/Runtime/` builds the `JoyeerRuntime` static archive
