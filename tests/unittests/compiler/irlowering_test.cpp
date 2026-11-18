@@ -1490,6 +1490,13 @@ TEST_F(IRLoweringTest, VerifyingALargeDictionaryLiteralAmidManyBlocksStaysLinear
           common + "func build(): Result<Int, Failure> {\n    var total: Int = 0\n" + branches +
                   "    let items: [Int: String] = [" + fallible + "]\n" + branches +
                   "    return .Ok(items.count + total)\n}\n" },
+        // The packing block on a cycle: every `?` value is defined in its own block, and the code after the loop is
+        // reached from the packing through the loop's exit.
+        { "fallible String entries in a loop",
+          common + "func build(): Result<Int, Failure> {\n    var total: Int = 0\n    var round: Int = 0\n"
+                  "    while round < 2 {\n        let items: [Int: String] = [" + fallible + "]\n"
+                  "        total = total + items.count\n        round = round + 1\n    }\n" + branches + branches +
+                  "    return .Ok(total)\n}\n" },
     };
     for (const auto& [name, program] : programs) {
         SCOPED_TRACE(name);
