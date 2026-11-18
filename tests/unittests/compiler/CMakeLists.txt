@@ -1804,6 +1804,8 @@ add_joyeer_rejected_regression(FlowRegressionPossibleInitialization semantic-ana
         regression_flow_possible_initialization semantic-analysis.initializing-initialized-storage)
 add_joyeer_rejected_regression(FlowRegressionCompoundTargetConsumed semantic-analysis
         regression_flow_compound_target_consumed semantic-analysis.use-after-consume)
+add_joyeer_rejected_regression(FlowRegressionAssignmentTargetConsumed semantic-analysis
+        regression_flow_assignment_target_consumed semantic-analysis.use-after-consume)
 
 add_test(NAME NameResolutionCliRejectsUndefinedName
         COMMAND ${CMAKE_COMMAND}
