@@ -1579,27 +1579,33 @@ print(value: first)
 }
 
 TEST_F(TypeCheckingTest, AStringByteCannotBeConsumed) {
-    // Consuming would move the byte out of the String; a byte is copyable, so it is read without 'consume'.
-    check(R"JOYEER(func eat(value: consuming UInt8) { print(value: value) }
+    // Consuming would move the byte out of the String; a copy of it in a binding can be used or consumed instead.
+    check(R"JOYEER(struct Holder {
+var byte: UInt8
+}
+func eat(value: consuming UInt8) { print(value: value) }
 func main() {
 var text = "abc"
 let first = consume text[0]
 eat(value: consume text[1])
 let f: (consuming UInt8): () = eat
 f(consume (text)[2])
+let held = Holder(byte: consume text[0])
 print(value: first)
-eat(value: text[0])
+let second = text[1]
+eat(value: consume second)
+print(value: held.byte)
 }
 )JOYEER");
 
-    ASSERT_EQ(checking.diagnostics.size(), 3u) << joyeer::typing::dump(checking.diagnostics);
+    ASSERT_EQ(checking.diagnostics.size(), 4u) << joyeer::typing::dump(checking.diagnostics);
     for (const auto& diagnostic : checking.diagnostics) {
         EXPECT_EQ(diagnostic.id, joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument)
                 << diagnostic.message;
         EXPECT_NE(diagnostic.message.find("cannot consume a byte of a String"), std::string::npos)
                 << diagnostic.message;
         ASSERT_TRUE(diagnostic.help.has_value()) << diagnostic.message;
-        EXPECT_NE(diagnostic.help->find("without 'consume'"), std::string::npos) << *diagnostic.help;
+        EXPECT_NE(diagnostic.help->find("let byte = s[i]"), std::string::npos) << *diagnostic.help;
     }
 }
 
