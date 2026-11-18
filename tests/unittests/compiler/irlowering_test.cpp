@@ -1460,6 +1460,50 @@ return text.utf8()
     EXPECT_EQ(opcodeCount(bytes, joyeer::ir::Opcode::returnValue), 1u);
 }
 
+// Compile-time regression (decision 0027 rule 4): the dictionary literal protocol once walked the function's blocks
+// forward and backward for every stored key and value, so a large literal amid many blocks cost entries x blocks. The
+// verifier's literal path work stays within a small multiple of the function's blocks, for constant entries and for
+// `?` entries whose String values also have cleanup uses on the early exits of later entries.
+TEST_F(IRLoweringTest, VerifyingALargeDictionaryLiteralAmidManyBlocksStaysLinear) {
+    constexpr int count = 60;
+    std::string branches;
+    for (int index = 0; index < count; ++index) {
+        branches += "    if pick(v: " + std::to_string(index) + ") > 0 { total = total + 1 }\n";
+    }
+    std::string constants;
+    std::string fallible;
+    for (int index = 0; index < count; ++index) {
+        const auto key = std::to_string(index);
+        constants += (index == 0 ? "" : ", ") + key + ": " + key;
+        fallible += (index == 0 ? "" : ", ") + key + ": make(v: " + key + ")?";
+    }
+    const std::string common =
+            "enum Failure {\n    Bad\n}\n"
+            "func pick(v: Int): Int {\n    if v < 0 {\n        return 0\n    }\n    return v\n}\n"
+            "func make(v: Int): Result<String, Failure> {\n    if v < 0 {\n        return .Err(.Bad)\n    }\n"
+            "    return .Ok(\"x\")\n}\n";
+    const std::vector<std::pair<const char*, std::string>> programs {
+        { "constant entries",
+          common + "func build(): Int {\n    var total: Int = 0\n" + branches + "    let items: [Int: Int] = [" +
+                  constants + "]\n" + branches + "    return items.count + total\n}\n" },
+        { "fallible String entries",
+          common + "func build(): Result<Int, Failure> {\n    var total: Int = 0\n" + branches +
+                  "    let items: [Int: String] = [" + fallible + "]\n" + branches +
+                  "    return .Ok(items.count + total)\n}\n" },
+    };
+    for (const auto& [name, program] : programs) {
+        SCOPED_TRACE(name);
+        ASSERT_NO_FATAL_FAILURE(lower(program));
+        ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+        const auto verification = joyeer::ir::Verifier().verify(*result.module);
+        ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+        size_t blocks = 0;
+        for (const auto& function : result.module->functions) blocks += function.blocks.size();
+        EXPECT_GT(function("build").blocks.size(), static_cast<size_t>(4 * count));
+        EXPECT_LE(verification.literalPathWork, 8 * blocks) << blocks << " blocks";
+    }
+}
+
 TEST_F(IRLoweringTest, LowersArrayAndDictionaryLiteralsWithStructuredTypes) {
     lower(R"JOYEER(func build(): Int {
 let values: [Int] = [1, 2, 3]
