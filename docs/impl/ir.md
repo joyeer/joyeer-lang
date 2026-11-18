@@ -181,7 +181,7 @@ The current instruction set covers:
   result's type. `move_in`, `move_out` and `destroy_at` lower to `store`, `take` and `destroy` on that address. The
   runtime-only stack slots use `stack_allocate` and `pointer_to_integer`; specialized callback
   addresses use `function_address` and `pointer_to_integer`. The destruction query folds through
-  the existing IR destruction analysis. The wire format version is 23;
+  the existing IR destruction analysis;
 - collection capabilities ([decision 0025](../decisions/0025-library-collection-capabilities.md)), runtime-only:
   `destroy_range` (address, count) destroys live elements of the type in `integerValue`, `clone_at` copies one
   value into an uninitialized slot, `clone_callback` and `destroy_callback` yield the type's helper address as an
