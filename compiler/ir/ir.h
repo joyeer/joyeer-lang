@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace joyeer::ir {
@@ -461,6 +462,10 @@ private:
 class DominanceAnalysis {
 public:
     explicit DominanceAnalysis(const Function& function);
+    // Dominance from `root` alone along `edges` (each block's successors, or its predecessors for the
+    // reverse graph): a block dominates another when every path from `root` to it passes through it.
+    // The blocks are those `root` reaches, itself included.
+    DominanceAnalysis(BlockId root, const std::unordered_map<BlockId, std::unordered_set<BlockId>>& edges);
     // Whether `dominator` dominates `block`; a block dominates itself. False when either is not a
     // block of the function.
     [[nodiscard]] bool dominates(BlockId dominator, BlockId block) const;
@@ -470,6 +475,10 @@ public:
     }
 
 private:
+    // The dominator tree of `count` blocks under a virtual root numbered `count`, from their edges.
+    void build(size_t count, const std::vector<std::vector<size_t>>& successors,
+               const std::vector<std::vector<size_t>>& predecessors);
+
     // Each block's dense index, and per index the entry and exit numbers of the dominator tree's
     // preorder walk; a block that no root reaches keeps the unreached sentinel.
     std::unordered_map<BlockId, size_t> indices;

@@ -276,6 +276,44 @@ DominanceAnalysis::DominanceAnalysis(const Function& function) {
     for (size_t index = 0; index < count; ++index) {
         if (ids[index] == function.entry || predecessors[index].empty()) connect(root, index);
     }
+    build(count, successors, predecessors);
+}
+
+DominanceAnalysis::DominanceAnalysis(
+        BlockId root, const std::unordered_map<BlockId, std::unordered_set<BlockId>>& edges) {
+    // Number the blocks `root` reaches, then connect them; the virtual root's only successor is `root`.
+    std::vector<BlockId> ids { root };
+    indices.emplace(root, 0);
+    for (size_t next = 0; next < ids.size(); ++next) {
+        ++steps;
+        const auto found = edges.find(ids[next]);
+        if (found == edges.end()) continue;
+        for (const auto target : found->second) {
+            ++steps;
+            if (indices.emplace(target, ids.size()).second) ids.push_back(target);
+        }
+    }
+    const size_t count = ids.size();
+    std::vector<std::vector<size_t>> successors(count + 1);
+    std::vector<std::vector<size_t>> predecessors(count + 1);
+    for (size_t from = 0; from < count; ++from) {
+        const auto found = edges.find(ids[from]);
+        if (found == edges.end()) continue;
+        for (const auto target : found->second) {
+            const auto to = indices.at(target);
+            successors[from].push_back(to);
+            predecessors[to].push_back(from);
+        }
+    }
+    successors[count].push_back(0);
+    predecessors[0].push_back(count);
+    build(count, successors, predecessors);
+}
+
+void DominanceAnalysis::build(
+        size_t count, const std::vector<std::vector<size_t>>& successors,
+        const std::vector<std::vector<size_t>>& predecessors) {
+    const size_t root = count;
 
     // Postorder numbers from an iterative depth-first walk, which a long chain of blocks cannot overflow.
     std::vector<size_t> postorder;
@@ -1622,21 +1660,23 @@ VerificationResult Verifier::verify(const Module& module) const {
                 for (const auto& switchCase : block.instructions.back().switchCases) connect(switchCase.target);
             }
         }
-        // The blocks reached from `from` along successor (or predecessor) edges without entering `barrier`; `from`
-        // itself is included only when a cycle avoiding the barrier returns to it.
-        const auto reachedAvoiding = [&](BlockId from, std::optional<BlockId> barrier, bool forward) {
+        // The literal protocols' share of the verification work (the dictionary check shadows `result`).
+        auto& literalPathWork = result.literalPathWork;
+        // The blocks reached from `from` along successor (or predecessor) edges; `from` itself is included only
+        // when a cycle returns to it.
+        const auto reachedFrom = [&](BlockId from, bool forward) {
             const auto& edges = forward ? successors : predecessors;
             std::unordered_set<BlockId> reached;
             std::vector<BlockId> work { from };
             while (!work.empty()) {
-                ++result.literalPathWork;
+                ++literalPathWork;
                 const auto current = work.back();
                 work.pop_back();
                 const auto next = edges.find(current);
                 if (next == edges.end()) continue;
                 for (const auto block : next->second) {
-                    ++result.literalPathWork;
-                    if (block != barrier && reached.insert(block).second) work.push_back(block);
+                    ++literalPathWork;
+                    if (reached.insert(block).second) work.push_back(block);
                 }
             }
             return reached;
@@ -1697,12 +1737,21 @@ VerificationResult Verifier::verify(const Module& module) const {
             // the packing without evaluating the value again would transfer it twice.
             //
             // A barrier only removes paths, so the walks without one bound every walk with one: a value whose other
-            // uses lie off them, in a packing block on no cycle, needs no walk of its own. The walks are made once
-            // per literal, and once per defining block when a barrier matters, never once per stored value.
+            // uses lie off them, in a packing block on no cycle, needs no walk of its own. A block is reached from the
+            // packing (or reaches it) without passing the defining block exactly when it is reached at all and the
+            // defining block does not dominate it in the graph rooted at the packing (or in the reverse graph). So
+            // each literal walks and builds those trees at most once per direction, never once per stored value.
             std::optional<std::unordered_set<BlockId>> reachedFromPacking;
             std::optional<std::unordered_set<BlockId>> reachingPacking;
-            std::unordered_map<std::optional<BlockId>,
-                    std::pair<std::unordered_set<BlockId>, std::unordered_set<BlockId>>> avoidingDefinition;
+            std::optional<DominanceAnalysis> fromPacking;
+            std::optional<DominanceAnalysis> toPacking;
+            const auto treeOf = [&](std::optional<DominanceAnalysis>& tree, bool forward) -> const DominanceAnalysis& {
+                if (!tree.has_value()) {
+                    tree.emplace(block.id, forward ? successors : predecessors);
+                    literalPathWork += tree->work();
+                }
+                return *tree;
+            };
             const auto usedOnceInWindow = [&](ValueId value) {
                 const auto definition = valueDefinitions.find(value);
                 const auto defined = definition == valueDefinitions.end()
@@ -1720,26 +1769,31 @@ VerificationResult Verifier::verify(const Module& module) const {
                 }
                 if (inWindow != 1) return false;
                 if (defined == block.id && elsewhere.empty()) return true;
-                if (!reachedFromPacking.has_value()) reachedFromPacking = reachedAvoiding(block.id, std::nullopt, true);
-                // Only a packing block on a cycle can be reached again from itself.
-                const bool mayReturn = defined != block.id && reachedFromPacking->contains(block.id);
-                if (!mayReturn && elsewhere.empty()) return true;
-                if (!mayReturn) {
-                    if (!reachingPacking.has_value()) reachingPacking = reachedAvoiding(block.id, std::nullopt, false);
-                    const bool offEveryPath = std::none_of(elsewhere.begin(), elsewhere.end(), [&](BlockId use) {
-                        return reachedFromPacking->contains(use) || reachingPacking->contains(use);
-                    });
-                    if (offEveryPath) return true;
+                if (!reachedFromPacking.has_value()) reachedFromPacking = reachedFrom(block.id, true);
+                // Whether `other`, not the packing block, is reached from the packing (forward) or reaches it along a
+                // path that avoids the defining block. A use in the packing block was rejected above; with no
+                // definition, or one in the packing block itself, nothing else is a barrier.
+                const bool barrier = defined.has_value() && *defined != block.id;
+                const auto avoids = [&](BlockId other, bool forward) {
+                    if (!forward && !reachingPacking.has_value()) {
+                        reachingPacking = reachedFrom(block.id, false);
+                    }
+                    const auto& reached = forward ? *reachedFromPacking : *reachingPacking;
+                    if (!reached.contains(other)) return false;
+                    return !barrier || !treeOf(forward ? fromPacking : toPacking, forward).dominates(*defined, other);
+                };
+                // Only a packing block on a cycle is reached again from itself, through one of its predecessors.
+                if (defined != block.id && reachedFromPacking->contains(block.id)) {
+                    const auto into = predecessors.find(block.id);
+                    if (into != predecessors.end() &&
+                        std::any_of(into->second.begin(), into->second.end(), [&](BlockId predecessor) {
+                            return avoids(predecessor, true);
+                        })) {
+                        return false;
+                    }
                 }
-                auto walks = avoidingDefinition.find(defined);
-                if (walks == avoidingDefinition.end()) {
-                    walks = avoidingDefinition.emplace(defined, std::make_pair(
-                            reachedAvoiding(block.id, defined, true), reachedAvoiding(block.id, defined, false))).first;
-                }
-                const auto& [after, before] = walks->second;
-                if (defined != block.id && after.contains(block.id)) return false;
                 return std::none_of(elsewhere.begin(), elsewhere.end(), [&](BlockId use) {
-                    return after.contains(use) || before.contains(use);
+                    return avoids(use, true) || avoids(use, false);
                 });
             };
             std::unordered_set<int64_t> keys;
