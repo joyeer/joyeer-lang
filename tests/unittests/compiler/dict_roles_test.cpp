@@ -1108,6 +1108,9 @@ TEST_F(DictRoleTest, AStoredValueUsedOnAPathThroughThePackingIsRejected) {
         // The packing in a loop whose value was evaluated before the loop: the second iteration transfers it again.
         { "a packing in a loop", {
               join(before, { condition(), branch(1) }), { choose(2, 3) }, join(packing, { branch(1) }), { stop } } },
+        // The packing block branching to itself, with its key evaluated before: the self loop transfers it again.
+        { "a packing block that loops to itself", {
+              join(before, { branch(1) }), join(packing, { condition(), choose(1, 2) }), ret } },
         // A key evaluated on one arm of a diamond whose join packs it: the store is its only use, so only the
         // evaluated-before (dominance) check sees that the other arm reaches the packing without it.
         { "a definition that does not dominate the packing", {
