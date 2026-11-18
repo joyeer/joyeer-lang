@@ -128,6 +128,13 @@ member or subscript does read/project the base storage. The right-hand side and
 `inout` arguments are ordinary reads and therefore require prior
 initialization.
 
+An assignment `x = y` through a member or subscript follows spec 4.4.3 too: the
+analysis checks the index operands in `x`, then `y`, and only then the access
+to the projected target. So `y` may initialize the root of `x` on every path,
+but must not consume the root or an enclosing projection of `x`. The help
+blames `y` only when the target was accessible before it; a target consumed by
+an earlier statement or by its own index gets the ordinary reinitialize help.
+
 A compound assignment `x op= y` follows spec 4.4.3: the analysis checks the
 index operands in `x` once, then `y`, and only then the read of the old value
 of `x`. So `y` may initialize the root of `x` or change an index binding that

@@ -349,8 +349,6 @@ private:
     // that position knows its tail value is dropped rather than used.
     bool statementPosition = false;
     std::vector<InitializationState::ProjectionPath*> activePaths;
-    // Set while an assignment's target is checked after its right side, for the use-after-consume help.
-    bool analyzingAssignmentTarget = false;
     std::vector<std::vector<semantic::SymbolId>> localScopes;
     struct LoopFlow {
         size_t scopeDepth;
@@ -1148,20 +1146,23 @@ private:
             const bool readableBeforeValue = state.reachable && !readFailure(read, state).has_value();
             analyzeExpression(expression->value, state);
             if (state.reachable) {
-                analyzeStorageRead(read, state, /*failedByRightSide=*/readableBeforeValue);
+                analyzeStorageRead(
+                        read, state, readableBeforeValue ? RightSide::consumedTheRead : RightSide::notBlamed);
             }
         } else if (!assigned.has_value() || !state.reachable) {
             analyzeAssignmentTarget(expression->target, state);
             analyzeExpression(expression->value, state);
         } else {
             // Spec 4.4.3: the target's index operands, then the right side, and only then the access to the
-            // target, so a right side that consumes the target's root leaves nothing to assign into.
+            // target, so a right side that consumes the target's root leaves nothing to assign into. The right
+            // side is blamed only when the target was accessible before it.
+            const auto target = storageRead(expression->target);
             analyzeStorageOperands(expression->target, state);
+            const bool accessibleBeforeValue = state.reachable && !projectionTargetFails(target, state);
             analyzeExpression(expression->value, state);
             if (state.reachable && !assigned->projections.empty()) {
-                analyzingAssignmentTarget = true;
-                analyzeProjectionTarget(expression->target, state);
-                analyzingAssignmentTarget = false;
+                analyzeProjectionTarget(
+                        target, state, accessibleBeforeValue ? RightSide::consumedTheTarget : RightSide::notBlamed);
             }
         }
         if (assigned.has_value()) activePaths.pop_back();
@@ -1503,12 +1504,14 @@ private:
         return std::nullopt;
     }
 
-    // `failedByRightSide` marks the old-value read of `x op= y` when `x` was readable before the right
-    // side, so a failure now is the right side's doing (spec 4.4.3).
+    // Whether a failure to access an assignment's storage is the right side's doing (spec 4.4.3): the old value
+    // of `x op= y`, or the projected target of `=`, was accessible before the right side ran.
+    enum class RightSide { notBlamed, consumedTheRead, consumedTheTarget };
+
     bool analyzeStorageRead(
             const syntax::ExprPtr& expression,
             const InitializationState& state,
-            bool failedByRightSide = false) {
+            RightSide blame = RightSide::notBlamed) {
         const auto failure = readFailure(expression, state);
         if (!failure.has_value()) return true;
         const auto path = storagePath(expression);
@@ -1526,10 +1529,10 @@ private:
                                 ? "' is used after all or part of its ownership was consumed"
                                 : "' is used before being initialized"),
                 consumed
-                        ? std::optional<std::string>(failedByRightSide
+                        ? std::optional<std::string>(blame == RightSide::consumedTheRead
                                 ? "the right side runs before the target's old value is read (spec 4.4.3): do "
                                   "not consume the target's storage in the right side"
-                                : analyzingAssignmentTarget
+                                : blame == RightSide::consumedTheTarget
                                 ? "the right side runs before the target is assigned (spec 4.4.3): assign the whole "
                                   "binding instead, or do not consume it in the right side"
                                 : "reinitialize the consumed storage before reading it")
@@ -1541,25 +1544,28 @@ private:
         return false;
     }
 
-    void analyzeProjectionTarget(
+    // Whether assigning into the projected storage `expression` names fails in `state`: its root is not
+    // initialized, or a strictly shorter projection that overlaps it was consumed.
+    bool projectionTargetFails(
             const syntax::ExprPtr& expression,
-            const InitializationState& state) {
+            const InitializationState& state) const {
         const auto path = storagePath(expression);
-        if (!path.has_value() || !tracked.contains(path->root)) return;
-        if (!state.initialized.contains(path->root)) {
-            analyzeStorageRead(expression, state);
-            return;
-        }
-        const auto ancestor = std::find_if(
+        if (!path.has_value() || !tracked.contains(path->root)) return false;
+        if (!state.initialized.contains(path->root)) return true;
+        return std::any_of(
                 state.consumedProjections.begin(),
                 state.consumedProjections.end(),
                 [&](const auto& candidate) {
                     return candidate.projections.size() < path->projections.size() &&
                             pathsOverlap(candidate, *path);
                 });
-        if (ancestor != state.consumedProjections.end()) {
-            analyzeStorageRead(expression, state);
-        }
+    }
+
+    void analyzeProjectionTarget(
+            const syntax::ExprPtr& expression,
+            const InitializationState& state,
+            RightSide blame = RightSide::notBlamed) {
+        if (projectionTargetFails(expression, state)) analyzeStorageRead(expression, state, blame);
     }
 
     void addConsumedProjection(
