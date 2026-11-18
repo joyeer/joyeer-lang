@@ -1164,6 +1164,10 @@ none
             "7\n10\n10\n11\n12\n42\n"
             0 1 2 3)
     add_joyeer_native_regression(
+            E2EManyBlocksDominance many_blocks_dominance
+            "10000\n199\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
             E2ETaskBasic task_basic
             "99\n49\nhi!\njob\n4\n5\n8\n8\n10\n"
             0 1 2 3)
@@ -1496,6 +1500,10 @@ abcdabcd
             "1\n100\n3\n2\n1\n200\n3\n2\n1\n300\n2\n"
             0 1 2 3)
     add_joyeer_native_regression(
+            E2ECompoundAssignmentIndexOnce compound_assignment_index_once
+            "index\nrhs\n9\nindex\nrhs\n6\nindex\nrhs\n20\n11\n20\n1\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
             E2EForIn for_in
             "10\na\nbc\nx\ny\n17\n0\n1\n2\n10\n20\n30\n-2\n-1\n255\n0\n1\n2\n16\ntick\ntick\n104\n105\n10\n20\n30\n6\n0\n1\n10\n11\np\nq\npq\n"
             0 1 2 3)
@@ -1794,6 +1802,8 @@ add_joyeer_rejected_regression(FlowRegressionProjectionIndex semantic-analysis
         regression_flow_projection_index semantic-analysis.use-before-initialization)
 add_joyeer_rejected_regression(FlowRegressionPossibleInitialization semantic-analysis
         regression_flow_possible_initialization semantic-analysis.initializing-initialized-storage)
+add_joyeer_rejected_regression(FlowRegressionCompoundTargetConsumed semantic-analysis
+        regression_flow_compound_target_consumed semantic-analysis.use-after-consume)
 
 add_test(NAME NameResolutionCliRejectsUndefinedName
         COMMAND ${CMAKE_COMMAND}

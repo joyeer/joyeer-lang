@@ -1138,25 +1138,24 @@ private:
     void analyzeAssignment(
             const syntax::AssignmentExprSyntax::Ptr& expression,
             InitializationState& state) {
-        if (expression->op != nullptr && expression->op->kind != equal) {
-            // `x op= y` reads x first, so it must already be initialized.
-            auto read = expression->target;
-            while (read != nullptr && (read->kind == syntax::Kind::accessExpr ||
-                                       read->kind == syntax::Kind::parenthesizedExpr)) {
-                read = read->kind == syntax::Kind::accessExpr
-                        ? std::static_pointer_cast<syntax::AccessExprSyntax>(read)->operand
-                        : std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(read)->expression;
-            }
-            analyzeExpression(read, state);
-        }
         auto assigned = storagePath(expression->target);
         if (assigned.has_value()) activePaths.push_back(&*assigned);
-        // Spec 4.4.3: the target's index operands, then the right side, and only then the access to the target, so
-        // a right side that consumes the target's root leaves nothing to assign into.
-        if (!assigned.has_value() || !state.reachable) {
+        if (expression->op != nullptr && expression->op->kind != equal && assigned.has_value()) {
+            // Spec 4.4.3: `x op= y` evaluates the target's index operands once, then the right side, and
+            // only then reads the old value, which must still be initialized and not consumed.
+            const auto read = storageRead(expression->target);
+            analyzeStorageOperands(expression->target, state);
+            const bool readableBeforeValue = state.reachable && !readFailure(read, state).has_value();
+            analyzeExpression(expression->value, state);
+            if (state.reachable) {
+                analyzeStorageRead(read, state, /*failedByRightSide=*/readableBeforeValue);
+            }
+        } else if (!assigned.has_value() || !state.reachable) {
             analyzeAssignmentTarget(expression->target, state);
             analyzeExpression(expression->value, state);
         } else {
+            // Spec 4.4.3: the target's index operands, then the right side, and only then the access to the
+            // target, so a right side that consumes the target's root leaves nothing to assign into.
             analyzeStorageOperands(expression->target, state);
             analyzeExpression(expression->value, state);
             if (state.reachable && !assigned->projections.empty()) {
@@ -1170,6 +1169,18 @@ private:
             checkLinearOverwrite(expression->target, *assigned, state);
             markInitialized(*assigned, state);
         }
+    }
+
+    // The storage an assignment target names, without its `&` marker or parentheses, so a diagnostic
+    // about reading it points at the storage itself.
+    static syntax::ExprPtr storageRead(syntax::ExprPtr target) {
+        while (target != nullptr && (target->kind == syntax::Kind::accessExpr ||
+                                     target->kind == syntax::Kind::parenthesizedExpr)) {
+            target = target->kind == syntax::Kind::accessExpr
+                    ? std::static_pointer_cast<syntax::AccessExprSyntax>(target)->operand
+                    : std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(target)->expression;
+        }
+        return target;
     }
 
     void analyzeAssignmentTarget(
@@ -1476,11 +1487,31 @@ private:
         return true;
     }
 
+    // Why reading the storage `expression` names fails in `state`: nothing when it is readable, `true`
+    // when all or part of it was consumed, `false` when it is not initialized.
+    std::optional<bool> readFailure(
+            const syntax::ExprPtr& expression,
+            const InitializationState& state) const {
+        const auto path = storagePath(expression);
+        if (!path.has_value() || !tracked.contains(path->root)) return std::nullopt;
+        if (!state.initialized.contains(path->root)) return state.consumed.contains(path->root);
+        const auto consumed = std::find_if(
+                state.consumedProjections.begin(),
+                state.consumedProjections.end(),
+                [&](const auto& candidate) { return pathsOverlap(*path, candidate); });
+        if (consumed != state.consumedProjections.end()) return true;
+        return std::nullopt;
+    }
+
+    // `failedByRightSide` marks the old-value read of `x op= y` when `x` was readable before the right
+    // side, so a failure now is the right side's doing (spec 4.4.3).
     bool analyzeStorageRead(
             const syntax::ExprPtr& expression,
-            const InitializationState& state) {
+            const InitializationState& state,
+            bool failedByRightSide = false) {
+        const auto failure = readFailure(expression, state);
+        if (!failure.has_value()) return true;
         const auto path = storagePath(expression);
-        if (!path.has_value() || !tracked.contains(path->root)) return true;
         const auto* declaration = model->semanticModel()->symbol(path->root);
         const auto reportRead = [&](bool consumed) {
             diagnostics.push_back(Diagnostic {
@@ -1495,7 +1526,10 @@ private:
                                 ? "' is used after all or part of its ownership was consumed"
                                 : "' is used before being initialized"),
                 consumed
-                        ? std::optional<std::string>(analyzingAssignmentTarget
+                        ? std::optional<std::string>(failedByRightSide
+                                ? "the right side runs before the target's old value is read (spec 4.4.3): do "
+                                  "not consume the target's storage in the right side"
+                                : analyzingAssignmentTarget
                                 ? "the right side runs before the target is assigned (spec 4.4.3): assign the whole "
                                   "binding instead, or do not consume it in the right side"
                                 : "reinitialize the consumed storage before reading it")
@@ -1503,19 +1537,8 @@ private:
                                 "initialize this binding on every continuing path before reading it"),
             });
         };
-        if (!state.initialized.contains(path->root)) {
-            reportRead(state.consumed.contains(path->root));
-            return false;
-        }
-        const auto consumed = std::find_if(
-                state.consumedProjections.begin(),
-                state.consumedProjections.end(),
-                [&](const auto& candidate) { return pathsOverlap(*path, candidate); });
-        if (consumed != state.consumedProjections.end()) {
-            reportRead(true);
-            return false;
-        }
-        return true;
+        reportRead(*failure);
+        return false;
     }
 
     void analyzeProjectionTarget(

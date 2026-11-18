@@ -3,7 +3,11 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <map>
+#include <random>
+#include <set>
 #include <string>
+#include <unordered_set>
 
 namespace {
 
@@ -765,6 +769,259 @@ TEST(IRModelTest, ConservativelyClassifiesRecursiveDestructionDependencies) {
     EXPECT_TRUE(analysis.requiresDestruction(7));
     EXPECT_TRUE(analysis.requiresDestruction(42));
     EXPECT_FALSE(analysis.requiresDestruction(100));
+}
+
+BasicBlock terminatorBlock(BlockId id, Opcode opcode, std::vector<BlockId> targets = {}) {
+    BasicBlock block;
+    block.id = id;
+    block.instructions.push_back(Instruction { opcode, std::nullopt, {}, std::move(targets) });
+    return block;
+}
+
+BasicBlock switchBlock(BlockId id, const std::vector<BlockId>& targets) {
+    BasicBlock block = terminatorBlock(id, Opcode::switchPattern);
+    for (const auto target : targets) {
+        SwitchCase switchCase;
+        switchCase.target = target;
+        block.instructions.back().switchCases.push_back(switchCase);
+    }
+    return block;
+}
+
+// A chain of `count` diamonds: block 3i branches to 3i+1 and 3i+2, which both join at 3i+3.
+Function diamondChain(size_t count, bool reversed) {
+    Function function;
+    function.entry = 0;
+    for (BlockId diamond = 0; diamond < count; ++diamond) {
+        const BlockId head = diamond * 3;
+        function.blocks.push_back(terminatorBlock(head, Opcode::conditionalBranch, {head + 1, head + 2}));
+        function.blocks.push_back(terminatorBlock(head + 1, Opcode::branch, {head + 3}));
+        function.blocks.push_back(terminatorBlock(head + 2, Opcode::branch, {head + 3}));
+    }
+    function.blocks.push_back(terminatorBlock(static_cast<BlockId>(count * 3), Opcode::returnVoid));
+    if (reversed) std::reverse(function.blocks.begin(), function.blocks.end());
+    return function;
+}
+
+TEST(IRModelTest, DominanceFollowsBranchesSwitchesAndBackEdges) {
+    Function function;
+    function.entry = 4;
+    function.blocks = {
+        terminatorBlock(1, Opcode::branch, {3}),
+        terminatorBlock(2, Opcode::branch, {3}),
+        terminatorBlock(3, Opcode::conditionalBranch, {5, 4}),
+        switchBlock(5, {6, 7}),
+        terminatorBlock(6, Opcode::branch, {8}),
+        terminatorBlock(7, Opcode::branch, {8, 77}),
+        terminatorBlock(8, Opcode::returnVoid),
+        // The entry is last in the vector and is a back-edge target; a target that is not a block is ignored.
+        terminatorBlock(4, Opcode::conditionalBranch, {1, 2}),
+    };
+    const DominanceAnalysis dominance(function);
+    EXPECT_TRUE(dominance.dominates(4, 8));
+    EXPECT_TRUE(dominance.dominates(3, 8));
+    EXPECT_TRUE(dominance.dominates(5, 8));
+    EXPECT_TRUE(dominance.dominates(8, 8));
+    EXPECT_FALSE(dominance.dominates(1, 3));
+    EXPECT_FALSE(dominance.dominates(2, 3));
+    EXPECT_FALSE(dominance.dominates(6, 8));
+    EXPECT_FALSE(dominance.dominates(7, 8));
+    EXPECT_FALSE(dominance.dominates(3, 4));
+    EXPECT_FALSE(dominance.dominates(8, 5));
+    EXPECT_FALSE(dominance.dominates(77, 8));
+    EXPECT_FALSE(dominance.dominates(4, 77));
+}
+
+TEST(IRModelTest, DominanceTreatsBlocksWithoutPredecessorsAsRootsAndUnrootedCyclesAsTop) {
+    Function function;
+    function.entry = 0;
+    function.blocks = {
+        terminatorBlock(0, Opcode::conditionalBranch, {1, 6}),
+        terminatorBlock(1, Opcode::branch, {10}),
+        // 5 has no predecessors, so it roots its own region; 6 joins it with the entry's region.
+        terminatorBlock(5, Opcode::conditionalBranch, {6, 7}),
+        terminatorBlock(6, Opcode::returnVoid),
+        terminatorBlock(7, Opcode::returnVoid),
+        // 8 and 9 reach each other but no root reaches them; 10 joins them with the entry.
+        terminatorBlock(8, Opcode::conditionalBranch, {9, 10}),
+        terminatorBlock(9, Opcode::branch, {8}),
+        terminatorBlock(10, Opcode::returnVoid),
+        terminatorBlock(11, Opcode::branch, {10}),
+        terminatorBlock(12, Opcode::branch, {12}),
+    };
+    const DominanceAnalysis dominance(function);
+    EXPECT_TRUE(dominance.dominates(5, 5));
+    EXPECT_TRUE(dominance.dominates(5, 7));
+    EXPECT_FALSE(dominance.dominates(0, 7));
+    EXPECT_FALSE(dominance.dominates(0, 6));
+    EXPECT_FALSE(dominance.dominates(5, 6));
+    EXPECT_TRUE(dominance.dominates(6, 6));
+    EXPECT_FALSE(dominance.dominates(0, 5));
+    // An unrooted cycle, and a block that only loops to itself, are dominated by every block.
+    EXPECT_TRUE(dominance.dominates(0, 8));
+    EXPECT_TRUE(dominance.dominates(7, 9));
+    EXPECT_TRUE(dominance.dominates(10, 8));
+    EXPECT_TRUE(dominance.dominates(1, 12));
+    EXPECT_FALSE(dominance.dominates(99, 8));
+    // 10 is reached from the entry through 1, from the unrooted cycle, and from the root 11.
+    EXPECT_FALSE(dominance.dominates(0, 10));
+    EXPECT_FALSE(dominance.dominates(11, 10));
+    EXPECT_FALSE(dominance.dominates(8, 10));
+    EXPECT_TRUE(dominance.dominates(10, 10));
+}
+
+TEST(IRModelTest, DominanceWorkGrowsLinearlyWithStraightLineBranching) {
+    for (const bool reversed : {false, true}) {
+        const auto function = diamondChain(300, reversed);
+        const DominanceAnalysis dominance(function);
+        EXPECT_TRUE(dominance.dominates(0, 900));
+        EXPECT_TRUE(dominance.dominates(450, 900));
+        EXPECT_FALSE(dominance.dominates(451, 900));
+        EXPECT_FALSE(dominance.dominates(452, 453));
+        EXPECT_TRUE(dominance.dominates(450, 452));
+        EXPECT_FALSE(dominance.dominates(900, 450));
+        // Straight-line branching costs a bounded number of steps per block, whatever the block order,
+        // so a long function is not quadratic to verify.
+        EXPECT_LE(dominance.work(), 16 * function.blocks.size()) << (reversed ? "reversed" : "in order");
+    }
+}
+
+TEST(IRModelTest, DominanceWorkForManyExitsToOneBlockGrowsWithTheirDepth) {
+    // A loop body of `count` sequential `if c { break }` lowers to blocks that each branch to one shared
+    // exit at increasing dominator depth. Each join climbs the dominator tree, so this shape costs about
+    // 2 * count * count steps: a known limit, recorded here so a change to it is deliberate.
+    constexpr BlockId count = 300;
+    const BlockId exit = 2 * count;
+    Function function;
+    function.entry = 0;
+    for (BlockId index = 0; index < count; ++index) {
+        function.blocks.push_back(terminatorBlock(2 * index, Opcode::conditionalBranch, {exit, 2 * index + 1}));
+        function.blocks.push_back(terminatorBlock(2 * index + 1, Opcode::branch, {2 * index + 2 == exit ? exit : 2 * index + 2}));
+    }
+    function.blocks.push_back(terminatorBlock(exit, Opcode::returnVoid));
+    const DominanceAnalysis dominance(function);
+    EXPECT_TRUE(dominance.dominates(0, exit));
+    EXPECT_FALSE(dominance.dominates(2, exit));
+    EXPECT_TRUE(dominance.dominates(2, 2 * count - 1));
+    EXPECT_LE(dominance.work(), 3 * static_cast<size_t>(count) * count);
+}
+
+TEST(IRModelTest, DominancePinsMalformedBlockShapes) {
+    Function function;
+    function.entry = 1;
+    function.blocks = {
+        terminatorBlock(1, Opcode::conditionalBranch, {2, 3}),
+        // A duplicate id keeps the first block, but both contribute their edges.
+        terminatorBlock(2, Opcode::branch, {4}),
+        terminatorBlock(2, Opcode::branch, {5}),
+        terminatorBlock(3, Opcode::branch, {4}),
+        terminatorBlock(4, Opcode::returnVoid),
+        terminatorBlock(5, Opcode::returnVoid),
+        // Switch cases count only on a switch.
+        terminatorBlock(6, Opcode::branch, {}),
+    };
+    BasicBlock empty;
+    empty.id = 7;
+    function.blocks.push_back(empty);
+    SwitchCase stray;
+    stray.target = 8;
+    function.blocks[6].instructions.back().switchCases.push_back(stray);
+    function.blocks.push_back(terminatorBlock(8, Opcode::returnVoid));
+    const DominanceAnalysis dominance(function);
+    EXPECT_TRUE(dominance.dominates(1, 4));
+    EXPECT_FALSE(dominance.dominates(2, 4));
+    EXPECT_TRUE(dominance.dominates(2, 5));
+    EXPECT_TRUE(dominance.dominates(7, 7));
+    EXPECT_FALSE(dominance.dominates(1, 7));
+    EXPECT_FALSE(dominance.dominates(6, 8));
+    EXPECT_TRUE(dominance.dominates(8, 8));
+
+    // Without the entry among the blocks, only blocks without predecessors root the graph.
+    function.entry = 99;
+    const DominanceAnalysis detached(function);
+    EXPECT_TRUE(detached.dominates(1, 4));
+    EXPECT_FALSE(detached.dominates(99, 1));
+    EXPECT_FALSE(detached.dominates(1, 99));
+}
+
+// The verifier's dominance as a set-based maximal fixed point, which DominanceAnalysis must reproduce.
+std::map<BlockId, std::set<BlockId>> naiveDominators(const Function& function) {
+    std::set<BlockId> all;
+    for (const auto& block : function.blocks) all.insert(block.id);
+    std::map<BlockId, std::set<BlockId>> predecessors;
+    for (const auto& block : function.blocks) {
+        if (block.instructions.empty()) continue;
+        const auto& terminator = block.instructions.back();
+        for (const auto target : terminator.targets) {
+            if (all.contains(target)) predecessors[target].insert(block.id);
+        }
+        if (terminator.opcode != Opcode::switchPattern) continue;
+        for (const auto& switchCase : terminator.switchCases) {
+            if (all.contains(switchCase.target)) predecessors[switchCase.target].insert(block.id);
+        }
+    }
+    std::map<BlockId, std::set<BlockId>> dominators;
+    for (const auto id : all) dominators[id] = id == function.entry ? std::set<BlockId> {id} : all;
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (const auto id : all) {
+            if (id == function.entry) continue;
+            std::set<BlockId> next;
+            bool first = true;
+            for (const auto predecessor : predecessors[id]) {
+                if (first) {
+                    next = dominators[predecessor];
+                    first = false;
+                    continue;
+                }
+                std::erase_if(next, [&](BlockId candidate) { return !dominators[predecessor].contains(candidate); });
+            }
+            next.insert(id);
+            if (next != dominators[id]) {
+                dominators[id] = std::move(next);
+                changed = true;
+            }
+        }
+    }
+    return dominators;
+}
+
+TEST(IRModelTest, DominanceMatchesTheSetBasedFixedPointOnRandomFunctions) {
+    // std::mt19937's sequence is fixed by the standard; distributions are not, so draw with modulo.
+    std::mt19937 random(20261118);
+    const auto below = [&random](uint32_t bound) { return static_cast<BlockId>(random() % bound); };
+    const Opcode terminators[] = {Opcode::branch, Opcode::conditionalBranch, Opcode::switchPattern, Opcode::returnVoid};
+    for (int trial = 0; trial < 3000; ++trial) {
+        Function function;
+        const auto blockCount = 1 + below(10);
+        function.entry = below(blockCount + 1);
+        for (BlockId index = 0; index < blockCount; ++index) {
+            BasicBlock block;
+            block.id = below(5) == 0 ? below(blockCount) : index;
+            if (below(10) != 0) {
+                block = terminatorBlock(block.id, terminators[below(4)]);
+                for (auto targets = below(3); targets > 0; --targets) {
+                    block.instructions.back().targets.push_back(below(blockCount + 2));
+                }
+                for (auto cases = below(3); cases > 0; --cases) {
+                    SwitchCase switchCase;
+                    switchCase.target = below(blockCount + 2);
+                    block.instructions.back().switchCases.push_back(switchCase);
+                }
+            }
+            function.blocks.push_back(std::move(block));
+        }
+        auto expected = naiveDominators(function);
+        const DominanceAnalysis dominance(function);
+        for (BlockId block = 0; block < blockCount + 2; ++block) {
+            for (BlockId dominator = 0; dominator < blockCount + 2; ++dominator) {
+                const auto found = expected.find(block);
+                const bool want = found != expected.end() && found->second.contains(dominator);
+                ASSERT_EQ(dominance.dominates(dominator, block), want)
+                        << "trial " << trial << ": does " << dominator << " dominate " << block << "?";
+            }
+        }
+    }
 }
 
 TEST(IRModelTest, VerifiesExplicitCopyTakeAndDestroyOperations) {

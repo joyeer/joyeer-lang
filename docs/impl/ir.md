@@ -398,8 +398,18 @@ General operand dominance is currently missing: hand-built IR can use an
 address before its definition or outside its dominating block and still pass
 both Joyeer verification and text emission. An `Int` condition for `cond_br`,
 or an `Int`-typed comparison result, can likewise pass until LLVM rejects the
-text. Existing definition locations/dominators must be applied to ordinary
-operands, and opcode contracts must check concrete `TypeKind` values.
+text. Existing definition locations and `DominanceAnalysis` must be applied to
+ordinary operands, and opcode contracts must check concrete `TypeKind` values.
+
+`DominanceAnalysis` answers the verifier's dominance checks. The entry block
+and every other block without predecessors root the graph; a block that no
+root reaches is treated as dominated by every block. It builds a dominator tree
+by the Cooper, Harvey and Kennedy iterative algorithm in reverse postorder and
+answers each query by comparing tree intervals. Straight-line branching costs a
+bounded number of steps per block; many predecessors joining one block at
+increasing depth (a loop with many `break`s) still cost about the square of
+their count. The `work()` bound tests in `ir_test.cpp` record both shapes and
+a randomized comparison against the set-based fixed point pins the semantics.
 
 The verifier is not currently an ownership or definite-initialization proof.
 For example, it accepts destruction of shallow-stored borrowed String

@@ -9,6 +9,7 @@
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace joyeer::ir {
 
@@ -234,6 +235,137 @@ bool DestructionAnalysis::requiresDestruction(TypeId type) const {
 
 bool requiresDestruction(const Module& module, TypeId type) {
     return DestructionAnalysis(module).requiresDestruction(type);
+}
+
+namespace {
+
+constexpr size_t unreachedBlock = std::numeric_limits<size_t>::max();
+
+} // namespace
+
+// Dominators by Cooper, Harvey and Kennedy's iterative algorithm over a virtual root whose successors
+// are the entry and every other block without predecessors. Visiting blocks in reverse postorder
+// settles the immediate dominators in a pass or two; a block the virtual root does not reach keeps no
+// immediate dominator, which is the "dominated by every block" of the fixed point.
+DominanceAnalysis::DominanceAnalysis(const Function& function) {
+    std::vector<BlockId> ids;
+    for (const auto& block : function.blocks) {
+        if (indices.emplace(block.id, ids.size()).second) ids.push_back(block.id);
+    }
+    const size_t count = ids.size();
+    const size_t root = count;
+    std::vector<std::vector<size_t>> successors(count + 1);
+    std::vector<std::vector<size_t>> predecessors(count + 1);
+    const auto connect = [&](size_t from, size_t to) {
+        successors[from].push_back(to);
+        predecessors[to].push_back(from);
+    };
+    const auto connectTarget = [&](size_t from, BlockId target) {
+        const auto found = indices.find(target);
+        if (found != indices.end()) connect(from, found->second);
+    };
+    for (const auto& block : function.blocks) {
+        if (block.instructions.empty()) continue;
+        const auto from = indices.at(block.id);
+        const auto& terminator = block.instructions.back();
+        for (const auto target : terminator.targets) connectTarget(from, target);
+        if (terminator.opcode == Opcode::switchPattern) {
+            for (const auto& switchCase : terminator.switchCases) connectTarget(from, switchCase.target);
+        }
+    }
+    for (size_t index = 0; index < count; ++index) {
+        if (ids[index] == function.entry || predecessors[index].empty()) connect(root, index);
+    }
+
+    // Postorder numbers from an iterative depth-first walk, which a long chain of blocks cannot overflow.
+    std::vector<size_t> postorder;
+    std::vector<size_t> order(count + 1, unreachedBlock);
+    std::vector<bool> visited(count + 1, false);
+    std::vector<std::pair<size_t, size_t>> walk {{root, 0}};
+    visited[root] = true;
+    while (!walk.empty()) {
+        ++steps;
+        const auto node = walk.back().first;
+        const auto next = walk.back().second++;
+        if (next < successors[node].size()) {
+            const auto successor = successors[node][next];
+            if (!visited[successor]) {
+                visited[successor] = true;
+                walk.emplace_back(successor, 0);
+            }
+        } else {
+            order[node] = postorder.size();
+            postorder.push_back(node);
+            walk.pop_back();
+        }
+    }
+
+    std::vector<size_t> immediate(count + 1, unreachedBlock);
+    immediate[root] = root;
+    const auto intersect = [&](size_t left, size_t right) {
+        while (left != right) {
+            while (order[left] < order[right]) {
+                left = immediate[left];
+                ++steps;
+            }
+            while (order[right] < order[left]) {
+                right = immediate[right];
+                ++steps;
+            }
+        }
+        return left;
+    };
+    for (bool changed = true; changed;) {
+        changed = false;
+        // The root is last in postorder; every other block follows it in reverse postorder.
+        for (size_t position = postorder.size() - 1; position-- > 0;) {
+            const auto node = postorder[position];
+            auto candidate = unreachedBlock;
+            for (const auto predecessor : predecessors[node]) {
+                ++steps;
+                if (immediate[predecessor] == unreachedBlock) continue;
+                candidate = candidate == unreachedBlock ? predecessor : intersect(predecessor, candidate);
+            }
+            if (immediate[node] != candidate) {
+                immediate[node] = candidate;
+                changed = true;
+            }
+        }
+    }
+
+    // Number the dominator tree so that a dominance query compares two intervals.
+    std::vector<std::vector<size_t>> children(count + 1);
+    for (const auto node : postorder) {
+        if (node != root) children[immediate[node]].push_back(node);
+    }
+    entered.assign(count + 1, unreachedBlock);
+    exited.assign(count + 1, unreachedBlock);
+    size_t clock = 0;
+    entered[root] = clock++;
+    walk.assign({{root, 0}});
+    while (!walk.empty()) {
+        ++steps;
+        const auto node = walk.back().first;
+        const auto next = walk.back().second++;
+        if (next < children[node].size()) {
+            const auto child = children[node][next];
+            entered[child] = clock++;
+            walk.emplace_back(child, 0);
+        } else {
+            exited[node] = clock++;
+            walk.pop_back();
+        }
+    }
+}
+
+bool DominanceAnalysis::dominates(BlockId dominator, BlockId block) const {
+    const auto dominatorIndex = indices.find(dominator);
+    const auto blockIndex = indices.find(block);
+    if (dominatorIndex == indices.end() || blockIndex == indices.end()) return false;
+    const auto upper = dominatorIndex->second;
+    const auto lower = blockIndex->second;
+    if (entered[lower] == unreachedBlock) return true;
+    return entered[upper] != unreachedBlock && entered[upper] <= entered[lower] && exited[lower] <= exited[upper];
 }
 
 VerificationResult Verifier::verify(const Module& module) const {
@@ -1447,61 +1579,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                 }
             }
         }
-        std::unordered_map<BlockId, std::unordered_set<BlockId>> predecessors;
-        for (const auto& block : function.blocks) {
-            if (block.instructions.empty()) continue;
-            for (const auto target : block.instructions.back().targets) {
-                if (blocks.contains(target)) predecessors[target].insert(block.id);
-            }
-            if (block.instructions.back().opcode == Opcode::switchPattern) {
-                for (const auto& switchCase : block.instructions.back().switchCases) {
-                    if (blocks.contains(switchCase.target)) {
-                        predecessors[switchCase.target].insert(block.id);
-                    }
-                }
-            }
-        }
-        std::unordered_map<BlockId, std::unordered_set<BlockId>> dominators;
-        std::unordered_set<BlockId> allBlocks;
-        for (const auto& [blockId, block] : blocks) allBlocks.insert(blockId);
-        for (const auto& [blockId, block] : blocks) {
-            dominators[blockId] = blockId == function.entry
-                    ? std::unordered_set<BlockId> { blockId }
-                    : allBlocks;
-        }
-        bool changed = true;
-        while (changed) {
-            changed = false;
-            for (const auto& [blockId, block] : blocks) {
-                if (blockId == function.entry) continue;
-                std::unordered_set<BlockId> next = allBlocks;
-                const auto incoming = predecessors.find(blockId);
-                if (incoming == predecessors.end() || incoming->second.empty()) {
-                    next.clear();
-                } else {
-                    bool first = true;
-                    for (const auto predecessor : incoming->second) {
-                        if (first) {
-                            next = dominators[predecessor];
-                            first = false;
-                        } else {
-                            for (auto candidate = next.begin(); candidate != next.end();) {
-                                if (!dominators[predecessor].contains(*candidate)) {
-                                    candidate = next.erase(candidate);
-                                } else {
-                                    ++candidate;
-                                }
-                            }
-                        }
-                    }
-                }
-                next.insert(blockId);
-                if (next != dominators[blockId]) {
-                    dominators[blockId] = std::move(next);
-                    changed = true;
-                }
-            }
-        }
+        const DominanceAnalysis dominance(function);
         struct LiteralUse {
             const Instruction* instruction;
             BlockId block;
@@ -1529,9 +1607,20 @@ VerificationResult Verifier::verify(const Module& module) const {
         std::unordered_map<ValueId, TypeId> literalPlaces;
         // The key and value field addresses of a verified dictionary literal: the only field addresses of an entry.
         std::unordered_set<ValueId> literalEntryFields;
+        // The control-flow edges of the literal protocol's reachability walks (dominance has its own analysis).
+        std::unordered_map<BlockId, std::unordered_set<BlockId>> predecessors;
         std::unordered_map<BlockId, std::unordered_set<BlockId>> successors;
-        for (const auto& [target, sources] : predecessors) {
-            for (const auto source : sources) successors[source].insert(target);
+        for (const auto& block : function.blocks) {
+            if (block.instructions.empty()) continue;
+            const auto connect = [&](BlockId target) {
+                if (!blocks.contains(target)) return;
+                predecessors[target].insert(block.id);
+                successors[block.id].insert(target);
+            };
+            for (const auto target : block.instructions.back().targets) connect(target);
+            if (block.instructions.back().opcode == Opcode::switchPattern) {
+                for (const auto& switchCase : block.instructions.back().switchCases) connect(switchCase.target);
+            }
         }
         // The blocks reached from `from` along successor (or predecessor) edges without entering `barrier`; `from`
         // itself is included only when a cycle avoiding the barrier returns to it.
@@ -1556,7 +1645,7 @@ VerificationResult Verifier::verify(const Module& module) const {
             const auto definition = valueDefinitions.find(value);
             return definition == valueDefinitions.end() ||
                     (definition->second.first == blockId && definition->second.second < storageIndex) ||
-                    (definition->second.first != blockId && dominators[blockId].contains(definition->second.first));
+                    (definition->second.first != blockId && dominance.dominates(definition->second.first, blockId));
         };
         // The closed packing protocol of a dictionary literal (decision 0027, Decision 3, rules 1-6), checked rule by
         // rule; returns the first rule that fails, or nothing, and admits the storage, slots, places and field
@@ -1852,7 +1941,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                                     (definition == valueDefinitions.end() ||
                                      (definition->second.first == block.id && definition->second.second < index) ||
                                      (definition->second.first != block.id &&
-                                      dominators[block.id].contains(definition->second.first)));
+                                      dominance.dominates(definition->second.first, block.id)));
                             valid = valid && store.operand == 1 && instruction.opcode == Opcode::store &&
                                     value != values.end() && value->second.type == element &&
                                     value->second.category == ValueCategory::value &&
@@ -1957,7 +2046,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                         if (definition != valueDefinitions.end() &&
                             (definition->second.first == block.id
                                      ? definition->second.second >= index
-                                     : !dominators[block.id].contains(definition->second.first))) {
+                                     : !dominance.dominates(definition->second.first, block.id))) {
                             report(VerificationErrorId::invalidInstruction, functionId, block.id, index,
                                    "an element address is used where its definition does not dominate");
                         }
@@ -2083,7 +2172,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                      ((definition->second.first == *block &&
                        definition->second.second < *instruction) ||
                       (definition->second.first != *block &&
-                       dominators[*block].contains(definition->second.first))));
+                       dominance.dominates(definition->second.first, *block))));
                 if (!definedEarlier) {
                     report(
                             VerificationErrorId::invalidReference,
