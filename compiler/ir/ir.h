@@ -9,7 +9,6 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace joyeer::ir {
@@ -419,7 +418,11 @@ public:
     }
 
 private:
-    std::unordered_map<BlockId, std::unordered_set<BlockId>> dominators;
+    // Each block's dense index, and per index the entry and exit numbers of the dominator tree's
+    // preorder walk; a block that no root reaches keeps the unreached sentinel.
+    std::unordered_map<BlockId, size_t> indices;
+    std::vector<size_t> entered;
+    std::vector<size_t> exited;
     size_t steps = 0;
 };
 

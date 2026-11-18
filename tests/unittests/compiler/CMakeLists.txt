@@ -1058,6 +1058,10 @@ if(JOYEER_CLANG_EXECUTABLE)
             "0\n40\n2\n42\n4\n4\n2\n5\n8\n1\n0\n30\n30\n"
             0 1 2 3)
     add_joyeer_native_regression(
+            E2EManyBlocksDominance many_blocks_dominance
+            "10000\n199\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
             E2ETaskBasic task_basic
             "99\n49\nhi!\njob\n4\n5\n8\n8\n10\n"
             0 1 2 3)
