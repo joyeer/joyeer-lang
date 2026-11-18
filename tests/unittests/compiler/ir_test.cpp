@@ -1024,6 +1024,51 @@ TEST(IRModelTest, DominanceMatchesTheSetBasedFixedPointOnRandomFunctions) {
     }
 }
 
+// Dominance rooted at one block along a given edge map (the dictionary literal protocol roots it at the packing
+// block, in both directions): a block other than the root is reached from the root along a path that avoids another
+// block exactly when it is reached at all and that block does not dominate it. Checked against a walk that stops at
+// the avoided block, on random graphs with self loops, cycles and edges to blocks that have no edges of their own.
+TEST(IRModelTest, RootedDominanceMatchesAWalkThatAvoidsEachBlock) {
+    std::mt19937 random(20261118);
+    const auto below = [&random](uint32_t bound) { return static_cast<BlockId>(random() % bound); };
+    for (int trial = 0; trial < 2000; ++trial) {
+        const auto blockCount = 1 + below(10);
+        std::unordered_map<BlockId, std::unordered_set<BlockId>> edges;
+        for (BlockId from = 0; from < blockCount; ++from) {
+            for (auto count = below(4); count > 0; --count) edges[from].insert(below(blockCount + 2));
+        }
+        const auto root = below(blockCount);
+        const auto walk = [&](std::optional<BlockId> avoided) {
+            std::unordered_set<BlockId> reached;
+            std::vector<BlockId> work { root };
+            while (!work.empty()) {
+                const auto current = work.back();
+                work.pop_back();
+                const auto next = edges.find(current);
+                if (next == edges.end()) continue;
+                for (const auto target : next->second) {
+                    if (target != avoided && reached.insert(target).second) work.push_back(target);
+                }
+            }
+            return reached;
+        };
+        const auto reached = walk(std::nullopt);
+        const DominanceAnalysis dominance(root, edges);
+        for (BlockId avoided = 0; avoided < blockCount + 2; ++avoided) {
+            if (avoided == root) continue;
+            const auto expected = walk(avoided);
+            for (BlockId block = 0; block < blockCount + 2; ++block) {
+                if (block == root) continue;
+                const bool viaDominance = reached.contains(block) && !dominance.dominates(avoided, block);
+                ASSERT_EQ(viaDominance, expected.contains(block))
+                        << "trial " << trial << ": is " << block << " reached from " << root << " avoiding " << avoided
+                        << "?";
+            }
+        }
+        EXPECT_TRUE(dominance.dominates(root, root));
+    }
+}
+
 TEST(IRModelTest, VerifiesExplicitCopyTakeAndDestroyOperations) {
     Module module;
     module.sourceName = "ownership.joyeer";

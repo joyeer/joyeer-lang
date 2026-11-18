@@ -1507,7 +1507,9 @@ TEST_F(IRLoweringTest, VerifyingALargeDictionaryLiteralAmidManyBlocksStaysLinear
         size_t blocks = 0;
         for (const auto& function : result.module->functions) blocks += function.blocks.size();
         EXPECT_GT(function("build").blocks.size(), static_cast<size_t>(4 * count));
-        EXPECT_LE(verification.literalPathWork, 8 * blocks) << blocks << " blocks";
+        // A literal walks the function and builds a dominator tree at most once in each direction, a few steps
+        // per block and edge each; walking once per stored value cost over 100 steps per block here.
+        EXPECT_LE(verification.literalPathWork, 16 * blocks) << blocks << " blocks";
     }
 }
 
