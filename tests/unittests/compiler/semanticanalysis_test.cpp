@@ -796,19 +796,31 @@ TEST_F(SemanticAnalysisTest, CompoundAssignmentRequiresAnInitializedTarget) {
     }
 }
 
-TEST_F(SemanticAnalysisTest, CompoundAssignmentRejectsAConsumedElementTarget) {
-    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
-struct Cell { var text: String }
-func take(value: consuming String) {}
-func invalid() {
-var cells = [Cell(text: "a")]
-take(value: consume cells[0].text)
-&cells[0].text += "b"
-}
-)JOYEER"));
-    EXPECT_FALSE(result.succeeded());
-    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
-            << joyeer::analysis::dump(result.diagnostics);
+// A target consumed before the statement is not the right side's doing, so the help asks for a
+// reinitialization instead of citing the evaluation order.
+TEST_F(SemanticAnalysisTest, CompoundAssignmentRejectsATargetConsumedBeforeTheStatement) {
+    for (const auto* body : {
+                "take(value: consume cells[0].text)\n&cells[0].text += \"b\"",
+                "if flag { take(value: consume cells[0].text) }\n&cells[0].text += \"b\"",
+                "drop(n: consume n)\nn += 1" }) {
+        SCOPED_TRACE(body);
+        ASSERT_NO_FATAL_FAILURE(analyze(
+                "struct Cell { var text: String }\n"
+                "func take(value: consuming String) {}\n"
+                "func drop(n: consuming Int) {}\n"
+                "func invalid(flag: Bool) {\n"
+                "var cells = [Cell(text: \"a\")]\n"
+                "var n = 1\n" + std::string(body) + "\n}\n"));
+        EXPECT_FALSE(result.succeeded());
+        const auto consumed = std::find_if(
+                result.diagnostics.begin(), result.diagnostics.end(), [](const auto& diagnostic) {
+                    return diagnostic.id == joyeer::analysis::DiagnosticId::useAfterConsume;
+                });
+        ASSERT_NE(consumed, result.diagnostics.end()) << joyeer::analysis::dump(result.diagnostics);
+        ASSERT_TRUE(consumed->help.has_value());
+        EXPECT_NE(consumed->help->find("reinitialize"), std::string::npos) << *consumed->help;
+        EXPECT_EQ(consumed->help->find("4.4.3"), std::string::npos) << *consumed->help;
+    }
 }
 
 TEST_F(SemanticAnalysisTest, DoesNotRestoreADifferentConsumedElement) {
