@@ -1772,7 +1772,8 @@ VerificationResult Verifier::verify(const Module& module) const {
                 if (!reachedFromPacking.has_value()) reachedFromPacking = reachedFrom(block.id, true);
                 // Whether `other`, not the packing block, is reached from the packing (forward) or reaches it along a
                 // path that avoids the defining block. A use in the packing block was rejected above; with no
-                // definition, or one in the packing block itself, nothing else is a barrier.
+                // definition, or one in the packing block itself, nothing else is a barrier. For the packing block
+                // itself the answer is plain reachability, which is right only for the cycle check's self loop.
                 const bool barrier = defined.has_value() && *defined != block.id;
                 const auto avoids = [&](BlockId other, bool forward) {
                     if (!forward && !reachingPacking.has_value()) {
