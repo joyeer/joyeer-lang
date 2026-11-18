@@ -1727,16 +1727,6 @@ private:
 
         for (const auto& symbol : model->semanticModelValue->symbols()) {
             if (symbol.kind != semantic::SymbolKind::builtinMember) continue;
-            if (symbol.name == "get" && symbol.callable.has_value()) {
-                model->symbolTypes[symbol.id] = model->typeContext.anyType();
-                model->callables[symbol.id] = TypedCallableSignature {
-                    semantic::CallableKind::function,
-                    true,
-                    { model->typeContext.anyType() },
-                    model->typeContext.anyType(),
-                };
-                continue;
-            }
             if ((symbol.name == "send" || symbol.name == "receive") && symbol.callable.has_value()) {
                 model->symbolTypes[symbol.id] = model->typeContext.anyType();
                 model->callables[symbol.id] = TypedCallableSignature {
@@ -4063,11 +4053,16 @@ private:
                             "or temporary");
                     }
                 }
+                const auto diagnosticsBeforeOperand = diagnostics.size();
                 result = checkExpression(
                         access->operand,
                         expected,
                         consumes ? ReceiverMarker::consume : ReceiverMarker::inout)
                         .value_or(model->typeContext.errorType());
+                if (consumes && diagnosticsBeforeOperand == diagnostics.size() &&
+                    permittedMoves.contains(expression.get())) {
+                    rejectConsumedStringByte(access->operand);
+                }
                 break;
             }
             case syntax::Kind::propagateExpr:
@@ -6089,13 +6084,13 @@ private:
         // The place is the `count` of a library array or dictionary, read-only outside the collection's own file.
         bool libraryReadOnly = false;
         bool dictionaryCount = false;
-        // The place is a byte of a String, which `s[i]` only reads (spec 2.2).
+        // The place is a byte of a String, which `s[i]` only reads (spec 2.1.1).
         bool stringByte = false;
     };
 
     static std::optional<std::string> readOnlyHelp(const StorageAccess& storage) {
         if (storage.stringByte) {
-            return "a String's bytes are read-only (spec 2.2): build a new String instead";
+            return "a String's bytes are read-only (spec 2.1.1): build a new String instead";
         }
         if (!storage.libraryReadOnly) return std::nullopt;
         if (storage.dictionaryCount) {
@@ -6103,6 +6098,27 @@ private:
         }
         return "an array's 'count' changes only through the array's own methods, such as append or removeLast";
     }
+
+    // Whether `expression`, through parentheses, is `s[i]` of a String: a byte, which is only ever read.
+    bool isStringByte(const syntax::ExprPtr& expression) const {
+        auto current = expression;
+        while (current != nullptr && current->kind == syntax::Kind::parenthesizedExpr) {
+            current = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(current)->expression;
+        }
+        if (current == nullptr || current->kind != syntax::Kind::subscriptExpr) return false;
+        const auto base = model->typeOf(std::static_pointer_cast<syntax::SubscriptExprSyntax>(current)->base);
+        return base.has_value() && *base == model->typeContext.stringType();
+    }
+
+    // `consume s[i]` would move a byte out of a String, whose bytes are read-only (spec 2.1.1). Reported once per
+    // operand, whichever of the marker and the argument checks sees it first with its type known.
+    void rejectConsumedStringByte(const syntax::ExprPtr& operand) {
+        if (!isStringByte(operand) || !reportedStringByteConsumes.insert(operand.get()).second) return;
+        report(TypeCheckingDiagnosticId::invalidConsumeArgument, operand->span, "cannot consume a byte of a String",
+               "a String's bytes are read-only (spec 2.1.1): copy the byte into a binding ('let byte = s[i]') and "
+               "use or consume that");
+    }
+    std::unordered_set<const syntax::ExprSyntax*> reportedStringByteConsumes;
 
     StorageAccess analyzeStorage(const syntax::ExprPtr& expression) const {
         if (expression == nullptr) return StorageAccess { false, false, "<invalid>" };
@@ -6146,8 +6162,9 @@ private:
                         std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
                 auto result = analyzeStorage(subscript->base);
                 result.requiresMarker = true;
-                if (const auto base = model->typeOf(subscript->base);
-                    result.writable && base.has_value() && *base == model->typeContext.stringType()) {
+                // Every String byte is read-only, so a `let` base reports the byte, not the binding: making it
+                // mutable would not help.
+                if (isStringByte(expression)) {
                     result.writable = false;
                     result.stringByte = true;
                 }
@@ -6285,6 +6302,7 @@ private:
                     argument.value->span,
                     "initializing argument must be a whole mutable owning local or consuming parameter");
         }
+        if (required == syntax::AccessEffect::consuming) rejectConsumedStringByte(argument.value);
         if (required == syntax::AccessEffect::consuming &&
             !isConsumable(argument.value)) {
             report(
@@ -6423,6 +6441,7 @@ private:
             requireNoImplicitCopy(argument.value, type);
             return;
         }
+        rejectConsumedStringByte(argument.value);
         if (!isConsumable(argument.value)) {
             report(
                     TypeCheckingDiagnosticId::invalidConsumeArgument,

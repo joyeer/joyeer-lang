@@ -2077,9 +2077,10 @@ private:
             if (const auto baseType = typeOf(subscript->base); baseType.has_value() && isRoleSubscriptBase(*baseType)) {
                 return emitRoleElementAddress(*baseType, *base, *index, *type, subscript->span);
             }
-            // Only a collection role's element has an address; type checking rejects a String byte.
+            // Only a collection role's element has an address; type checking rejects writing, passing `inout` or
+            // consuming a String byte.
             report(DiagnosticId::unsupportedSyntax, subscript->span,
-                   "only an array or dictionary element can be an assignment target");
+                   "only an array or dictionary element has an address");
             return std::nullopt;
         }
         report(
@@ -2119,9 +2120,10 @@ private:
             if (!index.has_value() || !type.has_value()) return std::nullopt;
             const auto roleBase = typeOf(subscript->base);
             if (!roleBase.has_value() || !isRoleSubscriptBase(*roleBase)) {
-                // Only a collection role's element has an address; type checking rejects a String byte.
+                // Only a collection role's element has an address; type checking rejects writing, passing `inout`
+                // or consuming a String byte.
                 report(DiagnosticId::unsupportedSyntax, subscript->span,
-                       "only an array or dictionary element can be an assignment target");
+                       "only an array or dictionary element has an address");
                 return std::nullopt;
             }
             return DeferredAddress([this, base = std::move(*base), index = *index, type = *type, roleBase = *roleBase,
