@@ -1079,6 +1079,14 @@ TEST_F(DictRoleTest, AStoredValueUsedOnAPathThroughThePackingIsRejected) {
         return first;
     };
     const joyeer::ir::Instruction stop { Opcode::unreachable };
+    // The key's definition apart from the rest of the code before the storage.
+    Body withoutKey0;
+    Body key0Definition;
+    for (const auto& instruction : before) {
+        const bool definesKey0 = instruction.result.has_value() && instruction.result->id == key0;
+        (definesKey0 ? key0Definition : withoutKey0).push_back(instruction);
+    }
+    ASSERT_EQ(key0Definition.size(), 1u);
     struct Case {
         const char* name;
         std::vector<Body> blocks;
@@ -1100,6 +1108,11 @@ TEST_F(DictRoleTest, AStoredValueUsedOnAPathThroughThePackingIsRejected) {
         // The packing in a loop whose value was evaluated before the loop: the second iteration transfers it again.
         { "a packing in a loop", {
               join(before, { condition(), branch(1) }), { choose(2, 3) }, join(packing, { branch(1) }), { stop } } },
+        // A key evaluated on one arm of a diamond whose join packs it: the store is its only use, so only the
+        // evaluated-before (dominance) check sees that the other arm reaches the packing without it.
+        { "a definition that does not dominate the packing", {
+              join(withoutKey0, { condition(), choose(1, 2) }), join(key0Definition, { branch(3) }), { branch(3) },
+              join(packing, ret) } },
     };
     for (const auto& mutation : cases) {
         SCOPED_TRACE(mutation.name);
@@ -1113,6 +1126,18 @@ TEST_F(DictRoleTest, AStoredValueUsedOnAPathThroughThePackingIsRejected) {
         const auto messages = joyeer::ir::dump(joyeer::ir::Verifier().verify(copy));
         EXPECT_NE(messages.find("dictionary literal rule 4"), std::string::npos) << messages;
     }
+    // The same key evaluated in a block that dominates the packing block is accepted.
+    auto dominated = base;
+    auto& function = functionExactly(dominated, "make");
+    function.blocks.clear();
+    const std::vector<Body> blocks { join(withoutKey0, { branch(1) }), join(key0Definition, { branch(2) }),
+                                     join(packing, ret) };
+    for (size_t index = 0; index < blocks.size(); ++index) {
+        function.blocks.push_back(joyeer::ir::BasicBlock { static_cast<joyeer::ir::BlockId>(index),
+                                                           "b" + std::to_string(index), blocks[index] });
+    }
+    const auto verification = joyeer::ir::Verifier().verify(dominated);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
 }
 
 TEST_F(DictRoleTest, AnEntryIsNeverAValue) {

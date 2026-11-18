@@ -1849,6 +1849,70 @@ TEST_F(CollectionRoleTest, LiteralStorageIsAClosedBoundedInitializeAndTransferPr
     }
 }
 
+// An element is evaluated before the storage: in its block or in a block that dominates the storage's block. One
+// evaluated on one arm of a diamond whose join holds the storage is rejected; one in a dominating block is accepted.
+TEST_F(CollectionRoleTest, ALiteralElementMustBeEvaluatedInABlockThatDominatesTheStorage) {
+    load("func make(): [Int] { return [1, 2] }\n");
+    const auto module = lower();
+    ASSERT_NE(module, nullptr);
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    using joyeer::ir::Opcode;
+    using Body = std::vector<joyeer::ir::Instruction>;
+    const auto& original = named(*module, "make");
+    ASSERT_EQ(original.blocks.size(), 1u);
+    const auto& instructions = original.blocks[0].instructions;
+    const auto storage = std::find_if(instructions.begin(), instructions.end(), [](const auto& instruction) {
+        return instruction.opcode == Opcode::stackBlock;
+    });
+    const auto store = std::find_if(instructions.begin(), instructions.end(), [](const auto& instruction) {
+        return instruction.opcode == Opcode::store;
+    });
+    ASSERT_NE(storage, instructions.end());
+    ASSERT_NE(store, instructions.end());
+    const auto element = store->operands[0];
+    Body before;
+    Body definition;
+    for (auto instruction = instructions.begin(); instruction != storage; ++instruction) {
+        const bool definesElement = instruction->result.has_value() && instruction->result->id == element;
+        (definesElement ? definition : before).push_back(*instruction);
+    }
+    ASSERT_EQ(definition.size(), 1u);
+    const Body rest(storage, instructions.end());
+    const auto branch = [](joyeer::ir::BlockId target) {
+        joyeer::ir::Instruction instruction { Opcode::branch };
+        instruction.targets = { target };
+        return instruction;
+    };
+    joyeer::ir::Instruction condition { Opcode::booleanConstant };
+    condition.integerValue = 1;
+    condition.result = joyeer::ir::Value { 9100, checking.model->types().boolType(), joyeer::ir::ValueCategory::value };
+    joyeer::ir::Instruction choose { Opcode::conditionalBranch };
+    choose.operands = { 9100 };
+    choose.targets = { 1, 2 };
+    const auto join = [](Body first, const Body& second) {
+        first.insert(first.end(), second.begin(), second.end());
+        return first;
+    };
+    const auto verify = [&](const std::vector<Body>& blocks) {
+        auto copy = *module;
+        auto& function = named(copy, "make");
+        function.blocks.clear();
+        for (size_t index = 0; index < blocks.size(); ++index) {
+            function.blocks.push_back(joyeer::ir::BasicBlock { static_cast<joyeer::ir::BlockId>(index),
+                                                               "b" + std::to_string(index), blocks[index] });
+        }
+        return joyeer::ir::Verifier().verify(copy);
+    };
+    // The rest of the code before the storage (the zeroed receiver among it) stays in the storage's block.
+    const auto storageBlock = join(before, rest);
+    const auto diamond = verify({ { condition, choose }, join(definition, { branch(3) }), { branch(3) },
+                                  storageBlock });
+    EXPECT_FALSE(diamond.succeeded());
+    EXPECT_NE(joyeer::ir::dump(diamond).find("array literal storage"), std::string::npos) << joyeer::ir::dump(diamond);
+    const auto dominated = verify({ join(definition, { branch(1) }), storageBlock });
+    EXPECT_TRUE(dominated.succeeded()) << joyeer::ir::dump(dominated);
+}
+
 TEST_F(CollectionRoleTest, AFactoryCallWithoutLiteralStorageIsRejected) {
     load("func make(): [Int] { return [1, 2] }\n");
     const auto module = lower();
