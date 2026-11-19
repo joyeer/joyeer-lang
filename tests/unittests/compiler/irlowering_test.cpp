@@ -1140,7 +1140,6 @@ return flag && probe()
 
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     const auto& run = function("run");
-    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::logicalAnd), 0u);
     EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::conditionalBranch), 1u);
     const auto right = std::find_if(
             run.blocks.begin(), run.blocks.end(),
@@ -1166,7 +1165,6 @@ return flag && if true { return true } else { false }
 
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     const auto& run = function("run");
-    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::logicalAnd), 0u);
     EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::conditionalBranch), 2u);
     EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnValue), 2u);
     const auto verification = joyeer::ir::Verifier().verify(*result.module);

@@ -476,6 +476,18 @@ TEST(IRModelTest, RemovedDictionaryWireSlotsAreRejectedAndNeverReused) {
     EXPECT_NE(dump(verification).find("unknown or removed type kind"), std::string::npos);
 }
 
+// `logicalAnd` (23) was never emitted: `&&` and `||` lower to branches. Its slot is rejected and never reused
+// (wire 26).
+TEST(IRModelTest, RemovedLogicalAndWireSlotIsRejectedAndNeverReused) {
+    EXPECT_EQ(static_cast<unsigned>(Opcode::notEqual), 22u);
+    EXPECT_EQ(static_cast<unsigned>(Opcode::bitAnd), 24u);
+    auto module = validAddModule();
+    module.functions[0].blocks[0].instructions[0].opcode = static_cast<Opcode>(23);
+    const auto verification = Verifier().verify(module);
+    EXPECT_FALSE(verification.succeeded());
+    EXPECT_NE(dump(verification).find("unknown or removed opcode"), std::string::npos);
+}
+
 // Decision 0024: every malformed role binding is rejected by the verifier, not trusted from lowering.
 TEST(IRModelTest, VerifierRejectsMalformedRoleEnumerations) {
     auto module = validAddModule();

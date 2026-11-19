@@ -115,6 +115,7 @@ in the spec.
 | [0021](decisions/0021-protocols-and-generic-functions.md) | Protocols and monomorphized generic functions |
 | [0022](decisions/0022-generic-types-and-layout-intrinsics.md) | Generic structs/enums and runtime-only typed layout operations |
 | [0023](decisions/0023-library-concurrency.md) | Concurrency as a source prelude, with closed compatibility/transfer metadata and verified x86_64 acceptance |
+| [0028](decisions/0028-ir-opcode-set.md) | A smaller IR opcode set described by one table (proposed) |
 
 ## Conventions
 

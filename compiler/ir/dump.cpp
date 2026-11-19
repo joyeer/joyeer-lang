@@ -361,7 +361,6 @@ std::string dump(const Module& module) {
                     case Opcode::greaterEqual:
                     case Opcode::equal:
                     case Opcode::notEqual:
-                    case Opcode::logicalAnd:
                     case Opcode::bitAnd:
                     case Opcode::bitOr:
                     case Opcode::bitXor:

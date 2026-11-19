@@ -34,7 +34,7 @@ void FunctionVerifier::verifyInstruction(const BasicBlock& block, size_t index, 
     const auto& instruction = block.instructions[index];
     const auto location = std::optional<size_t>(index);
     const auto opcodeSlot = static_cast<uint64_t>(instruction.opcode);
-    if ((opcodeSlot >= 35 && opcodeSlot <= 41) || opcodeSlot == 50 ||
+    if (opcodeSlot == 23 || (opcodeSlot >= 35 && opcodeSlot <= 41) || opcodeSlot == 50 ||
         opcodeSlot > static_cast<uint64_t>(Opcode::stackBlock)) {
         report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
                "instruction has an unknown or removed opcode");
@@ -178,8 +178,7 @@ void FunctionVerifier::verifyInstruction(const BasicBlock& block, size_t index, 
         case Opcode::greater:
         case Opcode::greaterEqual:
         case Opcode::equal:
-        case Opcode::notEqual:
-        case Opcode::logicalAnd: verifyBinaryOperator(site); break;
+        case Opcode::notEqual: verifyBinaryOperator(site); break;
         case Opcode::divide:
         case Opcode::remainder: verifyDivision(site); break;
         case Opcode::bitAnd:
@@ -575,7 +574,7 @@ void FunctionVerifier::verifyIntegerFits(const InstructionSite& site) {
     }
 }
 
-// Arithmetic, comparison and `logicalAnd`: matching value operands.
+// Arithmetic and comparison: matching value operands.
 void FunctionVerifier::verifyBinaryOperator(const InstructionSite& site) {
     const auto& block = site.block;
     const auto& instruction = site.instruction;

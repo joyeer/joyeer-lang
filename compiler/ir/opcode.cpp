@@ -25,7 +25,6 @@ bool producesValue(Opcode opcode) {
         case Opcode::greaterEqual:
         case Opcode::equal:
         case Opcode::notEqual:
-        case Opcode::logicalAnd:
         case Opcode::bitAnd:
         case Opcode::bitOr:
         case Opcode::bitXor:
@@ -99,7 +98,6 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::greaterEqual: return "ge";
         case Opcode::equal: return "eq";
         case Opcode::notEqual: return "ne";
-        case Opcode::logicalAnd: return "and";
         case Opcode::bitAnd: return "bit_and";
         case Opcode::bitOr: return "bit_or";
         case Opcode::bitXor: return "bit_xor";
