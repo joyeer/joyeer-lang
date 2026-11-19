@@ -258,7 +258,8 @@ authorized functions with bodies may carry it.
 Literal factories cannot be formed as function values, so indirect calls cannot evade the storage protocol.
 Proven literal blocks use the same protocol in runtime and ordinary functions; other runtime raw blocks
 retain their existing capability rules. Wire decoding checks full-width enum and unsigned values before narrowing.
-The removed array kind's slot 10 and executable opcode slots 35-38 stay reserved and are rejected.
+The removed array kind's slot 10 and executable opcode slots 35-38 stay reserved and are rejected, as does slot 23
+(wire 26), which held a `logicalAnd` that lowering never emitted ([0028](../decisions/0028-ir-opcode-set.md)).
 
 A call whose checked argument has type `Never` cannot commit and does not demand a generic callee instance.
 Source argument and constraint checks still run. Lowering uses its substituted typed parameter/effect

@@ -603,9 +603,10 @@ TEST_F(DictRoleTest, ANoncopyableValueHasNoCopier) {
     EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
 }
 
-// Wire 24 added the dictionary roles; wire 25 removed the builtin dictionary's slots.
+// Wire 24 added the dictionary roles; wire 25 removed the builtin dictionary's slots, and wire 26 the
+// `logicalAnd` slot.
 TEST_F(DictRoleTest, TheWireCarriesTheDictionaryRoles) {
-    EXPECT_EQ(joyeer::llvmbackend::wire::version, 25u);
+    EXPECT_EQ(joyeer::llvmbackend::wire::version, 26u);
     load("func size(table: Table<String, [Int]>): Int { return table.count }\n");
     const auto module = lower();
     ASSERT_NE(module, nullptr);

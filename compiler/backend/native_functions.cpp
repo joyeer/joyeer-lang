@@ -184,7 +184,6 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
             result = comparison(instruction.opcode, argument(0), argument(1),
                     type(values.at(instruction.operands[0]).type).kind);
             break;
-        case Opcode::logicalAnd: result = builder.CreateAnd(argument(0), argument(1)); break;
         case Opcode::bitAnd: result = builder.CreateAnd(argument(0), argument(1)); break;
         case Opcode::bitOr: result = builder.CreateOr(argument(0), argument(1)); break;
         case Opcode::bitXor: result = builder.CreateXor(argument(0), argument(1)); break;

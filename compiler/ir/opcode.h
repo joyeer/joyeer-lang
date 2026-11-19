@@ -32,8 +32,8 @@ enum class Opcode {
     greaterEqual,
     equal,
     notEqual,
-    logicalAnd,
-    bitAnd,
+    // Wire slot 23 belonged to `logicalAnd`, which lowering never emitted: `&&` and `||` lower to branches.
+    bitAnd = 24,
     bitOr,
     bitXor,
     shiftLeft,
