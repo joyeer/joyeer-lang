@@ -203,13 +203,10 @@ TEST_F(CollectionRoleTest, ALiteralMovesIntoOneStackBlockAndCallsTheRoleMethod) 
     ASSERT_NE(module, nullptr);
     size_t blocks = 0;
     size_t literals = 0;
-    size_t constructions = 0;
     for (const auto& function : module->functions) {
         for (const auto& block : function.blocks) {
             for (const auto& instruction : block.instructions) {
                 blocks += instruction.opcode == joyeer::ir::Opcode::stackBlock;
-                const auto wireSlot = static_cast<unsigned>(instruction.opcode);
-                constructions += wireSlot >= 35 && wireSlot <= 38;
                 if (instruction.opcode == joyeer::ir::Opcode::call && instruction.callee.has_value()) {
                     literals += module->functions[*instruction.callee].name.find(".literal") != std::string::npos;
                 }
@@ -218,7 +215,6 @@ TEST_F(CollectionRoleTest, ALiteralMovesIntoOneStackBlockAndCallsTheRoleMethod) 
     }
     EXPECT_EQ(blocks, 1u);
     EXPECT_EQ(literals, 1u);
-    EXPECT_EQ(constructions, 0u);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
 }
 
@@ -482,7 +478,7 @@ TEST_F(CollectionRoleTest, TheRoleStructKeepsTheThreeWordLayoutWithoutALiveFlag)
 }
 
 TEST_F(CollectionRoleTest, TheWireCarriesTheCollectionRolesAndAdvancesItsVersion) {
-    EXPECT_EQ(joyeer::llvmbackend::wire::version, 27u);
+    EXPECT_EQ(joyeer::llvmbackend::wire::version, 28u);
     load("func first(items: Buffer<Int>): Int { return items[0] }\n");
     const auto module = lower();
     ASSERT_NE(module, nullptr);

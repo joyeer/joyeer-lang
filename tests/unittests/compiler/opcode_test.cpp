@@ -1,6 +1,6 @@
-// The opcode descriptor table (decision 0028): one row per live opcode, pinned here, and the verifier and helpers
-// that read it. Stage 2 merged the constant, comparison, conversion, return and type-helper families and turned the
-// linear range guard into `trap_if`.
+// The opcode descriptor table (decision 0028): one row per opcode, pinned here, and the verifier and helpers that
+// read it. Stage 2 merged the constant, comparison, conversion, return and type-helper families and turned the
+// linear range guard into `trap_if`; stage 4 numbered the opcodes densely in table order.
 
 #include "compiler/backend/ir_wire.h"
 #include "compiler/ir/ir.h"
@@ -32,21 +32,16 @@ struct ExpectedRow {
     bool runtimeOnly;
 };
 
-// The wire slots no row may use: removed opcodes, kept unused until stage 4 renumbers.
-const std::set<int64_t>& removedSlots() {
-    static const std::set<int64_t> slots = { 1, 3, 4, 18, 19, 20, 21, 22, 23, 30, 35, 36, 37, 38, 39, 40, 41, 50, 55,
-                                             67 };
-    return slots;
-}
-
-// Every live opcode in declaration order.
+// Every opcode in declaration order, which is its value.
 const std::vector<ExpectedRow>& expectedRows() {
     using R = OpcodeResult;
     using I = OpcodeImmediate;
     using M = OpcodeModifier;
     static const std::vector<ExpectedRow> rows = {
         { Opcode::literal, "literal", 0, 0, R::always, I::integerLiteral, M::none, false, false },
+        { Opcode::floatingConstant, "floating", 0, 0, R::always, I::floatingLiteral, M::none, false, false },
         { Opcode::stringConstant, "string", 0, 0, R::always, I::stringLiteral, M::none, false, false },
+        { Opcode::constantValue, "constant", 0, 0, R::always, I::constantIndex, M::none, false, false },
         { Opcode::stackAllocate, "alloc_stack", 0, 0, R::always, I::none, M::none, false, false },
         { Opcode::zeroInitialize, "zero_init", 1, 0, R::none, I::none, M::none, false, false },
         { Opcode::load, "load", 1, 0, R::always, I::none, M::none, false, false },
@@ -66,9 +61,7 @@ const std::vector<ExpectedRow>& expectedRows() {
         { Opcode::shiftLeft, "shl", 2, 0, R::always, I::none, M::none, false, false },
         { Opcode::shiftRight, "shr", 2, 0, R::always, I::none, M::none, false, false },
         { Opcode::convert, "convert", 1, 0, R::always, I::none, M::conversionMode, false, false },
-        { Opcode::constantValue, "constant", 0, 0, R::always, I::constantIndex, M::none, false, false },
         { Opcode::integerFits, "fits", 1, 0, R::always, I::type, M::none, false, false },
-        { Opcode::call, "call", variadic, 0, R::directCallee, I::none, M::none, false, false },
         { Opcode::constructStruct, "construct_struct", variadic, 0, R::always, I::none, M::none, false, false },
         { Opcode::fieldAddress, "field_addr", 1, 0, R::always, I::none, M::none, false, false },
         { Opcode::extractField, "extract_field", 1, 0, R::always, I::none, M::none, false, false },
@@ -78,14 +71,14 @@ const std::vector<ExpectedRow>& expectedRows() {
         { Opcode::stringUtf8, "string_utf8", 1, 0, R::always, I::none, M::none, false, false },
         { Opcode::count, "count", 1, 0, R::always, I::none, M::none, false, false },
         { Opcode::subscript, "subscript", 2, 0, R::always, I::none, M::none, false, false },
+        { Opcode::call, "call", variadic, 0, R::directCallee, I::none, M::none, false, false },
+        { Opcode::functionAddress, "function_address", 0, 0, R::always, I::none, M::none, false, false },
+        { Opcode::callIndirect, "call_indirect", variadic, 0, R::functionType, I::none, M::none, false, false },
         { Opcode::branch, "br", 0, 1, R::none, I::none, M::none, true, false },
         { Opcode::conditionalBranch, "cond_br", 1, 2, R::none, I::none, M::none, true, false },
         { Opcode::switchPattern, "switch_pattern", 1, 0, R::none, I::none, M::none, true, false },
         { Opcode::ret, "ret", variadic, 0, R::none, I::none, M::none, true, false },
         { Opcode::unreachable, "unreachable", 0, 0, R::none, I::none, M::none, true, false },
-        { Opcode::floatingConstant, "floating", 0, 0, R::always, I::floatingLiteral, M::none, false, false },
-        { Opcode::functionAddress, "function_address", 0, 0, R::always, I::none, M::none, false, false },
-        { Opcode::callIndirect, "call_indirect", variadic, 0, R::functionType, I::none, M::none, false, false },
         { Opcode::typeSize, "type_size", 0, 0, R::always, I::type, M::none, false, true },
         { Opcode::typeAlignment, "type_alignment", 0, 0, R::always, I::type, M::none, false, true },
         { Opcode::integerAddress, "integer_address", 1, 0, R::always, I::none, M::none, false, true },
@@ -100,7 +93,9 @@ const std::vector<ExpectedRow>& expectedRows() {
     return rows;
 }
 
-TEST(OpcodeDescriptorTest, EveryLiveOpcodeHasItsPinnedRow) {
+// Editing the rows changes opcode values: bump `wire::version` with them and update this pin.
+TEST(OpcodeDescriptorTest, EveryOpcodeHasItsPinnedRow) {
+    EXPECT_EQ(joyeer::llvmbackend::wire::version, 28u);
     const auto rows = opcodeDescriptors();
     const auto& expected = expectedRows();
     ASSERT_EQ(rows.size(), expected.size());
@@ -118,16 +113,8 @@ TEST(OpcodeDescriptorTest, EveryLiveOpcodeHasItsPinnedRow) {
         EXPECT_EQ(row.terminator, want.terminator);
         EXPECT_EQ(row.runtimeOnly, want.runtimeOnly);
         EXPECT_EQ(findOpcodeDescriptor(want.opcode), &row);
+        EXPECT_EQ(static_cast<size_t>(want.opcode), index);
     }
-}
-
-TEST(OpcodeDescriptorTest, MergedOpcodesKeepTheFirstSlotOfTheirFamily) {
-    EXPECT_EQ(static_cast<int>(Opcode::literal), 0);
-    EXPECT_EQ(static_cast<int>(Opcode::compare), 17);
-    EXPECT_EQ(static_cast<int>(Opcode::convert), 29);
-    EXPECT_EQ(static_cast<int>(Opcode::ret), 54);
-    EXPECT_EQ(static_cast<int>(Opcode::typeHelper), 66);
-    EXPECT_EQ(static_cast<int>(Opcode::trapIf), 68);
 }
 
 TEST(OpcodeDescriptorTest, OpcodesAndSpellingsAreUnique) {
@@ -173,12 +160,8 @@ TEST(OpcodeDescriptorTest, ModifiersHaveSpellings) {
     EXPECT_EQ(modifierName(OpcodeModifier::none, 0), nullptr);
 }
 
-TEST(OpcodeDescriptorTest, RemovedAndOutOfRangeSlotsHaveNoRow) {
-    std::vector<int64_t> slots(removedSlots().begin(), removedSlots().end());
-    slots.push_back(-1);
-    slots.push_back(1000);
-    slots.push_back(static_cast<int64_t>(Opcode::stackBlock) + 1);
-    for (const auto slot : slots) {
+TEST(OpcodeDescriptorTest, ValuesOutsideTheTableHaveNoRow) {
+    for (const int64_t slot : { int64_t { -1 }, static_cast<int64_t>(Opcode::stackBlock) + 1, int64_t { 1000 } }) {
         SCOPED_TRACE(slot);
         const auto opcode = static_cast<Opcode>(slot);
         EXPECT_EQ(findOpcodeDescriptor(opcode), nullptr);
@@ -188,10 +171,12 @@ TEST(OpcodeDescriptorTest, RemovedAndOutOfRangeSlotsHaveNoRow) {
     }
 }
 
-TEST(OpcodeDescriptorTest, EverySlotUpToTheLastHasARowUnlessRemoved) {
+TEST(OpcodeDescriptorTest, OpcodeValuesAreDense) {
+    EXPECT_EQ(static_cast<size_t>(Opcode::stackBlock) + 1, opcodeDescriptors().size());
     for (int64_t slot = 0; slot <= static_cast<int64_t>(Opcode::stackBlock); ++slot) {
         SCOPED_TRACE(slot);
-        EXPECT_EQ(findOpcodeDescriptor(static_cast<Opcode>(slot)) != nullptr, !removedSlots().contains(slot));
+        ASSERT_NE(findOpcodeDescriptor(static_cast<Opcode>(slot)), nullptr);
+        EXPECT_EQ(static_cast<int64_t>(findOpcodeDescriptor(static_cast<Opcode>(slot))->opcode), slot);
     }
 }
 
@@ -279,10 +264,10 @@ TEST(OpcodeDescriptorTest, VerifierReportsATargetMismatchFromTheTable) {
 
 TEST(OpcodeDescriptorTest, VerifierSkipsShapeChecksForUnknownOpcodes) {
     Instruction unknown;
-    unknown.opcode = static_cast<Opcode>(23);
+    unknown.opcode = static_cast<Opcode>(static_cast<int>(Opcode::stackBlock) + 1);
     unknown.operands = { 0, 1 };
     const auto result = Verifier().verify(moduleWith(unknown));
-    EXPECT_EQ(errorsContaining(result, "unknown or removed opcode"), 1u) << dump(result);
+    EXPECT_EQ(errorsContaining(result, "unknown opcode"), 1u) << dump(result);
     EXPECT_EQ(errorsContaining(result, "expects"), 0u) << dump(result);
 }
 

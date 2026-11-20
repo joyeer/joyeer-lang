@@ -9,10 +9,9 @@
 
 namespace joyeer::llvmbackend::wire {
 
-// 27: the constant, comparison, conversion, return and type-helper families are merged into `literal`,
-// `compare`, `convert`, `ret` and `typeHelper`, `linearRangeGuard` becomes `trapIf`, and instructions carry a
-// modifier (decision 0028, stage 2). 26 removed the never-emitted `logicalAnd` slot (opcode 23).
-inline constexpr uint32_t version = 27;
+// 28: opcode values are dense, in descriptor-table order (decision 0028, stage 4). 27 merged the constant,
+// comparison, conversion, return and type-helper families and added the instruction modifier (stage 2).
+inline constexpr uint32_t version = 28;
 
 // This private wire format carries Joyeer IR, not LLVM assembly. Both sides
 // allocate their own C++ objects; only borrowed bytes cross the backend C ABI.

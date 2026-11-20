@@ -16,7 +16,7 @@ model is split by concern; `compiler/ir/ir.h` includes all of it:
 | Header | Contents |
 |---|---|
 | `value.h` | IDs and typed SSA values |
-| `opcode.h` | the instruction set (wire slots), one descriptor row per opcode, and opcode queries |
+| `opcode.h` | the instruction set (dense wire values), one descriptor row per opcode, and opcode queries |
 | `debuginfo.h` | source tables, debug scopes, variables and locations |
 | `definitions.h` | the type table, structs, enums, their roles, constants |
 | `module.h` | instructions, blocks, functions and the module |
@@ -226,8 +226,8 @@ The current instruction set covers:
 - ordinary source calls for library dictionary methods ([0027](../decisions/0027-library-dict.md)): `d[k]` calls
   the `dict_element` addressor, `&d[k] = v` calls `dict_set` with an owned key and value, and `get` is the public
   `dict_get` method. There is no dictionary type kind or dictionary-specific opcode: wire 25 removed
-  `construct_dictionary`, `dictionary_set`, `dictionary_get` (slots 39-41), `subscript_addr` (50) and type kind 11,
-  and the verifier rejects those slots;
+  `construct_dictionary`, `dictionary_set`, `dictionary_get`, `subscript_addr` and type kind 11, and the verifier
+  rejects that type kind;
 - `String` `count` and byte `subscript` (a value; a byte is never addressed), plus owned `String.utf8()`
   byte-array extraction;
 - high-level recursive pattern switching.
@@ -258,13 +258,13 @@ authorized functions with bodies may carry it.
 Literal factories cannot be formed as function values, so indirect calls cannot evade the storage protocol.
 Proven literal blocks use the same protocol in runtime and ordinary functions; other runtime raw blocks
 retain their existing capability rules. Wire decoding checks full-width enum and unsigned values before narrowing.
-The removed array kind's slot 10 and executable opcode slots 35-38 stay reserved and are rejected, as does slot 23
-(wire 26), which held a `logicalAnd` that lowering never emitted ([0028](../decisions/0028-ir-opcode-set.md)).
-Wire 27 merged opcode families (0028, stage 2): `literal` (slot 0) replaces the integer, Boolean, byte and unit
-constants (slots 1, 3 and 4 are removed), `compare` (17) the six comparisons (18-22), `convert` (29) the checked and
-wrapping conversions (30), `ret` (54) both returns (55), and `type_helper` (66) the clone and destroy callbacks (67);
-`trap_if` (68) replaces the linear range guard. The predicate, mode or helper kind is the instruction's `modifier`,
-whose range the verifier checks from the opcode's row; it is 0 for every other opcode.
+The removed array and dictionary type kinds' slots 10 and 11 stay reserved and are rejected. Opcode values are
+dense and follow the descriptor table ([0028](../decisions/0028-ir-opcode-set.md), stage 4, wire 28): the verifier
+rejects a value outside the table, and adding, removing or reordering an opcode bumps the wire version. Wire 27
+merged opcode families (0028, stage 2): `literal` replaces the integer, Boolean, byte and unit constants, `compare`
+the six comparisons, `convert` the checked and wrapping conversions, `ret` both returns, and `type_helper` the clone
+and destroy callbacks; `trap_if` replaces the linear range guard. The predicate, mode or helper kind is the
+instruction's `modifier`, whose range the verifier checks from the opcode's row; it is 0 for every other opcode.
 
 A call whose checked argument has type `Never` cannot commit and does not demand a generic callee instance.
 Source argument and constraint checks still run. Lowering uses its substituted typed parameter/effect
@@ -414,11 +414,11 @@ plus case symbol, including distinct builtin container instantiations.
   unrelated to the incoming parameter;
 - blocks without terminators or instructions after a terminator.
 
-Every live opcode has one `OpcodeDescriptor` row in `opcode.cpp`
+Every opcode has one `OpcodeDescriptor` row in `opcode.cpp`
 ([0028](../decisions/0028-ir-opcode-set.md), stage 1): its spelling, operand count (fixed, or variadic when its own
 check matches the operands against a callee, a function type or a definition), target count, result rule, immediate
 kind (what `integerValue` or `text` holds), whether it ends its block, and whether it is runtime-only. Before an
-opcode's own check, the verifier rejects a slot with no row, checks a fixed operand and target count and the result
+opcode's own check, the verifier rejects a value outside the table, checks a fixed operand and target count and the result
 rule once, and marks a runtime-only opcode outside a runtime function as unauthorized; the opcode's check reports
 that unless it admits verified literal storage or an element place. The dumper prints immediates by kind, so a new
 opcode needs a dumper case only for a callee, block targets, switch cases, parenthesized operands, or an immediate

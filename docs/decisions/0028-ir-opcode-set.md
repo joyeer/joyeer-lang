@@ -1,7 +1,8 @@
 # 0028: A smaller, described IR opcode set
 
-- Status: accepted (2026-11-20, by the user). Stages 0 (wire 26), 1 and 2 (wire 27) are implemented; stages 3 and
-  4 are tracked in [plan 0013](../plan/0013-ir-opcode-set.md).
+- Status: accepted (2026-11-20, by the user). Stages 0 (wire 26), 1, 2 (wire 27) and 4 (wire 28) are implemented;
+  stage 4 ran before stage 3, because with dense numbering stage 3 removes opcodes by deleting rows. Stage 3 is
+  tracked in [plan 0013](../plan/0013-ir-opcode-set.md) and starts with its mechanism choice.
 - Spec: none. The IR is not part of the language; [IR](../impl/ir.md) changes with each stage.
 - Builds on [0025](0025-library-collection-capabilities.md), [0026](0026-library-array.md) and
   [0027](0027-library-dict.md), which moved Array and Dict out of the instruction set.

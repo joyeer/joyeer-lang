@@ -1,6 +1,7 @@
 #include "compiler/codegen/llvm.h"
 #include "compiler/codegen/linker.h"
 #include "compiler/backend/backend.h"
+#include "compiler/backend/ir_wire.h"
 #include "compiler/ir/irlowering.h"
 #include "compiler/frontend/lexparser.h"
 #include "compiler/frontend/nameresolution.h"
@@ -1602,5 +1603,41 @@ TEST(LLVMCompareTest, FloatingPredicatesAreOrderedExceptNotEqual) {
         ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
         EXPECT_NE(result.text.find(expected), std::string::npos) << result.text;
     }
+}
+
+// Opcode values are dense (decision 0028, stage 4): a wire payload naming a value past the table reaches the
+// backend's own verifier, which rejects the module before any code is generated.
+TEST(LLVMBackendABITest, RejectsAnOpcodeOutsideTheTable) {
+    joyeer::ir::Module module;
+    module.sourceName = "unknown-opcode.joyeer";
+    module.types = { { 0, "Void", joyeer::typing::TypeKind::voidType } };
+    joyeer::ir::Function function;
+    function.id = 0;
+    function.name = "run";
+    function.resultType = 0;
+    function.entry = 0;
+    joyeer::ir::BasicBlock block { 0, "entry" };
+    block.instructions.push_back(
+            { static_cast<joyeer::ir::Opcode>(static_cast<int>(joyeer::ir::Opcode::stackBlock) + 1) });
+    block.instructions.push_back({ joyeer::ir::Opcode::ret });
+    function.blocks.push_back(std::move(block));
+    module.functions.push_back(std::move(function));
+
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(module);
+    const JoyeerBackendModuleOptions options {
+        JOYEER_BACKEND_ABI_VERSION, sizeof(JoyeerBackendModuleOptions), joyeer::llvmbackend::wire::version,
+        writer.bytes.data(), writer.bytes.size(), JOYEER_BACKEND_O0, 0, 0, 0,
+    };
+    std::string messages;
+    const auto collect = [](void* context, const JoyeerBackendIRDiagnostic* diagnostic) noexcept {
+        static_cast<std::string*>(context)->append(diagnostic->message, diagnostic->messageSize).append("\n");
+    };
+    JoyeerBackendModule* nativeModule = nullptr;
+    const auto status = joyeer_backend_build_module(&options, &nativeModule, collect, &messages);
+    EXPECT_EQ(status, JOYEER_BACKEND_INVALID_IR);
+    EXPECT_EQ(nativeModule, nullptr);
+    if (nativeModule != nullptr) joyeer_backend_destroy_module(nativeModule);
+    EXPECT_NE(messages.find("unknown opcode"), std::string::npos) << messages;
 }
 } // namespace

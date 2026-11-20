@@ -19,17 +19,18 @@ with one stated shape, so a new opcode is one row plus its own verifier check an
 - The merged opcodes of 0028 stage 2 exist and the old ones are gone. Float `!=` stays unordered.
 - The arithmetic and comparison opcodes accept only scalars. String operations are calls or inlinable library
   code, within the cost gates of 0028 stage 3.
-- Opcode values are dense and the table has no gaps (since stage 1 the verifier finds removed slots and the upper
-  bound through the table).
+- Opcode values are dense and the table has no gaps.
 - Each stage passed an `ir-backend-reviewer` pass and `python3 scripts/validate.py` in Debug and Release.
 
 ## Current state
 
-Stage 0 removed `logicalAnd` (wire 26, [#33](https://github.com/joyeer/joyeer-lang/pull/33)). Stage 1 is
-implemented on `feat/ir-opcode-descriptors`: `OpcodeDescriptor` rows in `compiler/ir/opcode.cpp` drive the helpers,
-the verifier's slot, shape, result and authorization checks, and the dumper. The families are not merged yet, String
-still has scalar opcodes, and the slots still have gaps. `Instruction::integerValue` still has four meanings; the
-row's immediate kind names which one.
+Stage 0 removed `logicalAnd` (wire 26, [#33](https://github.com/joyeer/joyeer-lang/pull/33)). Stages 1, 2 and 4
+are implemented on `feat/ir-opcode-descriptors`: `OpcodeDescriptor` rows in `compiler/ir/opcode.cpp` drive the
+helpers, the verifier's shape, result, modifier and authorization checks, and the dumper; the families are merged
+(wire 27); and the 51 opcodes are numbered densely in table order (wire 28). What is left is stage 3: String still has
+the scalar opcodes `string_utf8`, `count` and `subscript`, and String arms in `add` and `compare`. Its mechanism is a
+design choice for the user. `Instruction::integerValue` still has four meanings; the row's immediate kind names which
+one.
 
 ## Todo
 
@@ -74,18 +75,25 @@ row's immediate kind names which one.
 - [x] Debug CTest. Evidence: 2033 tests at `-j6`; only Fern.Workspace timed out, and it passed alone.
 - [ ] Release CTest and `scripts/validate.py`. Not run.
 
+### Stage 4: dense numbering (done before stage 3)
+
+- [x] Renumber in table order, drop the removed-slot checks, bound by the table size, bump the wire (28). Evidence:
+  `OpcodeDescriptorTest.EveryOpcodeHasItsPinnedRow` (each value equals its row index, wire pinned at 28),
+  `OpcodeValuesAreDense`, `ValuesOutsideTheTableHaveNoRow`, and the `rowsAreDense` static assert.
+- [x] Rewrite the raw-slot tests; update `backend_abi_test.c`, `backend.md` and `c-interop.md`. Evidence:
+  `IRModelTest.OpcodeValuesOutsideTheTableAreRejected`, `RemovedTypeKindSlotsAreRejectedAndNeverReused`, and
+  `LLVMBackendABITest.RejectsAnOpcodeOutsideTheTable` through the backend C ABI.
+- [x] `ir-backend-reviewer` pass. Evidence: no critical or high findings; its findings are addressed in the same
+  change (comment on what the static assert covers, wire pin, removed tautological checks, the C ABI test, wording).
+- [x] Debug CTest. Evidence: 2031 tests at `-j6`; only Fern.Workspace timed out, and it passed alone.
+- [ ] Release CTest and `scripts/validate.py`. Not run.
+
 ### Stage 3: String operations leave the scalar opcodes
 
 - [ ] Choose the mechanism (a String projection opcode with a bundled prelude, or String as a library struct),
   recorded in 0028 or a new decision.
 - [ ] `stringUtf8`, String `add` and comparisons become calls; `count` and `subscript` become inlinable library code.
 - [ ] The -O0 cost gate, the -O0/-O2 differential fixture, and the trap message and location check of 0028.
-- [ ] `ir-backend-reviewer` pass; `scripts/validate.py` in Debug and Release.
-
-### Stage 4: dense numbering
-
-- [ ] Renumber in table order, drop the removed-slot checks, bound by the table size, bump the wire.
-- [ ] Rewrite the raw-slot tests; update `backend_abi_test.c`, `backend.md` and `c-interop.md`.
 - [ ] `ir-backend-reviewer` pass; `scripts/validate.py` in Debug and Release.
 
 ## Open questions
@@ -99,6 +107,8 @@ New opcodes, and any change to what programs observe outside stage 3's measured 
 
 ## Progress log
 
+- 2026-11-20: Stage 4 implemented (wire 28): 51 opcodes numbered densely in seven groups; all items checked except
+  Release CTest and `scripts/validate.py`. Stage 3 waits for the user's choice of mechanism.
 - 2026-11-20: Stage 2 implemented (wire 27): merged families, `Instruction::modifier`, `trap_if`, stricter `compare`;
   all items checked except Release CTest and `scripts/validate.py`. Stage 4 moves before stage 3: with dense
   numbering, stage 3 removes opcodes by deleting rows, and stage 3 starts with a design choice for the user.

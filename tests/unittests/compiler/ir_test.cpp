@@ -439,54 +439,30 @@ TEST(IRModelTest, RejectsZeroInitializationOfNonAddressValues) {
     EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch));
 }
 
-TEST(IRModelTest, RemovedArrayWireSlotsAreRejectedAndNeverReused) {
-    EXPECT_EQ(static_cast<unsigned>(Opcode::fieldAddress), 42u);
-    EXPECT_EQ(static_cast<unsigned>(Opcode::branch), 51u);
+// The builtin array (wire 10) and dictionary (wire 11) type kinds were removed when the library `Array` and `Dict`
+// replaced them (decisions 0026, 0027); their slots stay rejected and are never reused.
+TEST(IRModelTest, RemovedTypeKindSlotsAreRejectedAndNeverReused) {
     EXPECT_EQ(static_cast<unsigned>(joyeer::typing::TypeKind::int8), 12u);
-    for (unsigned slot = 35; slot <= 38; ++slot) {
+    for (const int kind : { 10, 11 }) {
         auto module = validAddModule();
-        module.functions[0].blocks[0].instructions[0].opcode = static_cast<Opcode>(slot);
+        module.types.push_back(TypeName {
+            3, "removed kind", static_cast<joyeer::typing::TypeKind>(kind), joyeer::semantic::invalidSymbolId, { 1, 2 },
+        });
         const auto verification = Verifier().verify(module);
-        EXPECT_FALSE(verification.succeeded());
-        EXPECT_NE(dump(verification).find("unknown or removed opcode"), std::string::npos);
+        EXPECT_FALSE(verification.succeeded()) << kind;
+        EXPECT_NE(dump(verification).find("unknown or removed type kind"), std::string::npos) << kind;
     }
-    auto module = validAddModule();
-    module.types.push_back(TypeName { 3, "removed array kind", static_cast<joyeer::typing::TypeKind>(10) });
-    const auto verification = Verifier().verify(module);
-    EXPECT_FALSE(verification.succeeded());
-    EXPECT_NE(dump(verification).find("unknown or removed type kind"), std::string::npos);
 }
 
-// The builtin dictionary's operations (39-41), `subscript_addr` (50) and its type kind (11) were removed when the
-// library `Dict` replaced it (decision 0027, wire 25); their slots stay rejected and are never reused.
-TEST(IRModelTest, RemovedDictionaryWireSlotsAreRejectedAndNeverReused) {
-    EXPECT_EQ(static_cast<unsigned>(Opcode::subscript), 49u);
-    for (const unsigned slot : { 39u, 40u, 41u, 50u }) {
+// Opcode values are dense (decision 0028, stage 4): a value past the table, or a negative one, is rejected.
+TEST(IRModelTest, OpcodeValuesOutsideTheTableAreRejected) {
+    for (const int value : { static_cast<int>(Opcode::stackBlock) + 1, 1000, -1 }) {
         auto module = validAddModule();
-        module.functions[0].blocks[0].instructions[0].opcode = static_cast<Opcode>(slot);
+        module.functions[0].blocks[0].instructions[0].opcode = static_cast<Opcode>(value);
         const auto verification = Verifier().verify(module);
-        EXPECT_FALSE(verification.succeeded()) << slot;
-        EXPECT_NE(dump(verification).find("unknown or removed opcode"), std::string::npos) << slot;
+        EXPECT_FALSE(verification.succeeded()) << value;
+        EXPECT_NE(dump(verification).find("unknown opcode"), std::string::npos) << value;
     }
-    auto module = validAddModule();
-    module.types.push_back(TypeName {
-        3, "[Int: Bool]", static_cast<joyeer::typing::TypeKind>(11), joyeer::semantic::invalidSymbolId, { 1, 2 },
-    });
-    const auto verification = Verifier().verify(module);
-    EXPECT_FALSE(verification.succeeded());
-    EXPECT_NE(dump(verification).find("unknown or removed type kind"), std::string::npos);
-}
-
-// `logicalAnd` (23) was never emitted: `&&` and `||` lower to branches. Its slot is rejected and never reused
-// (wire 26).
-TEST(IRModelTest, RemovedLogicalAndWireSlotIsRejectedAndNeverReused) {
-    EXPECT_EQ(static_cast<unsigned>(Opcode::compare), 17u);
-    EXPECT_EQ(static_cast<unsigned>(Opcode::bitAnd), 24u);
-    auto module = validAddModule();
-    module.functions[0].blocks[0].instructions[0].opcode = static_cast<Opcode>(23);
-    const auto verification = Verifier().verify(module);
-    EXPECT_FALSE(verification.succeeded());
-    EXPECT_NE(dump(verification).find("unknown or removed opcode"), std::string::npos);
 }
 
 // Decision 0024: every malformed role binding is rejected by the verifier, not trusted from lowering.

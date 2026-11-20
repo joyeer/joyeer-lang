@@ -39,11 +39,13 @@ constexpr OpcodeDescriptor runtimeOnly(OpcodeDescriptor descriptor) {
     return descriptor;
 }
 
-// One row per live opcode, in declaration (and wire slot) order.
+// One row per opcode, in declaration order: the row index is the opcode's value.
 constexpr std::array descriptors {
     // Constants.
     value(Opcode::literal, "literal", 0, I::integerLiteral),
+    value(Opcode::floatingConstant, "floating", 0, I::floatingLiteral),
     value(Opcode::stringConstant, "string", 0, I::stringLiteral),
+    value(Opcode::constantValue, "constant", 0, I::constantIndex),
 
     // Storage and ownership.
     value(Opcode::stackAllocate, "alloc_stack", 0),
@@ -67,11 +69,9 @@ constexpr std::array descriptors {
     value(Opcode::shiftLeft, "shl", 2),
     value(Opcode::shiftRight, "shr", 2),
     value(Opcode::convert, "convert", 1, I::none, M::conversionMode),
-    value(Opcode::constantValue, "constant", 0, I::constantIndex),
     value(Opcode::integerFits, "fits", 1, I::type),
 
-    // Calls and aggregates.
-    call(Opcode::call, "call", R::directCallee),
+    // Aggregates and Strings.
     value(Opcode::constructStruct, "construct_struct", variadic),
     value(Opcode::fieldAddress, "field_addr", 1),
     value(Opcode::extractField, "extract_field", 1),
@@ -82,6 +82,11 @@ constexpr std::array descriptors {
     value(Opcode::count, "count", 1),
     value(Opcode::subscript, "subscript", 2),
 
+    // Calls and function values.
+    call(Opcode::call, "call", R::directCallee),
+    value(Opcode::functionAddress, "function_address", 0),
+    call(Opcode::callIndirect, "call_indirect", R::functionType),
+
     // Control flow.
     terminator(Opcode::branch, "br", 0, 1),
     terminator(Opcode::conditionalBranch, "cond_br", 1, 2),
@@ -89,13 +94,7 @@ constexpr std::array descriptors {
     terminator(Opcode::ret, "ret", variadic, 0),
     terminator(Opcode::unreachable, "unreachable", 0, 0),
 
-    value(Opcode::floatingConstant, "floating", 0, I::floatingLiteral),
-
-    // Function values.
-    value(Opcode::functionAddress, "function_address", 0),
-    call(Opcode::callIndirect, "call_indirect", R::functionType),
-
-    // Runtime-only layout queries, raw addresses, collection capabilities and traps.
+    // Runtime-only memory operations.
     runtimeOnly(value(Opcode::typeSize, "type_size", 0, I::type)),
     runtimeOnly(value(Opcode::typeAlignment, "type_alignment", 0, I::type)),
     runtimeOnly(value(Opcode::integerAddress, "integer_address", 1)),
@@ -112,32 +111,19 @@ constexpr const char* predicateNames[] = { "lt", "le", "gt", "ge", "eq", "ne" };
 constexpr const char* conversionNames[] = { "checked", "wrapping" };
 constexpr const char* helperNames[] = { "clone", "destroy" };
 
-using Slot = std::underlying_type_t<Opcode>;
+using RawOpcode = std::underlying_type_t<Opcode>;
 
-constexpr Slot slot(Opcode opcode) {
-    return static_cast<Slot>(opcode);
-}
-
-// Rows in strictly increasing slot order: each opcode has at most one row, and the last row bounds the slots.
-constexpr bool rowsAreOrdered() {
-    for (size_t index = 1; index < descriptors.size(); ++index) {
-        if (slot(descriptors[index - 1].opcode) >= slot(descriptors[index].opcode)) return false;
-    }
-    return slot(descriptors.front().opcode) >= 0;
-}
-static_assert(rowsAreOrdered(), "opcode rows must follow wire slot order, one row per opcode");
-
-constexpr size_t slotCount = static_cast<size_t>(slot(descriptors.back().opcode)) + 1;
-
-// The row index of each wire slot, or -1 for a removed slot.
-constexpr auto rowBySlot = [] {
-    std::array<int, slotCount> rows {};
-    rows.fill(-1);
+// Each row sits at its opcode's value: no opcode before `stackBlock` lacks a row or has two. An enumerator added after
+// `stackBlock` would escape both asserts, so `stackBlock` stays last (opcode.h); the pinned rows of opcode_test.cpp
+// and the verifier's dispatch switch, which has no default, catch the rest.
+constexpr bool rowsAreDense() {
     for (size_t index = 0; index < descriptors.size(); ++index) {
-        rows[static_cast<size_t>(slot(descriptors[index].opcode))] = static_cast<int>(index);
+        if (static_cast<size_t>(static_cast<RawOpcode>(descriptors[index].opcode)) != index) return false;
     }
-    return rows;
-}();
+    return true;
+}
+static_assert(rowsAreDense(), "opcode rows must follow declaration order, one row per opcode");
+static_assert(descriptors.back().opcode == Opcode::stackBlock, "the last opcode must have the last row");
 
 } // namespace
 
@@ -146,10 +132,9 @@ std::span<const OpcodeDescriptor> opcodeDescriptors() {
 }
 
 const OpcodeDescriptor* findOpcodeDescriptor(Opcode opcode) {
-    const auto value = slot(opcode);
-    if (value < 0 || static_cast<size_t>(value) >= slotCount) return nullptr;
-    const auto row = rowBySlot[static_cast<size_t>(value)];
-    return row < 0 ? nullptr : &descriptors[static_cast<size_t>(row)];
+    const auto value = static_cast<RawOpcode>(opcode);
+    if (value < 0 || static_cast<size_t>(value) >= descriptors.size()) return nullptr;
+    return &descriptors[static_cast<size_t>(value)];
 }
 
 bool producesValue(Opcode opcode) {

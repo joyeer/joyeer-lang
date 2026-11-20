@@ -27,7 +27,7 @@ bool validFloatingLiteral(typing::TypeKind kind, std::string_view text) {
 
 } // namespace
 
-// The checks every instruction shares: a live opcode, nothing after the terminator, no dictionary
+// The checks every instruction shares: a known opcode, nothing after the terminator, no dictionary
 // entry value, a result exactly when the opcode defines one, known operands and targets, and the
 // opcode's fixed operand and target counts. Then the opcode's own check. The opcode's descriptor
 // (opcode.h) states its counts, result rule and runtime authorization.
@@ -37,7 +37,7 @@ void FunctionVerifier::verifyInstruction(const BasicBlock& block, size_t index, 
     const auto* descriptor = findOpcodeDescriptor(instruction.opcode);
     if (descriptor == nullptr) {
         report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
-               "instruction has an unknown or removed opcode");
+               "instruction has an unknown opcode");
     }
     if (foundTerminator) {
         report(
