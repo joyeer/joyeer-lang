@@ -1,143 +1,174 @@
 #include "opcode.h"
 
+#include <array>
+#include <cstddef>
+#include <type_traits>
+
 namespace joyeer::ir {
 
-bool producesValue(Opcode opcode) {
-    switch (opcode) {
-        case Opcode::integerConstant:
-        case Opcode::floatingConstant:
-        case Opcode::booleanConstant:
-        case Opcode::stringConstant:
-        case Opcode::byteConstant:
-        case Opcode::unitConstant:
-        case Opcode::stackAllocate:
-        case Opcode::load:
-        case Opcode::copyValue:
-        case Opcode::take:
-        case Opcode::add:
-        case Opcode::subtract:
-        case Opcode::multiply:
-        case Opcode::divide:
-        case Opcode::remainder:
-        case Opcode::less:
-        case Opcode::lessEqual:
-        case Opcode::greater:
-        case Opcode::greaterEqual:
-        case Opcode::equal:
-        case Opcode::notEqual:
-        case Opcode::bitAnd:
-        case Opcode::bitOr:
-        case Opcode::bitXor:
-        case Opcode::shiftLeft:
-        case Opcode::shiftRight:
-        case Opcode::convertChecked:
-        case Opcode::convertWrapping:
-        case Opcode::constantValue:
-        case Opcode::integerFits:
-        case Opcode::constructStruct:
-        case Opcode::fieldAddress:
-        case Opcode::extractField:
-        case Opcode::constructEnum:
-        case Opcode::extractPayload:
-        case Opcode::payloadAddress:
-        case Opcode::stringUtf8:
-        case Opcode::count:
-        case Opcode::subscript:
-        case Opcode::functionAddress:
-        case Opcode::typeSize:
-        case Opcode::typeAlignment:
-        case Opcode::integerAddress:
-        case Opcode::pointerToInteger:
-        case Opcode::cloneCallback:
-        case Opcode::destroyCallback:
-        case Opcode::slotAddress:
-        case Opcode::stackBlock:
-            return true;
-        default:
-            return false;
+namespace {
+
+using R = OpcodeResult;
+using I = OpcodeImmediate;
+constexpr int variadic = variadicOperands;
+
+// An opcode that always defines a result.
+constexpr OpcodeDescriptor value(Opcode opcode, const char* name, int operands, I immediate = I::none) {
+    return { opcode, name, operands, 0, R::always, immediate, false, false };
+}
+
+// An opcode that never defines a result.
+constexpr OpcodeDescriptor effect(Opcode opcode, const char* name, int operands, I immediate = I::none) {
+    return { opcode, name, operands, 0, R::none, immediate, false, false };
+}
+
+// A call whose result `result` decides.
+constexpr OpcodeDescriptor call(Opcode opcode, const char* name, R result) {
+    return { opcode, name, variadic, 0, result, I::none, false, false };
+}
+
+constexpr OpcodeDescriptor terminator(Opcode opcode, const char* name, int operands, int targets) {
+    return { opcode, name, operands, targets, R::none, I::none, true, false };
+}
+
+constexpr OpcodeDescriptor runtimeOnly(OpcodeDescriptor descriptor) {
+    descriptor.runtimeOnly = true;
+    return descriptor;
+}
+
+// One row per live opcode, in declaration (and wire slot) order.
+constexpr std::array descriptors {
+    // Constants.
+    value(Opcode::integerConstant, "integer", 0, I::integerLiteral),
+    value(Opcode::booleanConstant, "boolean", 0, I::integerLiteral),
+    value(Opcode::stringConstant, "string", 0, I::stringLiteral),
+    value(Opcode::byteConstant, "byte", 0, I::integerLiteral),
+    value(Opcode::unitConstant, "unit", 0),
+
+    // Storage and ownership.
+    value(Opcode::stackAllocate, "alloc_stack", 0),
+    effect(Opcode::zeroInitialize, "zero_init", 1),
+    value(Opcode::load, "load", 1),
+    effect(Opcode::store, "store", 2),
+    value(Opcode::copyValue, "copy", 1),
+    value(Opcode::take, "take", 1),
+    effect(Opcode::destroy, "destroy", 1),
+
+    // Scalar operations.
+    value(Opcode::add, "add", 2),
+    value(Opcode::subtract, "sub", 2),
+    value(Opcode::multiply, "mul", 2),
+    value(Opcode::divide, "div", 2),
+    value(Opcode::remainder, "rem", 2),
+    value(Opcode::less, "lt", 2),
+    value(Opcode::lessEqual, "le", 2),
+    value(Opcode::greater, "gt", 2),
+    value(Opcode::greaterEqual, "ge", 2),
+    value(Opcode::equal, "eq", 2),
+    value(Opcode::notEqual, "ne", 2),
+    value(Opcode::bitAnd, "bit_and", 2),
+    value(Opcode::bitOr, "bit_or", 2),
+    value(Opcode::bitXor, "bit_xor", 2),
+    value(Opcode::shiftLeft, "shl", 2),
+    value(Opcode::shiftRight, "shr", 2),
+    value(Opcode::convertChecked, "convert", 1),
+    value(Opcode::convertWrapping, "convert_wrapping", 1),
+    value(Opcode::constantValue, "constant", 0, I::constantIndex),
+    value(Opcode::integerFits, "fits", 1, I::type),
+
+    // Calls and aggregates.
+    call(Opcode::call, "call", R::directCallee),
+    value(Opcode::constructStruct, "construct_struct", variadic),
+    value(Opcode::fieldAddress, "field_addr", 1),
+    value(Opcode::extractField, "extract_field", 1),
+    value(Opcode::constructEnum, "construct_enum", variadic),
+    value(Opcode::extractPayload, "extract_payload", 1, I::payloadIndex),
+    value(Opcode::payloadAddress, "payload_address", 1, I::payloadIndex),
+    value(Opcode::stringUtf8, "string_utf8", 1),
+    value(Opcode::count, "count", 1),
+    value(Opcode::subscript, "subscript", 2),
+
+    // Control flow.
+    terminator(Opcode::branch, "br", 0, 1),
+    terminator(Opcode::conditionalBranch, "cond_br", 1, 2),
+    terminator(Opcode::switchPattern, "switch_pattern", 1, 0),
+    terminator(Opcode::returnValue, "ret", 1, 0),
+    terminator(Opcode::returnVoid, "ret_void", 0, 0),
+    terminator(Opcode::unreachable, "unreachable", 0, 0),
+
+    value(Opcode::floatingConstant, "floating", 0, I::floatingLiteral),
+
+    // Function values.
+    value(Opcode::functionAddress, "function_address", 0),
+    call(Opcode::callIndirect, "call_indirect", R::functionType),
+
+    // Runtime-only layout queries, raw addresses and collection capabilities.
+    runtimeOnly(value(Opcode::typeSize, "type_size", 0, I::type)),
+    runtimeOnly(value(Opcode::typeAlignment, "type_alignment", 0, I::type)),
+    runtimeOnly(value(Opcode::integerAddress, "integer_address", 1)),
+    runtimeOnly(value(Opcode::pointerToInteger, "pointer_to_integer", 1)),
+    runtimeOnly(effect(Opcode::destroyRange, "destroy_range", 2, I::type)),
+    runtimeOnly(effect(Opcode::cloneAt, "clone_at", 2, I::type)),
+    runtimeOnly(value(Opcode::cloneCallback, "clone_callback", 0, I::type)),
+    runtimeOnly(value(Opcode::destroyCallback, "destroy_callback", 0, I::type)),
+    runtimeOnly(effect(Opcode::linearRangeGuard, "linear_range_guard", 1)),
+    runtimeOnly(value(Opcode::slotAddress, "slot_address", 2, I::type)),
+    runtimeOnly(value(Opcode::stackBlock, "stack_block", 1, I::type)),
+};
+
+using Slot = std::underlying_type_t<Opcode>;
+
+constexpr Slot slot(Opcode opcode) {
+    return static_cast<Slot>(opcode);
+}
+
+// Rows in strictly increasing slot order: each opcode has at most one row, and the last row bounds the slots.
+constexpr bool rowsAreOrdered() {
+    for (size_t index = 1; index < descriptors.size(); ++index) {
+        if (slot(descriptors[index - 1].opcode) >= slot(descriptors[index].opcode)) return false;
     }
+    return slot(descriptors.front().opcode) >= 0;
+}
+static_assert(rowsAreOrdered(), "opcode rows must follow wire slot order, one row per opcode");
+
+constexpr size_t slotCount = static_cast<size_t>(slot(descriptors.back().opcode)) + 1;
+
+// The row index of each wire slot, or -1 for a removed slot.
+constexpr auto rowBySlot = [] {
+    std::array<int, slotCount> rows {};
+    rows.fill(-1);
+    for (size_t index = 0; index < descriptors.size(); ++index) {
+        rows[static_cast<size_t>(slot(descriptors[index].opcode))] = static_cast<int>(index);
+    }
+    return rows;
+}();
+
+} // namespace
+
+std::span<const OpcodeDescriptor> opcodeDescriptors() {
+    return descriptors;
+}
+
+const OpcodeDescriptor* findOpcodeDescriptor(Opcode opcode) {
+    const auto value = slot(opcode);
+    if (value < 0 || static_cast<size_t>(value) >= slotCount) return nullptr;
+    const auto row = rowBySlot[static_cast<size_t>(value)];
+    return row < 0 ? nullptr : &descriptors[static_cast<size_t>(row)];
+}
+
+bool producesValue(Opcode opcode) {
+    const auto* descriptor = findOpcodeDescriptor(opcode);
+    return descriptor != nullptr && descriptor->result == R::always;
 }
 
 bool isTerminator(Opcode opcode) {
-    switch (opcode) {
-        case Opcode::branch:
-        case Opcode::conditionalBranch:
-        case Opcode::switchPattern:
-        case Opcode::returnValue:
-        case Opcode::returnVoid:
-        case Opcode::unreachable:
-            return true;
-        default:
-            return false;
-    }
+    const auto* descriptor = findOpcodeDescriptor(opcode);
+    return descriptor != nullptr && descriptor->terminator;
 }
 
 const char* opcodeName(Opcode opcode) {
-    switch (opcode) {
-        case Opcode::integerConstant: return "integer";
-        case Opcode::floatingConstant: return "floating";
-        case Opcode::booleanConstant: return "boolean";
-        case Opcode::stringConstant: return "string";
-        case Opcode::byteConstant: return "byte";
-        case Opcode::unitConstant: return "unit";
-        case Opcode::stackAllocate: return "alloc_stack";
-        case Opcode::zeroInitialize: return "zero_init";
-        case Opcode::load: return "load";
-        case Opcode::store: return "store";
-        case Opcode::copyValue: return "copy";
-        case Opcode::take: return "take";
-        case Opcode::destroy: return "destroy";
-        case Opcode::add: return "add";
-        case Opcode::subtract: return "sub";
-        case Opcode::multiply: return "mul";
-        case Opcode::divide: return "div";
-        case Opcode::remainder: return "rem";
-        case Opcode::less: return "lt";
-        case Opcode::lessEqual: return "le";
-        case Opcode::greater: return "gt";
-        case Opcode::greaterEqual: return "ge";
-        case Opcode::equal: return "eq";
-        case Opcode::notEqual: return "ne";
-        case Opcode::bitAnd: return "bit_and";
-        case Opcode::bitOr: return "bit_or";
-        case Opcode::bitXor: return "bit_xor";
-        case Opcode::shiftLeft: return "shl";
-        case Opcode::shiftRight: return "shr";
-        case Opcode::convertChecked: return "convert";
-        case Opcode::convertWrapping: return "convert_wrapping";
-        case Opcode::constantValue: return "constant";
-        case Opcode::integerFits: return "fits";
-        case Opcode::typeSize: return "type_size";
-        case Opcode::typeAlignment: return "type_alignment";
-        case Opcode::integerAddress: return "integer_address";
-        case Opcode::pointerToInteger: return "pointer_to_integer";
-        case Opcode::destroyRange: return "destroy_range";
-        case Opcode::cloneAt: return "clone_at";
-        case Opcode::cloneCallback: return "clone_callback";
-        case Opcode::destroyCallback: return "destroy_callback";
-        case Opcode::linearRangeGuard: return "linear_range_guard";
-        case Opcode::slotAddress: return "slot_address";
-        case Opcode::stackBlock: return "stack_block";
-        case Opcode::call: return "call";
-        case Opcode::functionAddress: return "function_address";
-        case Opcode::callIndirect: return "call_indirect";
-        case Opcode::constructStruct: return "construct_struct";
-        case Opcode::fieldAddress: return "field_addr";
-        case Opcode::extractField: return "extract_field";
-        case Opcode::constructEnum: return "construct_enum";
-        case Opcode::extractPayload: return "extract_payload";
-        case Opcode::payloadAddress: return "payload_address";
-        case Opcode::stringUtf8: return "string_utf8";
-        case Opcode::count: return "count";
-        case Opcode::subscript: return "subscript";
-        case Opcode::branch: return "br";
-        case Opcode::conditionalBranch: return "cond_br";
-        case Opcode::switchPattern: return "switch_pattern";
-        case Opcode::returnValue: return "ret";
-        case Opcode::returnVoid: return "ret_void";
-        case Opcode::unreachable: return "unreachable";
-    }
-    return "unknown";
+    const auto* descriptor = findOpcodeDescriptor(opcode);
+    return descriptor == nullptr ? "unknown" : descriptor->name;
 }
 
 } // namespace joyeer::ir

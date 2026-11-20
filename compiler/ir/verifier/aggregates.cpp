@@ -46,7 +46,7 @@ void FunctionVerifier::verifyFieldProjection(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    const auto shapeMatches = requireShape(site, 1, 0);
+    const auto shapeMatches = site.shapeMatches;
     const auto* structure = shapeMatches && operands[0] != nullptr &&
             structures.contains(operands[0]->type)
             ? structures.at(operands[0]->type)
@@ -128,7 +128,7 @@ void FunctionVerifier::verifyExtractPayload(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    const auto shapeMatches = requireShape(site, 1, 0);
+    const auto shapeMatches = site.shapeMatches;
     const auto* enumCase = shapeMatches && operands[0] != nullptr &&
             instruction.symbol.has_value()
             ? context.enumCaseFor(operands[0]->type, *instruction.symbol)
@@ -156,7 +156,7 @@ void FunctionVerifier::verifyPayloadAddress(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    const auto shapeMatches = requireShape(site, 1, 0);
+    const auto shapeMatches = site.shapeMatches;
     const auto* enumCase = shapeMatches && operands[0] != nullptr &&
             instruction.symbol.has_value()
             ? context.enumCaseFor(operands[0]->type, *instruction.symbol)
@@ -184,7 +184,7 @@ void FunctionVerifier::verifyStringUtf8(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    if (requireShape(site, 1, 0) && operands[0] != nullptr &&
+    if (site.shapeMatches && operands[0] != nullptr &&
         instruction.result.has_value()) {
         const auto* sourceType = types.contains(operands[0]->type)
                 ? types.at(operands[0]->type)
@@ -222,7 +222,7 @@ void FunctionVerifier::verifyStringCount(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    if (requireShape(site, 1, 0) && operands[0] != nullptr &&
+    if (site.shapeMatches && operands[0] != nullptr &&
         instruction.result.has_value()) {
         const auto* baseType = types.contains(operands[0]->type)
                 ? types.at(operands[0]->type)
@@ -252,7 +252,7 @@ void FunctionVerifier::verifyStringSubscript(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    if (requireShape(site, 2, 0) && operands[0] != nullptr &&
+    if (site.shapeMatches && operands[0] != nullptr &&
         operands[1] != nullptr && instruction.result.has_value()) {
         const auto* baseType = types.contains(operands[0]->type)
                 ? types.at(operands[0]->type)

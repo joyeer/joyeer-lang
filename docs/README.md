@@ -83,6 +83,7 @@ iteration, a progress log, and deletion once every item is done. Start from the
 | [0010](plan/0010-generics.md) | Generics and source-library concurrency are complete on Windows/Linux x86_64; native macOS/AArch64 acceptance remains open |
 | [0011](plan/0011-library-containers.md) | Source-library Optional/Result, then borrowed element access and linear-safe Array/Dict |
 | [0012](plan/0012-equatable.md) | `==` and `!=` through the `Equatable` protocol: builtin, derived and generic equality, `nil` comparison |
+| [0013](plan/0013-ir-opcode-set.md) | Decision 0028 in stages: an opcode descriptor table, merged families, String out of the scalar opcodes, dense numbering |
 
 ## Decisions
 
@@ -115,7 +116,7 @@ in the spec.
 | [0021](decisions/0021-protocols-and-generic-functions.md) | Protocols and monomorphized generic functions |
 | [0022](decisions/0022-generic-types-and-layout-intrinsics.md) | Generic structs/enums and runtime-only typed layout operations |
 | [0023](decisions/0023-library-concurrency.md) | Concurrency as a source prelude, with closed compatibility/transfer metadata and verified x86_64 acceptance |
-| [0028](decisions/0028-ir-opcode-set.md) | A smaller IR opcode set described by one table (proposed) |
+| [0028](decisions/0028-ir-opcode-set.md) | A smaller IR opcode set described by one table (accepted, in implementation) |
 
 ## Conventions
 

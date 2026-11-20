@@ -1,6 +1,7 @@
 # 0028: A smaller, described IR opcode set
 
-- Status: proposed (2026-11-19). Stage 0 (remove `logicalAnd`, wire 26) is implemented; stages 1-4 need acceptance.
+- Status: accepted (2026-11-20, by the user). Stage 0 (remove `logicalAnd`, wire 26) is implemented; stages 1-4
+  are tracked in [plan 0013](../plan/0013-ir-opcode-set.md).
 - Spec: none. The IR is not part of the language; [IR](../impl/ir.md) changes with each stage.
 - Builds on [0025](0025-library-collection-capabilities.md), [0026](0026-library-array.md) and
   [0027](0027-library-dict.md), which moved Array and Dict out of the instruction set.
@@ -69,14 +70,17 @@ the backend), the backend should not need to know about library types, and unopt
 
 ## Decision
 
-Option 2, in stages. Each stage bumps `wire::version`, and each needs an `ir-backend-reviewer` pass before it lands.
+Option 2, in stages. Each stage that changes the wire format bumps `wire::version`, and each stage needs an
+`ir-backend-reviewer` pass before it lands.
 
 - **Stage 0, done (wire 26).** Remove `logicalAnd`. The verifier rejects slot 23 like the other removed slots.
-- **Stage 1: one descriptor table.** Each opcode gets one row in `opcode.cpp` with its spelling, operand count
-  (fixed or variadic), result rule (none, always, or set by the callee), immediate kind (none, literal, type, constant
-  index, payload index, or text), whether it is a terminator, and whether it is runtime-only. `producesValue`,
-  `isTerminator` and `opcodeName` read the table. The verifier checks the shape from the table before running the
-  opcode's own check. The dumper prints the immediate by its kind. No opcode changes meaning in this stage.
+- **Stage 1: one descriptor table (no wire change).** Each opcode gets one row in `opcode.cpp` with its spelling,
+  operand count (fixed or variadic), target count, result rule (none, always, or set by the direct callee or the
+  function type), immediate kind (none, integer literal, floating or String literal text, type, constant index, or
+  payload index), whether it is a terminator, and whether it is runtime-only. `producesValue`, `isTerminator` and
+  `opcodeName` read the table. The verifier rejects a slot with no row, checks the shape and result rule from the
+  table before running the opcode's own check, and takes runtime authorization from the row. The dumper prints the
+  immediate by its kind. No opcode changes meaning in this stage.
 - **Stage 2: merge families.** Each merge folds a parameter into one opcode:
 
   | Today | Becomes |
@@ -121,12 +125,12 @@ Option 2, in stages. Each stage bumps `wire::version`, and each needs an `ir-bac
     inlining.
 
   Literal patterns on String values in `switchPattern` keep using the runtime equality function inside the backend.
-- **Stage 4: dense numbering.** Drop "never renumber". Number the opcodes densely in table order, remove the
-  removed-slot checks from the verifier, and bump the wire version. From then on, removing an opcode means deleting
-  its row and bumping the version. The same stage must also:
+- **Stage 4: dense numbering.** Drop "never renumber". Number the opcodes densely in table order, so the table has
+  no gaps, and bump the wire version. Since stage 1 the verifier finds removed slots and the upper bound through
+  the table, so stage 4 only removes the table's gap handling (`rowBySlot`). From then on, removing an opcode means
+  deleting its row and bumping the version. The same stage must also:
   - rewrite the raw-slot tests (`ir_test.cpp`, `collection_roles_test.cpp`, `dict_roles_test.cpp`), which would
     otherwise match live opcodes instead of removed ones;
-  - replace the verifier's `> Opcode::stackBlock` upper bound with the table size;
   - update the literal version in `backend_abi_test.c` and the version stated in `backend.md` and `c-interop.md`.
 
 Kept as they are, because each says something that no other opcode can: `stackAllocate`, `zeroInitialize`, `load`,
@@ -142,8 +146,8 @@ calls, control flow, and runtime-only memory operations.
 
 ## Consequences
 
-- A new opcode is one table row plus its own verifier check and backend arm. Arity, result and immediate mistakes
-  are caught generically.
+- A new opcode is one table row plus its own verifier check and backend arm. Fixed-arity and result mistakes are
+  caught generically; the immediate kind drives the dumper, and each opcode's check still verifies its immediate.
 - The backend no longer needs to know String's layout for arithmetic or comparison. That is the last
   library-type knowledge left in the scalar opcodes.
 - IR dumps change spelling in stages 2 and 3. Tests that match dump text must be regenerated with the project's

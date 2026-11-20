@@ -16,7 +16,7 @@ model is split by concern; `compiler/ir/ir.h` includes all of it:
 | Header | Contents |
 |---|---|
 | `value.h` | IDs and typed SSA values |
-| `opcode.h` | the instruction set (wire slots) and opcode queries |
+| `opcode.h` | the instruction set (wire slots), one descriptor row per opcode, and opcode queries |
 | `debuginfo.h` | source tables, debug scopes, variables and locations |
 | `definitions.h` | the type table, structs, enums, their roles, constants |
 | `module.h` | instructions, blocks, functions and the module |
@@ -389,7 +389,7 @@ plus case symbol, including distinct builtin container instantiations.
 - duplicate or unknown type/function/block/value identifiers;
 - unsubstituted generic type parameters, including unused type records;
 - executable uses of generic/error placeholders, including nested type arguments;
-- malformed instruction operand/target counts;
+- unknown or removed opcodes, and operand/target counts or results that do not match the opcode's row;
 - invalid value/address categories;
 - selected load/store, return, operator, call, field, aggregate, and payload
   type relationships; opcode-specific Boolean constraints remain incomplete;
@@ -408,6 +408,16 @@ plus case symbol, including distinct builtin container instantiations.
   storage, non-dominating debug declaration storage, and parameter bindings
   unrelated to the incoming parameter;
 - blocks without terminators or instructions after a terminator.
+
+Every live opcode has one `OpcodeDescriptor` row in `opcode.cpp`
+([0028](../decisions/0028-ir-opcode-set.md), stage 1): its spelling, operand count (fixed, or variadic when its own
+check matches the operands against a callee, a function type or a definition), target count, result rule, immediate
+kind (what `integerValue` or `text` holds), whether it ends its block, and whether it is runtime-only. Before an
+opcode's own check, the verifier rejects a slot with no row, checks a fixed operand and target count and the result
+rule once, and marks a runtime-only opcode outside a runtime function as unauthorized; the opcode's check reports
+that unless it admits verified literal storage or an element place. The dumper prints immediates by kind, so a new
+opcode needs a dumper case only for a callee, block targets, switch cases, parenthesized operands, or an immediate
+after its operands (as `fits` has).
 
 Lowering returns an `ir-lowering.verification-failed` diagnostic when a modeled
 check fails. Passing this verifier is not proof of source-level correctness or

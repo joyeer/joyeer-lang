@@ -147,6 +147,12 @@ struct InstructionSite {
     std::vector<const Value*> operands;
     // Whether `instruction.callee` names a function of the module.
     bool knownCallee;
+    // False when the opcode's fixed operand or target count (opcode.h) does not match; already reported.
+    // Checks test it before indexing `operands`.
+    bool shapeMatches;
+    // Whether the opcode is runtime-only and the function is not a runtime function. The opcode's check
+    // reports it unless it admits the instruction as verified literal storage or an element place.
+    bool unauthorized;
 };
 
 // Verification of one function. Created by ModuleVerifier::run() after the module-wide phases.
@@ -202,7 +208,6 @@ private:
 
     // instructions.cpp
     void verifyInstruction(const BasicBlock& block, size_t index, bool& foundTerminator);
-    bool requireShape(const InstructionSite& site, size_t operandCount, size_t targetCount);
     void verifyUnitConstant(const InstructionSite& site);
     void verifyScalarConstant(const InstructionSite& site);
     void verifyConstantValue(const InstructionSite& site);

@@ -12,7 +12,6 @@ void FunctionVerifier::verifyLayoutQuery(const InstructionSite& site) {
     const auto& block = site.block;
     const auto& instruction = site.instruction;
     const auto location = site.location;
-    requireShape(site, 0, 0);
     const auto queried = static_cast<TypeId>(instruction.integerValue);
     const auto* result = instruction.result.has_value() && types.contains(instruction.result->type)
             ? types.at(instruction.result->type) : nullptr;
@@ -31,7 +30,7 @@ void FunctionVerifier::verifyLayoutQuery(const InstructionSite& site) {
                 "a size or alignment query needs a concrete type with values, not '" +
                         types.at(queried)->name + "'");
     }
-    if (!function.runtimeContext) {
+    if (site.unauthorized) {
         report(
                 VerificationErrorId::callMismatch,
                 functionId, block.id, location,
@@ -47,14 +46,10 @@ void FunctionVerifier::verifyCollectionCapability(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    const bool noOperands = instruction.opcode == Opcode::cloneCallback ||
-            instruction.opcode == Opcode::destroyCallback;
-    const bool yieldsInt = noOperands || instruction.opcode == Opcode::slotAddress ||
-            instruction.opcode == Opcode::stackBlock;
+    const bool yieldsInt = producesValue(instruction.opcode);
     const bool guard = instruction.opcode == Opcode::linearRangeGuard;
     const bool stackBlockOp = instruction.opcode == Opcode::stackBlock;
-    const size_t expected = noOperands ? 0 : (guard || stackBlockOp) ? 1 : 2;
-    if (requireShape(site, expected, 0)) {
+    if (site.shapeMatches) {
         for (const auto* operand : operands) {
             const auto* operandType = operand != nullptr && types.contains(operand->type)
                     ? types.at(operand->type) : nullptr;
@@ -118,7 +113,7 @@ void FunctionVerifier::verifyCollectionCapability(const InstructionSite& site) {
               literalBlocks.contains(instruction.result->id)) ||
              (instruction.opcode == Opcode::slotAddress &&
               literalSlots.contains(instruction.result->id)));
-    if (!function.runtimeContext && !literalStorage) {
+    if (site.unauthorized && !literalStorage) {
         report(VerificationErrorId::callMismatch, functionId, block.id, location,
                "a collection capability requires runtime authorization");
     }
@@ -131,7 +126,7 @@ void FunctionVerifier::verifyIntegerAddress(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    const auto* source = requireShape(site, 1, 0) && operands[0] != nullptr && types.contains(operands[0]->type)
+    const auto* source = site.shapeMatches && operands[0] != nullptr && types.contains(operands[0]->type)
             ? types.at(operands[0]->type) : nullptr;
     if (source == nullptr || source->kind != typing::TypeKind::integer ||
         operands[0]->category != ValueCategory::value ||
@@ -180,7 +175,7 @@ void FunctionVerifier::verifyIntegerAddress(const InstructionSite& site) {
     }
     const bool fromLiteral = instruction.result.has_value() &&
             literalPlaces.contains(instruction.result->id);
-    if (!function.runtimeContext && !fromAddressor && !fromLiteral) {
+    if (site.unauthorized && !fromAddressor && !fromLiteral) {
         report(
                 VerificationErrorId::callMismatch,
                 functionId, block.id, location,
@@ -194,7 +189,7 @@ void FunctionVerifier::verifyPointerToInteger(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    const auto* source = requireShape(site, 1, 0) && operands[0] != nullptr &&
+    const auto* source = site.shapeMatches && operands[0] != nullptr &&
             types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
     const auto* result = instruction.result.has_value() && types.contains(instruction.result->type)
             ? types.at(instruction.result->type) : nullptr;
@@ -205,7 +200,7 @@ void FunctionVerifier::verifyPointerToInteger(const InstructionSite& site) {
         report(VerificationErrorId::typeMismatch, functionId, block.id, location,
                "a pointer conversion takes a typed slot or function address and yields an Int");
     }
-    if (!function.runtimeContext) {
+    if (site.unauthorized) {
         report(VerificationErrorId::callMismatch, functionId, block.id, location,
                "a pointer conversion requires runtime authorization");
     }

@@ -3,6 +3,10 @@
 
 // The IR instruction set. Opcode values are wire slots shared with the backend
 // (compiler/backend/ir_wire.h): never renumber them, and keep removed slots unused.
+// Each live opcode has one row in the descriptor table below (decision 0028).
+
+#include <cstdint>
+#include <span>
 
 namespace joyeer::ir {
 
@@ -99,12 +103,68 @@ enum class Opcode {
     stackBlock,
 };
 
+// When an instruction defines a result.
+enum class OpcodeResult : uint8_t {
+    none,
+    always,
+    // When the direct callee returns a value (`call`).
+    directCallee,
+    // When the function type of operand 0 returns a value (`callIndirect`); its own check decides.
+    functionType,
+};
+
+// What `Instruction::integerValue` or `Instruction::text` holds for an opcode. The `callee`, `symbol` and
+// `switchCases` fields are not immediates: they are named by the instruction's own check.
+enum class OpcodeImmediate : uint8_t {
+    none,
+    // `integerValue` is the literal, read in the result type (signed or unsigned).
+    integerLiteral,
+    // `text` is the decimal spelling of a Float32 or Float64 literal.
+    floatingLiteral,
+    // `text` is the String literal's bytes.
+    stringLiteral,
+    // `integerValue` is a `TypeId`.
+    type,
+    // `integerValue` indexes `Module::constants`.
+    constantIndex,
+    // `integerValue` indexes the payloads of the enum case `symbol`.
+    payloadIndex,
+};
+
+// `OpcodeDescriptor::operands` of an opcode whose operand count its own check decides.
+inline constexpr int variadicOperands = -1;
+
+// The shape of one opcode. Before it runs the opcode's own check, the verifier checks the operand and target
+// counts of a fixed-arity row and the result rule, and marks a runtime-only opcode outside a runtime function;
+// a variadic opcode's check matches its own operands and targets, and each runtime-only check reports the mark.
+struct OpcodeDescriptor {
+    Opcode opcode;
+    // The spelling in IR dumps and diagnostics.
+    const char* name;
+    // The operand count, or `variadicOperands`.
+    int operands;
+    // The block target count. Pattern switch targets live in `switchCases`, not here.
+    int targets;
+    OpcodeResult result;
+    OpcodeImmediate immediate;
+    // Whether the instruction ends its block.
+    bool terminator;
+    // Whether only runtime functions may use the opcode. The opcode's own check may admit verified literal
+    // storage or a collection's element place outside them (verifier/capabilities.cpp).
+    bool runtimeOnly;
+};
+
+// Every live opcode, one row each, in declaration order.
+[[nodiscard]] std::span<const OpcodeDescriptor> opcodeDescriptors();
+// The row of `opcode`, or null for a removed or unknown wire slot.
+[[nodiscard]] const OpcodeDescriptor* findOpcodeDescriptor(Opcode opcode);
+
 // Whether an instruction with `opcode` ends its block.
 [[nodiscard]] bool isTerminator(Opcode opcode);
-// Whether an instruction with `opcode` defines a result. `call` and `callIndirect` are not listed:
-// whether they define one depends on the callee.
+// Whether an instruction with `opcode` always defines a result. False for `call` and `callIndirect`, whose
+// result depends on the callee.
 [[nodiscard]] bool producesValue(Opcode opcode);
-// The opcode's spelling in IR dumps and diagnostics.
+// The opcode's spelling in IR dumps and diagnostics, or "unknown" for a removed or unknown slot.
 [[nodiscard]] const char* opcodeName(Opcode opcode);
 
 } // namespace joyeer::ir

@@ -148,6 +148,7 @@ joyeer_discover_tests(CompilerSemanticAnalysisTests
 
 add_executable(IRModelTests
         ir_test.cpp
+        opcode_test.cpp
 )
 
 target_link_libraries(IRModelTests

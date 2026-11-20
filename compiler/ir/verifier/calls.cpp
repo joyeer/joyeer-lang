@@ -97,7 +97,7 @@ void FunctionVerifier::verifyFunctionAddress(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto knownCallee = site.knownCallee;
-    if (!requireShape(site, 0, 0)) return;
+    if (!site.shapeMatches) return;
     if (!knownCallee) {
         report(VerificationErrorId::invalidReference, functionId, block.id, location,
                "function_address references an unknown function");
