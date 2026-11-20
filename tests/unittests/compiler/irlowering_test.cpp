@@ -79,6 +79,33 @@ protected:
         return count;
     }
 
+    // The number of `literal` instructions of an integer type in `function`.
+    size_t integerLiteralCount(const joyeer::ir::Function& function) const {
+        size_t count = 0;
+        for (const auto& block : function.blocks) {
+            for (const auto& instruction : block.instructions) {
+                if (instruction.opcode != joyeer::ir::Opcode::literal || !instruction.result.has_value()) continue;
+                const auto type = std::find_if(result.module->types.begin(), result.module->types.end(),
+                        [&](const auto& candidate) { return candidate.id == instruction.result->type; });
+                count += type != result.module->types.end() && joyeer::typing::isInteger(type->kind) ? 1 : 0;
+            }
+        }
+        return count;
+    }
+
+    // The number of `compare` instructions with `predicate` in `function`.
+    size_t compareCount(const joyeer::ir::Function& function, joyeer::ir::ComparePredicate predicate) const {
+        size_t count = 0;
+        for (const auto& block : function.blocks) {
+            count += static_cast<size_t>(std::count_if(block.instructions.begin(), block.instructions.end(),
+                    [predicate](const auto& instruction) {
+                        return instruction.opcode == joyeer::ir::Opcode::compare &&
+                                joyeer::ir::comparePredicate(instruction) == predicate;
+                    }));
+        }
+        return count;
+    }
+
     size_t opcodeCount(
             const joyeer::ir::Function& function,
             joyeer::ir::Opcode opcode) const {
@@ -305,7 +332,7 @@ return left + right
     EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::store), 2u);
     EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::load), 2u);
     EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::add), 1u);
-    EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::returnValue), 1u);
+    EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::ret), 1u);
 }
 
 TEST_F(IRLoweringTest, FoldsScalarConstantsAndSharesArrayConstantData) {
@@ -324,7 +351,7 @@ func label(): String { return name }
     EXPECT_EQ(result.module->constants[0].name, "table");
     EXPECT_EQ(opcodeCount(function("first"), joyeer::ir::Opcode::constantValue), 1u);
     EXPECT_EQ(opcodeCount(function("second"), joyeer::ir::Opcode::constantValue), 1u);
-    EXPECT_EQ(opcodeCount(function("second"), joyeer::ir::Opcode::integerConstant), 2u);
+    EXPECT_EQ(integerLiteralCount(function("second")), 2u);
     EXPECT_EQ(opcodeCount(function("label"), joyeer::ir::Opcode::stringConstant), 1u);
     // count (8) + 3 elements * 4 bytes
     EXPECT_EQ(result.module->constants[0].data.size(), 8u + 3u * 4u);
@@ -782,10 +809,15 @@ TEST_F(IRLoweringTest, LowersUnitCallsAndReturnsWithoutLosingEffects) {
           "func forward(): Void { return effect() }\n");
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     EXPECT_EQ(opcodeCount(function("complete"), joyeer::ir::Opcode::call), 1u);
-    EXPECT_EQ(opcodeCount(function("complete"), joyeer::ir::Opcode::unitConstant), 1u);
+    EXPECT_EQ(opcodeCount(function("complete"), joyeer::ir::Opcode::literal), 1u);
     EXPECT_EQ(opcodeCount(function("complete"), joyeer::ir::Opcode::constructEnum), 1u);
-    EXPECT_EQ(opcodeCount(function("forward"), joyeer::ir::Opcode::returnVoid), 1u);
-    EXPECT_EQ(opcodeCount(function("forward"), joyeer::ir::Opcode::returnValue), 0u);
+    const auto& forward = function("forward");
+    EXPECT_EQ(opcodeCount(forward, joyeer::ir::Opcode::ret), 1u);
+    for (const auto& block : forward.blocks) {
+        for (const auto& instruction : block.instructions) {
+            if (instruction.opcode == joyeer::ir::Opcode::ret) EXPECT_TRUE(instruction.operands.empty());
+        }
+    }
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
 
@@ -844,7 +876,7 @@ return number
     EXPECT_EQ(opcodeCount(forward, joyeer::ir::Opcode::extractPayload), 2u);
     EXPECT_EQ(opcodeCount(forward, joyeer::ir::Opcode::copyValue), 1u)
             << joyeer::ir::dump(*result.module);
-    EXPECT_EQ(opcodeCount(forward, joyeer::ir::Opcode::returnValue), 2u);
+    EXPECT_EQ(opcodeCount(forward, joyeer::ir::Opcode::ret), 2u);
     EXPECT_GT(opcodeCount(forward, joyeer::ir::Opcode::destroy), 0u);
     const auto& dispatch = forward.blocks[0].instructions.back();
     ASSERT_EQ(dispatch.opcode, joyeer::ir::Opcode::switchPattern);
@@ -1011,9 +1043,9 @@ return current
     const auto& increment = function("increment");
     EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::stackAllocate), 2u);
     EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::store), 3u);
-    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::integerConstant), 1u);
+    EXPECT_EQ(integerLiteralCount(increment), 1u);
     EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::add), 1u);
-    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::returnValue), 1u);
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::ret), 1u);
 }
 
 TEST_F(IRLoweringTest, AcquiresOwnedReplacementBeforeDestroyingOverwrittenStorage) {
@@ -1095,7 +1127,7 @@ print(value: number)
 
     const auto& run = function("run");
     EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::call), 2u);
-    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnVoid), 1u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::ret), 1u);
 }
 
 TEST_F(IRLoweringTest, LowersExplicitByteConversionCalls) {
@@ -1111,7 +1143,7 @@ return byteToString(value: value)
     EXPECT_TRUE(function("byteToInt").isExternal);
     EXPECT_TRUE(function("byteToString").isExternal);
     EXPECT_EQ(opcodeCount(function("convert"), joyeer::ir::Opcode::call), 3u);
-    EXPECT_EQ(opcodeCount(function("convert"), joyeer::ir::Opcode::returnValue), 1u);
+    EXPECT_EQ(opcodeCount(function("convert"), joyeer::ir::Opcode::ret), 1u);
 }
 
 TEST_F(IRLoweringTest, LowersIfExpressionValuesThroughMergeSlots) {
@@ -1128,7 +1160,7 @@ return if flag { 1 } else { 2 }
     EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::conditionalBranch), 1u);
     EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::branch), 2u);
     EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::stackAllocate), 2u);
-    EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::returnValue), 1u);
+    EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::ret), 1u);
 }
 
 TEST_F(IRLoweringTest, LowersLogicalAndWithConditionalRightEvaluation) {
@@ -1166,7 +1198,7 @@ return flag && if true { return true } else { false }
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     const auto& run = function("run");
     EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::conditionalBranch), 2u);
-    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnValue), 2u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::ret), 2u);
     const auto verification = joyeer::ir::Verifier().verify(*result.module);
     EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
 }
@@ -1183,7 +1215,7 @@ TEST_F(IRLoweringTest, LowersLogicalOrWithConditionalRightEvaluation) {
     ASSERT_EQ(branch.opcode, joyeer::ir::Opcode::conditionalBranch);
     ASSERT_EQ(branch.targets.size(), 2u);
     EXPECT_EQ(branch.targets[1], right->id);
-    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::equal), 1u);
+    EXPECT_EQ(compareCount(run, joyeer::ir::ComparePredicate::equal), 1u);
     EXPECT_TRUE(std::any_of(right->instructions.begin(), right->instructions.end(),
             [](const auto& instruction) { return instruction.opcode == joyeer::ir::Opcode::call; }));
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
@@ -1215,7 +1247,7 @@ func negated(): Bool { return !stop() }
         EXPECT_TRUE(terminatesAfterCall) << name << '\n' << joyeer::ir::dump(*result.module);
     }
     for (const auto* name : { "rightOr", "rightAnd" }) {
-        EXPECT_EQ(opcodeCount(function(name), joyeer::ir::Opcode::returnValue), 1u);
+        EXPECT_EQ(opcodeCount(function(name), joyeer::ir::Opcode::ret), 1u);
     }
 }
 
@@ -1317,7 +1349,7 @@ return 2
     const auto& choose = function("choose");
     EXPECT_EQ(choose.blocks.size(), 4u);
     EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::conditionalBranch), 1u);
-    EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::returnValue), 2u);
+    EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::ret), 2u);
 }
 
 TEST_F(IRLoweringTest, LowersWhileHeadersBodiesExitsAndBackEdges) {
@@ -1337,8 +1369,8 @@ return value
     EXPECT_EQ(count.blocks.size(), 4u);
     EXPECT_EQ(opcodeCount(count, joyeer::ir::Opcode::conditionalBranch), 1u);
     EXPECT_EQ(opcodeCount(count, joyeer::ir::Opcode::branch), 2u);
-    EXPECT_EQ(opcodeCount(count, joyeer::ir::Opcode::less), 1u);
-    EXPECT_EQ(opcodeCount(count, joyeer::ir::Opcode::returnValue), 1u);
+    EXPECT_EQ(compareCount(count, joyeer::ir::ComparePredicate::less), 1u);
+    EXPECT_EQ(opcodeCount(count, joyeer::ir::Opcode::ret), 1u);
 }
 
 TEST_F(IRLoweringTest, LowersInoutParametersAndArgumentsAsAddresses) {
@@ -1407,7 +1439,7 @@ return box.value
     EXPECT_EQ(opcodeCount(make, joyeer::ir::Opcode::constructStruct), 1u);
     EXPECT_GE(opcodeCount(make, joyeer::ir::Opcode::fieldAddress), 3u);
     EXPECT_EQ(opcodeCount(make, joyeer::ir::Opcode::add), 1u);
-    EXPECT_EQ(opcodeCount(make, joyeer::ir::Opcode::returnValue), 1u);
+    EXPECT_EQ(opcodeCount(make, joyeer::ir::Opcode::ret), 1u);
 }
 
 TEST_F(IRLoweringTest, LowersUserOptionalAndNilEnumConstruction) {
@@ -1455,7 +1487,7 @@ return text.utf8()
     ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
     const auto& bytes = function("bytes");
     EXPECT_EQ(opcodeCount(bytes, joyeer::ir::Opcode::stringUtf8), 1u);
-    EXPECT_EQ(opcodeCount(bytes, joyeer::ir::Opcode::returnValue), 1u);
+    EXPECT_EQ(opcodeCount(bytes, joyeer::ir::Opcode::ret), 1u);
 }
 
 // Compile-time regression (decision 0027 rule 4): the dictionary literal protocol once walked the function's blocks
@@ -1563,7 +1595,7 @@ return values
     const auto& build = function("build");
     EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::call), 3u);
     EXPECT_GE(opcodeCount(build, joyeer::ir::Opcode::copyValue), 1u);
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::returnValue), 1u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::ret), 1u);
 }
 
 TEST_F(IRLoweringTest, LowersDictionaryInsertionAndUpdateWithOwnedEntries) {
@@ -1586,7 +1618,7 @@ return lookup
     const auto& build = function("build");
     EXPECT_EQ(callsTo(build, ".insert"), 2u);
     EXPECT_GE(opcodeCount(build, joyeer::ir::Opcode::copyValue), 2u);
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::returnValue), 1u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::ret), 1u);
 }
 
 // The library dictionary's addressor borrows the key (decision 0027): a lookup, a borrow and an in-place mutation
@@ -1734,7 +1766,7 @@ return match value {
     EXPECT_EQ(read.blocks.size(), 4u);
     EXPECT_EQ(opcodeCount(read, joyeer::ir::Opcode::switchPattern), 1u);
     EXPECT_EQ(opcodeCount(read, joyeer::ir::Opcode::extractPayload), 1u);
-    EXPECT_EQ(opcodeCount(read, joyeer::ir::Opcode::returnValue), 1u);
+    EXPECT_EQ(opcodeCount(read, joyeer::ir::Opcode::ret), 1u);
 }
 
 TEST_F(IRLoweringTest, LowersOptionalMatchesToResultConstruction) {
@@ -1810,7 +1842,7 @@ print(value: values.count)
             instructions.begin(),
             instructions.end(),
             [](const auto& instruction) {
-                return instruction.opcode == joyeer::ir::Opcode::returnVoid;
+                return instruction.opcode == joyeer::ir::Opcode::ret;
             });
     ASSERT_NE(returnInstruction, instructions.end());
     ASSERT_NE(returnInstruction, instructions.begin());
@@ -1873,7 +1905,7 @@ accept(value: consume text, flag: if flag { return } else { false })
             run.blocks.begin(), run.blocks.end(),
             [](const auto& block) { return block.name == "if.then"; });
     ASSERT_NE(early, run.blocks.end());
-    EXPECT_EQ(early->instructions.back().opcode, joyeer::ir::Opcode::returnVoid);
+    EXPECT_EQ(early->instructions.back().opcode, joyeer::ir::Opcode::ret);
     const auto savedTemporary = std::find_if(
             early->instructions.begin(), early->instructions.end(),
             [&take](const auto& instruction) {
@@ -1910,8 +1942,7 @@ accept(value: consume text, flag: if flag { return } else { false })
             instructions.begin(), instructions.end(),
             [](const auto& instruction) {
                 return instruction.opcode == joyeer::ir::Opcode::add ||
-                    instruction.opcode == joyeer::ir::Opcode::equal ||
-                    instruction.opcode == joyeer::ir::Opcode::notEqual;
+                    instruction.opcode == joyeer::ir::Opcode::compare;
             });
         ASSERT_NE(binary, instructions.end());
         const auto capture = std::find_if(
@@ -1951,7 +1982,7 @@ accept(value: consume text, flag: if flag { return } else { false })
             run.blocks.begin(), run.blocks.end(),
             [](const auto& block) { return block.name == "if.then"; });
         ASSERT_NE(early, run.blocks.end());
-        EXPECT_EQ(early->instructions.back().opcode, joyeer::ir::Opcode::returnValue);
+        EXPECT_EQ(early->instructions.back().opcode, joyeer::ir::Opcode::ret);
         const auto savedTemporary = std::find_if(
             early->instructions.begin(), early->instructions.end(),
             [&capture](const auto& instruction) {
@@ -2064,10 +2095,10 @@ let values: [String] = [text]
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     const auto& run = function("run");
     EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::destroy), 3u);
-    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnVoid), 2u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::ret), 2u);
     for (const auto& block : run.blocks) {
         for (size_t index = 0; index < block.instructions.size(); ++index) {
-            if (block.instructions[index].opcode != joyeer::ir::Opcode::returnVoid) continue;
+            if (block.instructions[index].opcode != joyeer::ir::Opcode::ret) continue;
             ASSERT_GT(index, 0u);
             EXPECT_EQ(block.instructions[index - 1].opcode, joyeer::ir::Opcode::destroy);
         }
@@ -2119,7 +2150,7 @@ return moved
     const auto& run = function("run");
     EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::take), 1u);
     EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::call), 2u);
-    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnValue), 1u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::ret), 1u);
 }
 
 TEST_F(IRLoweringTest, KeepsExplicitBorrowingParametersAsNonOwningValues) {
@@ -2190,7 +2221,7 @@ return pair
     const auto& run = function("run");
     EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::take), 1u);
     EXPECT_GE(opcodeCount(run, joyeer::ir::Opcode::fieldAddress), 2u);
-    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnValue), 1u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::ret), 1u);
 }
 
 TEST_F(IRLoweringTest, LowersTrailingExpressionsAsImplicitReturns) {
@@ -2199,8 +2230,8 @@ func text(): String { "left" + "right" }
 )JOYEER");
 
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
-    EXPECT_EQ(opcodeCount(function("square"), joyeer::ir::Opcode::returnValue), 1u);
-    EXPECT_EQ(opcodeCount(function("text"), joyeer::ir::Opcode::returnValue), 1u);
+    EXPECT_EQ(opcodeCount(function("square"), joyeer::ir::Opcode::ret), 1u);
+    EXPECT_EQ(opcodeCount(function("text"), joyeer::ir::Opcode::ret), 1u);
     EXPECT_EQ(opcodeCount(function("text"), joyeer::ir::Opcode::copyValue), 1u);
     EXPECT_EQ(opcodeCount(function("text"), joyeer::ir::Opcode::destroy), 1u);
 }
@@ -2218,7 +2249,7 @@ TEST_F(IRLoweringTest, AnchorsImplicitReturnAtTheTrailingExpression) {
             instructions.begin(),
             instructions.end(),
             [](const auto& instruction) {
-                return instruction.opcode == joyeer::ir::Opcode::returnValue;
+                return instruction.opcode == joyeer::ir::Opcode::ret;
             });
     ASSERT_NE(returned, instructions.end());
     ASSERT_TRUE(returned->debugLocation.has_value());
@@ -2246,14 +2277,14 @@ TEST_F(IRLoweringTest, AnchorsTrailingReturnPreparationAtTheExpression) {
         for (const auto& instruction : block.instructions) {
             if (instruction.opcode != joyeer::ir::Opcode::copyValue &&
                 instruction.opcode != joyeer::ir::Opcode::constructEnum &&
-                instruction.opcode != joyeer::ir::Opcode::returnValue) {
+                instruction.opcode != joyeer::ir::Opcode::ret) {
                 continue;
             }
             ASSERT_TRUE(instruction.debugLocation.has_value());
             EXPECT_EQ(instruction.debugLocation->span.offset, expectedOffset);
             foundCopy |= instruction.opcode == joyeer::ir::Opcode::copyValue;
             foundConstruction |= instruction.opcode == joyeer::ir::Opcode::constructEnum;
-            foundReturn |= instruction.opcode == joyeer::ir::Opcode::returnValue;
+            foundReturn |= instruction.opcode == joyeer::ir::Opcode::ret;
         }
     }
     EXPECT_TRUE(foundCopy);
@@ -2492,7 +2523,7 @@ TEST_F(NewOpcodeVerifierTest, FunctionAddressAndIndirectCallsAreCheckedAgainstTh
             for (auto& block : candidate.blocks) {
                 for (size_t index = 0; index + 1 < block.instructions.size(); ++index) {
                     if (block.instructions[index].opcode == Opcode::callIndirect) {
-                        block.instructions[index + 1].opcode = Opcode::returnVoid;
+                        block.instructions[index + 1].opcode = Opcode::ret;
                     }
                 }
             }
@@ -2536,7 +2567,7 @@ TEST_F(NewOpcodeVerifierTest, FunctionValueRulesRejectMalformedModules) {
             for (auto& block : candidate.blocks) {
                 for (size_t index = 0; index + 1 < block.instructions.size(); ++index) {
                     if (block.instructions[index].opcode == Opcode::call) {
-                        block.instructions[index + 1].opcode = Opcode::returnVoid;
+                        block.instructions[index + 1].opcode = Opcode::ret;
                     }
                 }
             }

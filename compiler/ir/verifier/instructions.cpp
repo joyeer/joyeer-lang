@@ -65,9 +65,7 @@ void FunctionVerifier::verifyInstruction(const BasicBlock& block, size_t index, 
         switch (instruction.opcode) {
             case Opcode::destroyRange:
             case Opcode::cloneAt:
-            case Opcode::cloneCallback:
-            case Opcode::destroyCallback:
-            case Opcode::linearRangeGuard:
+            case Opcode::typeHelper:
                 misuse = misuse || namesEntry;
                 break;
             case Opcode::stackBlock:
@@ -167,18 +165,23 @@ void FunctionVerifier::verifyInstruction(const BasicBlock& block, size_t index, 
                             " target(s)");
         }
     }
+    if (descriptor != nullptr) {
+        const auto count = modifierCount(descriptor->modifier);
+        if (count == 0 ? instruction.modifier != 0 : instruction.modifier >= count) {
+            report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
+                   std::string(descriptor->name) + " has an invalid modifier " +
+                           std::to_string(instruction.modifier));
+        }
+    }
     const bool unauthorized = descriptor != nullptr && descriptor->runtimeOnly && !function.runtimeContext;
 
     const InstructionSite site { block, index, instruction, location, std::move(operands), knownCallee,
                                  shapeMatches, unauthorized };
     switch (instruction.opcode) {
         // Constants (this file).
-        case Opcode::unitConstant: verifyUnitConstant(site); break;
-        case Opcode::integerConstant:
+        case Opcode::literal: verifyLiteral(site); break;
         case Opcode::floatingConstant:
-        case Opcode::booleanConstant:
-        case Opcode::stringConstant:
-        case Opcode::byteConstant: verifyScalarConstant(site); break;
+        case Opcode::stringConstant: verifyScalarConstant(site); break;
         case Opcode::constantValue: verifyConstantValue(site); break;
 
         // Storage and ownership (this file).
@@ -194,12 +197,7 @@ void FunctionVerifier::verifyInstruction(const BasicBlock& block, size_t index, 
         case Opcode::add:
         case Opcode::subtract:
         case Opcode::multiply:
-        case Opcode::less:
-        case Opcode::lessEqual:
-        case Opcode::greater:
-        case Opcode::greaterEqual:
-        case Opcode::equal:
-        case Opcode::notEqual: verifyBinaryOperator(site); break;
+        case Opcode::compare: verifyBinaryOperator(site); break;
         case Opcode::divide:
         case Opcode::remainder: verifyDivision(site); break;
         case Opcode::bitAnd:
@@ -207,8 +205,7 @@ void FunctionVerifier::verifyInstruction(const BasicBlock& block, size_t index, 
         case Opcode::bitXor:
         case Opcode::shiftLeft:
         case Opcode::shiftRight: verifyBitwiseOperator(site); break;
-        case Opcode::convertChecked:
-        case Opcode::convertWrapping: verifyConversion(site); break;
+        case Opcode::convert: verifyConversion(site); break;
         case Opcode::integerFits: verifyIntegerFits(site); break;
 
         // Calls and function values (calls.cpp).
@@ -232,11 +229,10 @@ void FunctionVerifier::verifyInstruction(const BasicBlock& block, size_t index, 
         case Opcode::typeAlignment: verifyLayoutQuery(site); break;
         case Opcode::destroyRange:
         case Opcode::cloneAt:
-        case Opcode::linearRangeGuard:
         case Opcode::slotAddress:
         case Opcode::stackBlock:
-        case Opcode::cloneCallback:
-        case Opcode::destroyCallback: verifyCollectionCapability(site); break;
+        case Opcode::typeHelper: verifyCollectionCapability(site); break;
+        case Opcode::trapIf: verifyTrapIf(site); break;
         case Opcode::integerAddress: verifyIntegerAddress(site); break;
         case Opcode::pointerToInteger: verifyPointerToInteger(site); break;
 
@@ -245,34 +241,41 @@ void FunctionVerifier::verifyInstruction(const BasicBlock& block, size_t index, 
         case Opcode::branch: break;
         case Opcode::conditionalBranch: verifyConditionalBranch(site); break;
         case Opcode::switchPattern: verifySwitchPattern(site); break;
-        case Opcode::returnValue: verifyReturnValue(site); break;
-        case Opcode::returnVoid: verifyReturnVoid(site); break;
+        case Opcode::ret: verifyReturn(site); break;
         case Opcode::unreachable: break;
     }
 }
 
 // Constants.
 
-void FunctionVerifier::verifyUnitConstant(const InstructionSite& site) {
-    const auto& block = site.block;
+// An integer, byte or Boolean value that fits its result type, or the unit value 0 of `Void`.
+void FunctionVerifier::verifyLiteral(const InstructionSite& site) {
     const auto& instruction = site.instruction;
-    const auto location = site.location;
-    const auto* unitType = instruction.result.has_value() &&
-            types.contains(instruction.result->type)
-            ? types.at(instruction.result->type) : nullptr;
-    if (unitType == nullptr ||
-        unitType->kind != typing::TypeKind::voidType ||
-        instruction.result->category != ValueCategory::value) {
-        report(
-                VerificationErrorId::typeMismatch,
-                functionId,
-                block.id,
-                location,
-                "unit constant must produce a Void value");
+    // A missing result is the result rule's report; an unknown type is the type table's.
+    if (!instruction.result.has_value() || !types.contains(instruction.result->type)) return;
+    const auto* type = types.at(instruction.result->type);
+    bool valid = instruction.result->category == ValueCategory::value;
+    if (valid) {
+        const auto kind = type->kind;
+        const auto value = instruction.integerValue;
+        if (typing::isInteger(kind)) {
+            const auto bits = typing::scalarBitWidth(kind);
+            valid = bits == 64 || (typing::isSignedInteger(kind)
+                    ? value >= -(int64_t{1} << (bits - 1)) && value < (int64_t{1} << (bits - 1))
+                    : static_cast<uint64_t>(value) < (uint64_t{1} << bits));
+        } else if (kind == typing::TypeKind::boolean) {
+            valid = value == 0 || value == 1;
+        } else {
+            valid = kind == typing::TypeKind::voidType && value == 0;
+        }
+    }
+    if (!valid) {
+        report(VerificationErrorId::typeMismatch, functionId, site.block.id, site.location,
+               "literal kind or value does not match its result type");
     }
 }
 
-// An integer, floating, Boolean, String or byte constant fits its result type.
+// A floating or String constant fits its result type.
 void FunctionVerifier::verifyScalarConstant(const InstructionSite& site) {
     const auto& block = site.block;
     const auto& instruction = site.instruction;
@@ -290,25 +293,8 @@ void FunctionVerifier::verifyScalarConstant(const InstructionSite& site) {
         const auto kind = types.at(instruction.result->type)->kind;
         bool valid = false;
         switch (instruction.opcode) {
-            case Opcode::integerConstant:
-                if (typing::isInteger(kind)) {
-                    const auto bits = typing::scalarBitWidth(kind);
-                    valid = bits == 64 || (typing::isSignedInteger(kind)
-                            ? instruction.integerValue >= -(int64_t{1} << (bits - 1)) &&
-                              instruction.integerValue < (int64_t{1} << (bits - 1))
-                            : static_cast<uint64_t>(instruction.integerValue) < (uint64_t{1} << bits));
-                }
-                break;
             case Opcode::floatingConstant:
                 valid = validFloatingLiteral(kind, instruction.text);
-                break;
-            case Opcode::booleanConstant:
-                valid = kind == typing::TypeKind::boolean &&
-                        (instruction.integerValue == 0 || instruction.integerValue == 1);
-                break;
-            case Opcode::byteConstant:
-                valid = kind == typing::TypeKind::uint8 &&
-                        instruction.integerValue >= 0 && instruction.integerValue <= 255;
                 break;
             case Opcode::stringConstant: valid = kind == typing::TypeKind::string; break;
             default: break;
@@ -598,6 +584,18 @@ void FunctionVerifier::verifyBinaryOperator(const InstructionSite& site) {
                     location,
                     "operator operand/result categories or types do not match");
         }
+        if (instruction.opcode == Opcode::compare && categoriesAreValues && operandTypesMatch) {
+            const auto* operand = types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
+            const auto* result = types.contains(instruction.result->type)
+                    ? types.at(instruction.result->type) : nullptr;
+            const bool comparable = operand != nullptr &&
+                    (typing::isInteger(operand->kind) || typing::isFloating(operand->kind) ||
+                     operand->kind == typing::TypeKind::boolean || operand->kind == typing::TypeKind::string);
+            if (!comparable || result == nullptr || result->kind != typing::TypeKind::boolean) {
+                report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                       "compare takes scalar or String operands and yields a Bool");
+            }
+        }
     }
 }
 
@@ -670,33 +668,25 @@ void FunctionVerifier::verifySwitchPattern(const InstructionSite& site) {
     }
 }
 
-void FunctionVerifier::verifyReturnValue(const InstructionSite& site) {
+// One operand of the function's result type in a value-returning function, none otherwise.
+void FunctionVerifier::verifyReturn(const InstructionSite& site) {
     const auto& block = site.block;
+    const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    if (site.shapeMatches && operands[0] != nullptr &&
-        (!function.returnsValue ||
-         operands[0]->category != ValueCategory::value ||
-         operands[0]->type != function.resultType)) {
-        report(
-                VerificationErrorId::typeMismatch,
-                functionId,
-                block.id,
-                location,
-                "return value does not match function result type");
-    }
-}
-
-void FunctionVerifier::verifyReturnVoid(const InstructionSite& site) {
-    const auto& block = site.block;
-    const auto location = site.location;
-    if (function.returnsValue) {
-        report(
-                VerificationErrorId::typeMismatch,
-                functionId,
-                block.id,
-                location,
-                "value-returning function cannot return void");
+    if (operands.size() > 1 || !instruction.targets.empty()) {
+        report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
+               "ret takes one operand in a value-returning function and none otherwise");
+    } else if (operands.empty()) {
+        if (function.returnsValue) {
+            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                   "value-returning function cannot return void");
+        }
+    } else if (operands[0] != nullptr &&
+               (!function.returnsValue || operands[0]->category != ValueCategory::value ||
+                operands[0]->type != function.resultType)) {
+        report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+               "return value does not match function result type");
     }
 }
 

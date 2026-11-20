@@ -184,6 +184,9 @@ private:
     void indexEdges();
     // The instruction that defines `value`, or null for a parameter or an unknown value.
     [[nodiscard]] const Instruction* definingInstruction(ValueId value) const;
+    // Whether `instruction` is a `literal` of an integer type: the constant counts and offsets the literal
+    // storage protocols prove things from.
+    [[nodiscard]] bool isIntegerLiteral(const Instruction* instruction) const;
     void verifyElementAddresses();
     void verifyEntryBlock();
     void verifyNoEntryValues();
@@ -208,7 +211,7 @@ private:
 
     // instructions.cpp
     void verifyInstruction(const BasicBlock& block, size_t index, bool& foundTerminator);
-    void verifyUnitConstant(const InstructionSite& site);
+    void verifyLiteral(const InstructionSite& site);
     void verifyScalarConstant(const InstructionSite& site);
     void verifyConstantValue(const InstructionSite& site);
     void verifyStackAllocate(const InstructionSite& site);
@@ -225,8 +228,7 @@ private:
     void verifyBinaryOperator(const InstructionSite& site);
     void verifyConditionalBranch(const InstructionSite& site);
     void verifySwitchPattern(const InstructionSite& site);
-    void verifyReturnValue(const InstructionSite& site);
-    void verifyReturnVoid(const InstructionSite& site);
+    void verifyReturn(const InstructionSite& site);
 
     // aggregates.cpp
     void verifyConstructStruct(const InstructionSite& site);
@@ -248,6 +250,7 @@ private:
     void verifyCollectionCapability(const InstructionSite& site);
     void verifyIntegerAddress(const InstructionSite& site);
     void verifyPointerToInteger(const InstructionSite& site);
+    void verifyTrapIf(const InstructionSite& site);
 
     ModuleVerifier& context;
     const Module& module;

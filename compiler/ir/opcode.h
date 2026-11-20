@@ -11,13 +11,12 @@
 namespace joyeer::ir {
 
 enum class Opcode {
-    integerConstant,
-    booleanConstant,
-    stringConstant,
-    byteConstant,
-    unitConstant,
+    // An integer, byte, Boolean or unit value from `integerValue`, read in the result type (decision 0028). Wire
+    // slots 1, 3 and 4 belonged to the merged Boolean, byte and unit constants.
+    literal = 0,
+    stringConstant = 2,
 
-    stackAllocate,
+    stackAllocate = 5,
     zeroInitialize,
     load,
     store,
@@ -30,21 +29,18 @@ enum class Opcode {
     multiply,
     divide,
     remainder,
-    less,
-    lessEqual,
-    greater,
-    greaterEqual,
-    equal,
-    notEqual,
+    // A comparison by the `ComparePredicate` modifier. Wire slots 18-22 belonged to the merged predicates.
+    compare,
     // Wire slot 23 belonged to `logicalAnd`, which lowering never emitted: `&&` and `||` lower to branches.
     bitAnd = 24,
     bitOr,
     bitXor,
     shiftLeft,
     shiftRight,
-    convertChecked,
-    convertWrapping,
-    constantValue,
+    // An integer conversion by the `ConversionMode` modifier: checked (traps out of range) or wrapping. Wire slot
+    // 30 belonged to the merged wrapping conversion.
+    convert,
+    constantValue = 31,
     integerFits,
 
     call,
@@ -66,9 +62,10 @@ enum class Opcode {
     branch = 51,
     conditionalBranch,
     switchPattern,
-    returnValue,
-    returnVoid,
-    unreachable,
+    // A return: one operand in a value-returning function, none otherwise. Wire slot 55 belonged to the merged
+    // `ret_void`.
+    ret,
+    unreachable = 56,
     floatingConstant,
     // Function values (decision 0020). `functionAddress` yields `callee` as a value of its function type;
     // `callIndirect` calls operand 0, a function value, with the remaining operands passed by the
@@ -86,13 +83,13 @@ enum class Opcode {
     // Collection capabilities (decision 0025), all runtime-only and all for the type `integerValue`
     // names. `destroyRange` destroys the `count` live elements at an address (operands: address, count);
     // `cloneAt` copies the value at the second operand into the uninitialized slot at the first;
-    // `cloneCallback` and `destroyCallback` yield the address of the type's clone or destroy helper as an
-    // `Int`, or 0 when it has none; `linearRangeGuard` traps when its `count` operand is not zero.
+    // `typeHelper` yields the address of the type's clone or destroy helper (the `TypeHelperKind` modifier) as an
+    // `Int`, or 0 when it has none. Wire slot 67 belonged to the merged destroy callback.
     destroyRange,
     cloneAt,
-    cloneCallback,
-    destroyCallback,
-    linearRangeGuard,
+    typeHelper,
+    // Runtime-only: traps with the message in `text` when its Bool operand is true.
+    trapIf = 68,
     // The address of element `index` of a run of slots of the type `integerValue` names, starting at `base`
     // (operands: base, index; an `Int` result): `base + index * size`, with no overflow or bounds check. Library
     // code checks the bounds first and keeps size computations for allocation checked (decision 0026).
@@ -101,6 +98,28 @@ enum class Opcode {
     // constant count; an `Int` address result, 0 for no storage). Allocated once per invocation and never
     // destroyed; runtime-only (decision 0026).
     stackBlock,
+};
+
+// The `compare` predicates. Floating-point `notEqual` is unordered (true for NaN); the others are ordered.
+enum class ComparePredicate : uint8_t {
+    less,
+    lessEqual,
+    greater,
+    greaterEqual,
+    equal,
+    notEqual,
+};
+
+// The `convert` modes.
+enum class ConversionMode : uint8_t {
+    checked,
+    wrapping,
+};
+
+// The helpers `typeHelper` yields.
+enum class TypeHelperKind : uint8_t {
+    clone,
+    destroy,
 };
 
 // When an instruction defines a result.
@@ -129,6 +148,16 @@ enum class OpcodeImmediate : uint8_t {
     constantIndex,
     // `integerValue` indexes the payloads of the enum case `symbol`.
     payloadIndex,
+    // `text` is a trap message.
+    message,
+};
+
+// What `Instruction::modifier` holds for an opcode. It is 0 for an opcode without one.
+enum class OpcodeModifier : uint8_t {
+    none,
+    comparePredicate,
+    conversionMode,
+    typeHelperKind,
 };
 
 // `OpcodeDescriptor::operands` of an opcode whose operand count its own check decides.
@@ -147,6 +176,7 @@ struct OpcodeDescriptor {
     int targets;
     OpcodeResult result;
     OpcodeImmediate immediate;
+    OpcodeModifier modifier;
     // Whether the instruction ends its block.
     bool terminator;
     // Whether only runtime functions may use the opcode. The opcode's own check may admit verified literal
@@ -166,6 +196,10 @@ struct OpcodeDescriptor {
 [[nodiscard]] bool producesValue(Opcode opcode);
 // The opcode's spelling in IR dumps and diagnostics, or "unknown" for a removed or unknown slot.
 [[nodiscard]] const char* opcodeName(Opcode opcode);
+// The number of valid modifier values of `kind`; 0 for `none`.
+[[nodiscard]] unsigned modifierCount(OpcodeModifier kind);
+// The spelling of `modifier` in IR dumps, or null when it is not valid for `kind`.
+[[nodiscard]] const char* modifierName(OpcodeModifier kind, uint8_t modifier);
 
 } // namespace joyeer::ir
 

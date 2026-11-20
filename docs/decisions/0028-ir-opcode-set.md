@@ -1,7 +1,7 @@
 # 0028: A smaller, described IR opcode set
 
-- Status: accepted (2026-11-20, by the user). Stage 0 (remove `logicalAnd`, wire 26) is implemented; stages 1-4
-  are tracked in [plan 0013](../plan/0013-ir-opcode-set.md).
+- Status: accepted (2026-11-20, by the user). Stages 0 (wire 26), 1 and 2 (wire 27) are implemented; stages 3 and
+  4 are tracked in [plan 0013](../plan/0013-ir-opcode-set.md).
 - Spec: none. The IR is not part of the language; [IR](../impl/ir.md) changes with each stage.
 - Builds on [0025](0025-library-collection-capabilities.md), [0026](0026-library-array.md) and
   [0027](0027-library-dict.md), which moved Array and Dict out of the instruction set.
@@ -85,18 +85,30 @@ Option 2, in stages. Each stage that changes the wire format bumps `wire::versio
 
   | Today | Becomes |
   |---|---|
-  | `integerConstant`, `byteConstant`, `booleanConstant`, `unitConstant` | `constant` (literal immediate, typed by the result) |
+  | `integerConstant`, `byteConstant`, `booleanConstant`, `unitConstant` | `literal` (integer immediate, typed by the result) |
   | `less`, `lessEqual`, `greater`, `greaterEqual`, `equal`, `notEqual` | `compare` with a predicate |
   | `convertChecked`, `convertWrapping` | `convert` with a mode |
-  | `returnValue`, `returnVoid` | `return` with 0 or 1 operands |
+  | `returnValue`, `returnVoid` | `ret` with 0 or 1 operands |
   | `cloneCallback`, `destroyCallback` | `typeHelper` with a kind |
   | `linearRangeGuard` | `trapIf` with a message |
 
-  The predicate, mode and kind take a dedicated `Instruction` field, not `integerValue`. Details each merge must
-  keep:
+  The predicate, mode and kind take a dedicated `Instruction` field, not `integerValue`: one `modifier` byte whose
+  meaning the opcode's descriptor row names (`OpcodeModifier`), read through typed enums (`ComparePredicate`,
+  `ConversionMode`, `TypeHelperKind`). The verifier checks its range from the row, and it must be 0 for an
+  opcode without one. Details each merge must keep:
+  - The merged constant is spelled `literal`, not `constant`, because `constant #N` already spells a reference to a
+    module constant (`constantValue`). A `literal` of `Void` is the unit value and holds 0; the result type decides
+    Int, byte and Boolean ranges exactly as the three old opcodes did.
   - `compare` keeps today's floating-point semantics: `!=` is unordered (true for NaN) and the other predicates
     are ordered.
-  - `trapIf` stays runtime-only, as `linearRangeGuard` is today. Its message becomes IR and wire data.
+  - The return is spelled `ret` (`return` is a C++ keyword). Its own check takes one operand in a value-returning
+    function and none otherwise.
+  - `trapIf` stays runtime-only, as `linearRangeGuard` is today. It traps when its Bool operand is true; its
+    message is IR and wire data in `text` and must not be empty. Lowering emits the old guard as
+    `compare ne count, 0` followed by `trapIf`, which is the comparison the backend emitted itself before.
+  - Each merged opcode keeps the wire slot of the first opcode it replaces; the others become removed slots until
+    stage 4 renumbers. Proofs that looked for an `integerConstant` count (literal storage, `stackBlock`) look for a
+    `literal` of an integer type.
 
   `stackBlock` is not merged. It yields 0 for `Void` or a zero count, allows an empty literal of a `Never`
   element, and is allowed outside runtime functions as proven literal storage, which anchors the protocol in

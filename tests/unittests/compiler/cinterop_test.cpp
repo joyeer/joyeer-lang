@@ -1957,7 +1957,7 @@ TEST_F(CInteropTest, VerifierChecksEachPointerConversionRule) {
         parameter.value = {0, 0, ValueCategory::value};
         parameter.isConsuming = true;
         entry.parameters.push_back(parameter);
-        entry.blocks = {{0, "entry", {{Opcode::returnVoid}}}};
+        entry.blocks = {{0, "entry", {{Opcode::ret}}}};
         joyeer::ir::Function caller;
         caller.id = 1;
         caller.name = "caller";
@@ -1970,7 +1970,7 @@ TEST_F(CInteropTest, VerifierChecksEachPointerConversionRule) {
         joyeer::ir::Instruction conversion {Opcode::pointerToInteger};
         conversion.result = joyeer::ir::Value {1, 0, ValueCategory::value};
         conversion.operands = {0};
-        caller.blocks = {{0, "entry", {address, conversion, {Opcode::returnVoid}}}};
+        caller.blocks = {{0, "entry", {address, conversion, {Opcode::ret}}}};
         value.functions = {entry, caller};
         mutate(value);
         return value;
@@ -2067,7 +2067,7 @@ TEST_F(CInteropTest, VerifierChecksTheCallbackContractAfterAddressErasure) {
         parameter.value = {0, 2, ValueCategory::value};
         parameter.isConsuming = true;
         entry.parameters.push_back(parameter);
-        entry.blocks = {{0, "entry", {{Opcode::returnVoid}}}};
+        entry.blocks = {{0, "entry", {{Opcode::ret}}}};
         if (native) entry.nativeBinding = joyeer::NativeBinding {joyeer::NativeBindingKind::cExport, "native_entry"};
         joyeer::ir::Function caller;
         caller.id = 1;
@@ -2081,7 +2081,7 @@ TEST_F(CInteropTest, VerifierChecksTheCallbackContractAfterAddressErasure) {
         joyeer::ir::Instruction conversion {Opcode::pointerToInteger};
         conversion.result = joyeer::ir::Value {1, 0, ValueCategory::value};
         conversion.operands = {0};
-        caller.blocks = {{0, "entry", {address, conversion, {Opcode::returnVoid}}}};
+        caller.blocks = {{0, "entry", {address, conversion, {Opcode::ret}}}};
         value.functions = {entry, caller};
         const auto rejectsCallback = [](const auto& module) {
             const auto verification = joyeer::ir::Verifier().verify(module);
@@ -2102,11 +2102,11 @@ TEST_F(CInteropTest, VerifierChecksTheCallbackContractAfterAddressErasure) {
         body[0].result->id = 1;
         body[1].operands = {1};
         body[1].result->id = 2;
-        joyeer::ir::Instruction unit {Opcode::unitConstant};
+        joyeer::ir::Instruction unit {Opcode::literal};
         unit.result = joyeer::ir::Value {0, 1, ValueCategory::value};
         body.insert(body.begin(), unit);
         duplicateBlocks.functions[1].blocks.insert(
-                duplicateBlocks.functions[1].blocks.begin(), {0, "duplicate", {{Opcode::returnVoid}}});
+                duplicateBlocks.functions[1].blocks.begin(), {0, "duplicate", {{Opcode::ret}}});
         EXPECT_TRUE(rejectsCallback(duplicateBlocks));
         joyeer::llvmbackend::wire::Writer duplicates;
         duplicates(duplicateBlocks);

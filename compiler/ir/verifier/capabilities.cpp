@@ -38,16 +38,14 @@ void FunctionVerifier::verifyLayoutQuery(const InstructionSite& site) {
     }
 }
 
-// `destroyRange`, `cloneAt`, `linearRangeGuard`, `slotAddress`, `stackBlock`, `cloneCallback` and
-// `destroyCallback`: Int operands, a concrete (and for clones, copyable) type, and authorization
-// unless the instruction is admitted literal storage.
+// `destroyRange`, `cloneAt`, `slotAddress`, `stackBlock` and `typeHelper`: Int operands, a concrete (and for
+// clones, copyable) type, and authorization unless the instruction is admitted literal storage.
 void FunctionVerifier::verifyCollectionCapability(const InstructionSite& site) {
     const auto& block = site.block;
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
     const bool yieldsInt = producesValue(instruction.opcode);
-    const bool guard = instruction.opcode == Opcode::linearRangeGuard;
     const bool stackBlockOp = instruction.opcode == Opcode::stackBlock;
     if (site.shapeMatches) {
         for (const auto* operand : operands) {
@@ -80,18 +78,16 @@ void FunctionVerifier::verifyCollectionCapability(const InstructionSite& site) {
         const auto* defining = definingBlock != blocks.end() &&
                 definition->second.second < definingBlock->second->instructions.size()
                 ? &definingBlock->second->instructions[definition->second.second] : nullptr;
-        if (defining == nullptr || defining->opcode != Opcode::integerConstant ||
-            defining->integerValue < 0) {
+        if (!isIntegerLiteral(defining) || defining->integerValue < 0) {
             report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
                    "stack_block takes a non-negative constant count");
         }
     }
-    if (!guard) {
+    {
         const auto queried = static_cast<TypeId>(instruction.integerValue);
         const auto* count = stackBlockOp && instruction.operands.size() == 1
                 ? definingInstruction(instruction.operands[0]) : nullptr;
-        const bool emptyNeverLiteral = count != nullptr &&
-                count->opcode == Opcode::integerConstant && count->integerValue == 0 &&
+        const bool emptyNeverLiteral = isIntegerLiteral(count) && count->integerValue == 0 &&
                 instruction.result.has_value() &&
                 literalBlocks.contains(instruction.result->id);
         if (!types.contains(queried) || nonConcreteTypes.contains(queried) ||
@@ -100,7 +96,8 @@ void FunctionVerifier::verifyCollectionCapability(const InstructionSite& site) {
                    std::string(opcodeName(instruction.opcode)) +
                            " needs a concrete type with values");
         } else if ((instruction.opcode == Opcode::cloneAt ||
-                    instruction.opcode == Opcode::cloneCallback) &&
+                    (instruction.opcode == Opcode::typeHelper &&
+                     typeHelperKind(instruction) == TypeHelperKind::clone)) &&
                    noncopyableTypes.contains(queried)) {
             report(VerificationErrorId::typeMismatch, functionId, block.id, location,
                    std::string(opcodeName(instruction.opcode)) +
@@ -229,6 +226,36 @@ void FunctionVerifier::verifyPointerToInteger(const InstructionSite& site) {
                    "function with one consuming Int parameter and a Void result");
         }
     }
+}
+
+// A runtime trap: one Bool value, the condition, and a message.
+void FunctionVerifier::verifyTrapIf(const InstructionSite& site) {
+    const auto& instruction = site.instruction;
+    const auto& operands = site.operands;
+    // A wrong shape or an unknown operand is already reported.
+    if (site.shapeMatches && operands[0] != nullptr) {
+        const auto* condition = types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
+        if (condition == nullptr || condition->kind != typing::TypeKind::boolean ||
+            operands[0]->category != ValueCategory::value || instruction.text.empty()) {
+            report(VerificationErrorId::typeMismatch, functionId, site.block.id, site.location,
+                   "trap_if takes a Bool value and a message");
+        }
+    }
+    // The backend passes the message to the runtime as a C string.
+    if (instruction.text.find('\0') != std::string::npos) {
+        report(VerificationErrorId::invalidInstruction, functionId, site.block.id, site.location,
+               "trap_if message must not contain a NUL byte");
+    }
+    if (site.unauthorized) {
+        report(VerificationErrorId::callMismatch, functionId, site.block.id, site.location,
+               "a trap requires runtime authorization");
+    }
+}
+
+bool FunctionVerifier::isIntegerLiteral(const Instruction* instruction) const {
+    return instruction != nullptr && instruction->opcode == Opcode::literal && instruction->result.has_value() &&
+            types.contains(instruction->result->type) &&
+            typing::isInteger(types.at(instruction->result->type)->kind);
 }
 
 } // namespace joyeer::ir::verifier

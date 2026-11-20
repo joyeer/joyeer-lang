@@ -1442,6 +1442,34 @@ true
 "
             0 1 2 3)
     add_joyeer_native_regression(
+            E2EFloatingComparisons floating_comparisons
+            "false
+true
+false
+false
+false
+false
+false
+true
+false
+false
+false
+false
+false
+true
+true
+true
+false
+false
+true
+false
+false
+true
+false
+true
+"
+            0 1 2 3)
+    add_joyeer_native_regression(
             E2EIntegerConversions integer_conversions
             "300
 200

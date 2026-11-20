@@ -59,10 +59,20 @@ row's immediate kind names which one.
 
 ### Stage 2: merge families
 
-- [ ] `constant`, `compare` (Float `!=` unordered), `convert`, `return`, `typeHelper`, `trapIf` (runtime-only,
-  message in IR and wire), each with a dedicated `Instruction` field rather than `integerValue`; wire bump.
-- [ ] Dump-text tests regenerated with the project's tooling and the diffs inspected.
-- [ ] `ir-backend-reviewer` pass; `scripts/validate.py` in Debug and Release.
+- [x] `literal`, `compare` (Float `!=` unordered), `convert`, `ret`, `typeHelper`, `trapIf` (runtime-only,
+  message in IR and wire), with the predicate, mode and kind in `Instruction::modifier` rather than `integerValue`;
+  wire 27. Evidence: `OpcodeDescriptorTest.*` (rows, modifiers, literal ranges, `ret`, `trap_if`, wire round trip).
+- [x] Dump-text and opcode-count tests translated to the new spellings, and the diffs inspected. Evidence: the
+  lowering, collection-role and dict-role suites pass; counts that now include Bool and unit literals count integer
+  literals (`integerLiteralCount`), and comparisons count by predicate (`compareCount`).
+- [x] `compare` requires a Bool result and scalar or String operands (found by the stage 2 review). Evidence:
+  `CompareTakesScalarOrStringOperandsAndYieldsABool`; no lowered program in CTest is rejected.
+- [x] Float predicates pinned. Evidence: `LLVMCompareTest.FloatingPredicatesAreOrderedExceptNotEqual` and
+  `E2EFloatingComparisonsO0`-`O3`.
+- [x] `ir-backend-reviewer` pass. Evidence: no critical or high findings; its medium and low findings are addressed in
+  the same change, except a noncopyable `type_helper clone` test, which already fails through the shared clone check.
+- [x] Debug CTest. Evidence: 2033 tests at `-j6`; only Fern.Workspace timed out, and it passed alone.
+- [ ] Release CTest and `scripts/validate.py`. Not run.
 
 ### Stage 3: String operations leave the scalar opcodes
 
@@ -89,6 +99,9 @@ New opcodes, and any change to what programs observe outside stage 3's measured 
 
 ## Progress log
 
+- 2026-11-20: Stage 2 implemented (wire 27): merged families, `Instruction::modifier`, `trap_if`, stricter `compare`;
+  all items checked except Release CTest and `scripts/validate.py`. Stage 4 moves before stage 3: with dense
+  numbering, stage 3 removes opcodes by deleting rows, and stage 3 starts with a design choice for the user.
 - 2026-11-20: Stage 1 implemented (descriptor table, verifier, dumper, tests, docs); all items checked except
   Release CTest and `scripts/validate.py`.
 - 2026-11-20: Plan created after 0028 was accepted; stage 0 item checked from #33.

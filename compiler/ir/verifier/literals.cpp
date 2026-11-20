@@ -75,7 +75,7 @@ std::string FunctionVerifier::dictionaryLiteralFailure(const BasicBlock& block, 
         return "rule 1: the literal method must receive a receiver, the block and its count";
     }
     const auto* count = definingInstruction(storage.operands[0]);
-    if (count == nullptr || count->opcode != Opcode::integerConstant || count->integerValue < 0) {
+    if (!isIntegerLiteral(count) || count->integerValue < 0) {
         return "rule 5: the entry count must be a non-negative constant";
     }
     const auto& keyField = entry->second->fields[0];
@@ -158,7 +158,7 @@ std::string FunctionVerifier::dictionaryLiteralFailure(const BasicBlock& block, 
         // Rule 3: a bounded constant slot of the block, with exactly one entry place.
         const auto& slot = *use.instruction;
         const auto* offset = slot.operands.size() == 2 ? definingInstruction(slot.operands[1]) : nullptr;
-        const bool inRange = offset != nullptr && offset->opcode == Opcode::integerConstant &&
+        const bool inRange = isIntegerLiteral(offset) &&
                 offset->integerValue >= 0 && offset->integerValue < count->integerValue;
         if (!slot.result.has_value() || slot.integerValue != storage.integerValue || use.block != block.id ||
             use.index <= index || !inRange || literalUses[slot.result->id].size() != 1) {
@@ -244,7 +244,12 @@ std::string FunctionVerifier::dictionaryLiteralFailure(const BasicBlock& block, 
     }
     for (size_t packed = index + 1; packed < transfer.index; ++packed) {
         switch (block.instructions[packed].opcode) {
-            case Opcode::integerConstant:
+            case Opcode::literal:
+                if (!isIntegerLiteral(&block.instructions[packed])) {
+                    return "rule 6: the packing window holds only constants, slots, entry places, field "
+                           "addresses and stores";
+                }
+                break;
             case Opcode::slotAddress:
             case Opcode::integerAddress:
             case Opcode::fieldAddress:
@@ -282,8 +287,7 @@ void FunctionVerifier::verifyLiteralStorage() {
             }
             const auto* count = definingInstruction(storage.operands[0]);
             const auto element = static_cast<TypeId>(storage.integerValue);
-            bool valid = count != nullptr && count->opcode == Opcode::integerConstant &&
-                    count->integerValue >= 0 && types.contains(element);
+            bool valid = isIntegerLiteral(count) && count->integerValue >= 0 && types.contains(element);
             const LiteralUse* transfer = nullptr;
             std::vector<LiteralUse> slots;
             size_t transfers = 0;
@@ -340,7 +344,9 @@ void FunctionVerifier::verifyLiteralStorage() {
                 valid = valid && zeroed;
                 for (size_t packed = index + 1; packed < transfer->index; ++packed) {
                     switch (block.instructions[packed].opcode) {
-                        case Opcode::integerConstant:
+                        case Opcode::literal:
+                            valid = valid && isIntegerLiteral(&block.instructions[packed]);
+                            break;
                         case Opcode::slotAddress:
                         case Opcode::integerAddress:
                         case Opcode::store:
@@ -357,7 +363,7 @@ void FunctionVerifier::verifyLiteralStorage() {
             for (const auto& use : slots) {
                 const auto& slot = *use.instruction;
                 const auto* offset = slot.operands.size() == 2 ? definingInstruction(slot.operands[1]) : nullptr;
-                const bool inRange = offset != nullptr && offset->opcode == Opcode::integerConstant &&
+                const bool inRange = isIntegerLiteral(offset) &&
                         count != nullptr && offset->integerValue >= 0 && offset->integerValue < count->integerValue;
                 valid = valid && slot.result.has_value() && slot.integerValue == storage.integerValue &&
                         use.block == block.id && use.index > index && inRange;

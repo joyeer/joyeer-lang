@@ -174,10 +174,10 @@ copy restrictions are enforced by type checking.
 
 The current instruction set covers:
 
-- scalar, string, and `unit` constants;
+- `literal` (integer, byte, Boolean and unit values), floating and String constants;
 - stack allocation, zero initialization, load, and store;
 - explicit `copy`, `take`, and `destroy` ownership operations;
-- implemented arithmetic, comparison, and logical operations;
+- implemented arithmetic, `compare` (scalar or String operands, a Bool result) and bitwise operations;
 - checked `div` / `rem` with exactly two `Int` value operands and an `Int`
   value result;
 - direct source and external calls, including the external builtins (`print`, byte conversions) and native bindings;
@@ -198,10 +198,10 @@ The current instruction set covers:
   the existing IR destruction analysis;
 - collection capabilities ([decision 0025](../decisions/0025-library-collection-capabilities.md)), runtime-only:
   `destroy_range` (address, count) destroys live elements of the type in `integerValue`, `clone_at` copies one
-  value into an uninitialized slot, `clone_callback` and `destroy_callback` yield the type's helper address as an
-  `Int`, and `linear_range_guard` traps `linear container dropped while not empty` when its count is not zero
-  (lowering uses it instead of `destroy_range` for a linear type, and an integer constant `0` instead of a
-  callback that does not apply). A function marked `elementAddressor` is the `array_element` method of a library
+  value into an uninitialized slot, and `type_helper clone` and `type_helper destroy` yield the type's helper
+  address as an `Int`. For a linear type, lowering emits `compare ne count, 0` and a runtime-only `trap_if` with the
+  message `linear container dropped while not empty` instead of `destroy_range`, and an integer `literal 0` instead
+  of a helper that does not apply. A function marked `elementAddressor` is the `array_element` method of a library
   array instance; `a[i]` on such an array lowers to a call of it followed by `integer_address`, the one place
   user code may form an integer address. The verifier requires the `integer_address` of such an element to be used only to load,
   store, take, destroy, project or pass as an argument, and only where its definition dominates. The backend emits
@@ -211,7 +211,7 @@ The current instruction set covers:
   runtime-only. A library addressor uses it after its own bounds check;
 - `stack_block` (operand: a constant count, the element type in `integerValue`, an `Int` address result): contiguous stack
   storage for that many slots, allocated in the prologue (once per invocation) and never destroyed; 0 for a zero count or
-  a unit type. The verifier requires the operand to be an `integer` constant. Source intrinsics are runtime-only;
+  a unit type. The verifier requires the operand to be an integer `literal`. Source intrinsics are runtime-only;
   compiler-generated literal storage in user functions follows the closed protocol below;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
@@ -260,20 +260,25 @@ Proven literal blocks use the same protocol in runtime and ordinary functions; o
 retain their existing capability rules. Wire decoding checks full-width enum and unsigned values before narrowing.
 The removed array kind's slot 10 and executable opcode slots 35-38 stay reserved and are rejected, as does slot 23
 (wire 26), which held a `logicalAnd` that lowering never emitted ([0028](../decisions/0028-ir-opcode-set.md)).
+Wire 27 merged opcode families (0028, stage 2): `literal` (slot 0) replaces the integer, Boolean, byte and unit
+constants (slots 1, 3 and 4 are removed), `compare` (17) the six comparisons (18-22), `convert` (29) the checked and
+wrapping conversions (30), `ret` (54) both returns (55), and `type_helper` (66) the clone and destroy callbacks (67);
+`trap_if` (68) replaces the linear range guard. The predicate, mode or helper kind is the instruction's `modifier`,
+whose range the verifier checks from the opcode's row; it is 0 for every other opcode.
 
 A call whose checked argument has type `Never` cannot commit and does not demand a generic callee instance.
 Source argument and constraint checks still run. Lowering uses its substituted typed parameter/effect
 descriptions to evaluate earlier operands and retain their cleanup, then stops at divergence without a phantom call.
 
-The `unit` instruction produces a value of the builtin `Void` type with no
+A `literal` of the builtin `Void` type holding 0 is the unit value, with no
 operands or resource ownership. Unit patterns lower to typed wildcard
 patterns after the frontend checks their exact type. Unit values remain
 explicit in enum operands and initialization/consumption analysis, even
 though they carry no data bytes.
 
 Calls returning `Void` retain the no-result IR call convention and are
-followed by a unit constant for source value contexts. Explicit `return ()`
-and `return aVoidReturningCall()` lower to `ret_void` after evaluating the
+followed by a unit literal for source value contexts. Explicit `return ()`
+and `return aVoidReturningCall()` lower to a `ret` with no operand after evaluating the
 expression and cleaning active scopes. An early return inside the expression
 does not create a second return or a false fallthrough value.
 
@@ -426,9 +431,8 @@ parses and verifies that text in the LLVM backend.
 
 General operand dominance is currently missing: hand-built IR can use an
 address before its definition or outside its dominating block and still pass
-both Joyeer verification and text emission. An `Int` condition for `cond_br`,
-or an `Int`-typed comparison result, can likewise pass until LLVM rejects the
-text. Existing definition locations and `DominanceAnalysis` must be applied to
+both Joyeer verification and text emission. An `Int` condition for `cond_br`
+can likewise pass until LLVM rejects the text. Existing definition locations and `DominanceAnalysis` must be applied to
 ordinary operands, and opcode contracts must check concrete `TypeKind` values.
 
 `DominanceAnalysis` answers the verifier's dominance checks. The entry block

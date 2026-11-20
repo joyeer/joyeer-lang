@@ -129,11 +129,12 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
     const auto resultType = [&]() { return llvmType(instruction.result->type); };
     using Opcode = ir::Opcode;
     switch (instruction.opcode) {
-        case Opcode::unitConstant: result = llvm::Constant::getNullValue(resultType()); break;
-        case Opcode::integerConstant:
-        case Opcode::byteConstant:
-        case Opcode::booleanConstant:
-            result = llvm::ConstantInt::get(resultType(), static_cast<uint64_t>(instruction.integerValue)); break;
+        case Opcode::literal:
+            // A `Void` literal is the unit value; the others are integers of the result's width.
+            result = type(instruction.result->type).kind == typing::TypeKind::voidType
+                    ? llvm::Constant::getNullValue(resultType())
+                    : llvm::ConstantInt::get(resultType(), static_cast<uint64_t>(instruction.integerValue));
+            break;
         case Opcode::floatingConstant:
             result = llvm::ConstantFP::get(resultType(), instruction.text); break;
         case Opcode::stringConstant: result = stringLiteral(instruction.text); break;
@@ -175,13 +176,8 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
         case Opcode::multiply:
         case Opcode::divide:
         case Opcode::remainder: result = arithmetic(instruction); break;
-        case Opcode::less:
-        case Opcode::lessEqual:
-        case Opcode::greater:
-        case Opcode::greaterEqual:
-        case Opcode::equal:
-        case Opcode::notEqual:
-            result = comparison(instruction.opcode, argument(0), argument(1),
+        case Opcode::compare:
+            result = comparison(ir::comparePredicate(instruction), argument(0), argument(1),
                     type(values.at(instruction.operands[0]).type).kind);
             break;
         case Opcode::bitAnd: result = builder.CreateAnd(argument(0), argument(1)); break;
@@ -189,8 +185,7 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
         case Opcode::bitXor: result = builder.CreateXor(argument(0), argument(1)); break;
         case Opcode::shiftLeft:
         case Opcode::shiftRight: result = shift(instruction); break;
-        case Opcode::convertChecked:
-        case Opcode::convertWrapping: result = convert(instruction); break;
+        case Opcode::convert: result = convert(instruction); break;
         case Opcode::integerFits: {
             llvm::Value* converted = nullptr;
             auto* outOfRange = conversionOutOfRange(argument(0),
@@ -288,17 +283,13 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
             copy(id, builder.CreateIntToPtr(argument(0), pointer()), builder.CreateIntToPtr(argument(1), pointer()));
             break;
         }
-        case Opcode::cloneCallback:
-        case Opcode::destroyCallback: {
+        case Opcode::typeHelper: {
             const auto id = static_cast<ir::TypeId>(instruction.integerValue);
-            result = builder.CreatePtrToInt(helper(id, instruction.opcode == Opcode::cloneCallback),
+            result = builder.CreatePtrToInt(helper(id, ir::typeHelperKind(instruction) == ir::TypeHelperKind::clone),
                                             builder.getInt64Ty());
             break;
         }
-        case Opcode::linearRangeGuard:
-            trap(builder.CreateICmpNE(argument(0), builder.getInt64(0), temporary()),
-                 "linear container dropped while not empty");
-            break;
+        case Opcode::trapIf: trap(argument(0), instruction.text); break;
         case Opcode::pointerToInteger:
             result = builder.CreatePtrToInt(argument(0), builder.getInt64Ty());
             break;
@@ -376,8 +367,10 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
             builder.CreateUnreachable();
             break;
         }
-        case Opcode::returnValue: builder.CreateRet(argument(0)); break;
-        case Opcode::returnVoid: builder.CreateRetVoid(); break;
+        case Opcode::ret:
+            if (instruction.operands.empty()) builder.CreateRetVoid();
+            else builder.CreateRet(argument(0));
+            break;
         case Opcode::unreachable: builder.CreateUnreachable(); break;
         default:
             if (!emitCollection(instruction, result)) return false;
@@ -501,7 +494,7 @@ llvm::Value* Builder::convert(const ir::Instruction& instruction) {
     llvm::Value* converted = nullptr;
     auto* outOfRange = conversionOutOfRange(value,
             type(values.at(instruction.operands[0]).type).kind, instruction.result->type, converted);
-    if (instruction.opcode == ir::Opcode::convertWrapping) return converted;
+    if (ir::conversionMode(instruction) == ir::ConversionMode::wrapping) return converted;
     trap(outOfRange, "integer conversion out of range");
     return converted;
 }
@@ -521,18 +514,19 @@ llvm::Value* Builder::shift(const ir::Instruction& instruction) {
                                          : builder.CreateLShr(value, amount);
 }
 
-llvm::Value* Builder::comparison(ir::Opcode opcode, llvm::Value* left, llvm::Value* right,
+llvm::Value* Builder::comparison(ir::ComparePredicate compared, llvm::Value* left, llvm::Value* right,
         typing::TypeKind kind) {
-    using Opcode = ir::Opcode;
+    using Predicate = ir::ComparePredicate;
     if (left->getType()->isFloatingPointTy()) {
+        // Ordered, except `!=`, which is true for NaN (decision 0028).
         llvm::CmpInst::Predicate predicate = llvm::CmpInst::FCMP_OEQ;
-        switch (opcode) {
-            case Opcode::less: predicate = llvm::CmpInst::FCMP_OLT; break;
-            case Opcode::lessEqual: predicate = llvm::CmpInst::FCMP_OLE; break;
-            case Opcode::greater: predicate = llvm::CmpInst::FCMP_OGT; break;
-            case Opcode::greaterEqual: predicate = llvm::CmpInst::FCMP_OGE; break;
-            case Opcode::notEqual: predicate = llvm::CmpInst::FCMP_UNE; break;
-            default: break;
+        switch (compared) {
+            case Predicate::less: predicate = llvm::CmpInst::FCMP_OLT; break;
+            case Predicate::lessEqual: predicate = llvm::CmpInst::FCMP_OLE; break;
+            case Predicate::greater: predicate = llvm::CmpInst::FCMP_OGT; break;
+            case Predicate::greaterEqual: predicate = llvm::CmpInst::FCMP_OGE; break;
+            case Predicate::equal: predicate = llvm::CmpInst::FCMP_OEQ; break;
+            case Predicate::notEqual: predicate = llvm::CmpInst::FCMP_UNE; break;
         }
         return builder.CreateFCmp(predicate, left, right);
     }
@@ -541,9 +535,9 @@ llvm::Value* Builder::comparison(ir::Opcode opcode, llvm::Value* left, llvm::Val
         std::vector<llvm::Value*> arguments {builder.CreateExtractValue(left, 0, temporary()),
                 builder.CreateExtractValue(left, 1, temporary()), builder.CreateExtractValue(right, 0, temporary()),
                 builder.CreateExtractValue(right, 1, temporary())};
-        if (opcode == Opcode::equal || opcode == Opcode::notEqual) {
+        if (compared == Predicate::equal || compared == Predicate::notEqual) {
             auto* equal = call("joyeer_string_equal_abi", builder.getInt1Ty(), arguments);
-            return opcode == Opcode::equal ? equal : builder.CreateNot(equal);
+            return compared == Predicate::equal ? equal : builder.CreateNot(equal);
         }
         left = call("joyeer_string_compare_abi", builder.getInt64Ty(), arguments);
         right = integer(0);
@@ -551,13 +545,13 @@ llvm::Value* Builder::comparison(ir::Opcode opcode, llvm::Value* left, llvm::Val
     }
     const bool signedValue = typing::isSignedInteger(kind);
     llvm::CmpInst::Predicate predicate = llvm::CmpInst::ICMP_EQ;
-    switch (opcode) {
-        case Opcode::less: predicate = signedValue ? llvm::CmpInst::ICMP_SLT : llvm::CmpInst::ICMP_ULT; break;
-        case Opcode::lessEqual: predicate = signedValue ? llvm::CmpInst::ICMP_SLE : llvm::CmpInst::ICMP_ULE; break;
-        case Opcode::greater: predicate = signedValue ? llvm::CmpInst::ICMP_SGT : llvm::CmpInst::ICMP_UGT; break;
-        case Opcode::greaterEqual: predicate = signedValue ? llvm::CmpInst::ICMP_SGE : llvm::CmpInst::ICMP_UGE; break;
-        case Opcode::notEqual: predicate = llvm::CmpInst::ICMP_NE; break;
-        default: break;
+    switch (compared) {
+        case Predicate::less: predicate = signedValue ? llvm::CmpInst::ICMP_SLT : llvm::CmpInst::ICMP_ULT; break;
+        case Predicate::lessEqual: predicate = signedValue ? llvm::CmpInst::ICMP_SLE : llvm::CmpInst::ICMP_ULE; break;
+        case Predicate::greater: predicate = signedValue ? llvm::CmpInst::ICMP_SGT : llvm::CmpInst::ICMP_UGT; break;
+        case Predicate::greaterEqual: predicate = signedValue ? llvm::CmpInst::ICMP_SGE : llvm::CmpInst::ICMP_UGE; break;
+        case Predicate::equal: predicate = llvm::CmpInst::ICMP_EQ; break;
+        case Predicate::notEqual: predicate = llvm::CmpInst::ICMP_NE; break;
     }
     return builder.CreateICmp(predicate, left, right);
 }
@@ -592,7 +586,7 @@ llvm::Value* Builder::extractPayload(ir::TypeId id, llvm::Value* value,
 llvm::Value* Builder::pattern(const ir::Pattern& tested, llvm::Value* value) {
     if (tested.kind == ir::PatternKind::wildcard) return integer(1, 1);
     if (tested.kind == ir::PatternKind::stringLiteral) {
-        return comparison(ir::Opcode::equal, value, stringLiteral(tested.text));
+        return comparison(ir::ComparePredicate::equal, value, stringLiteral(tested.text));
     }
     if (tested.kind == ir::PatternKind::floatingLiteral) {
         return builder.CreateFCmpOEQ(value, llvm::ConstantFP::get(value->getType(), tested.text));

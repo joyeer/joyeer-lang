@@ -49,7 +49,7 @@ Module validAddModule() {
                     SourceSpan { 10, 3 },
                 },
                 Instruction {
-                    Opcode::returnValue,
+                    Opcode::ret,
                     std::nullopt,
                     { 2 },
                     {},
@@ -136,7 +136,8 @@ TEST(IRModelTest, VerifiesAndDumpsAWellFormedFunctionDeterministically) {
 )IR");
 }
 
-TEST(IRModelTest, VerifiesUnitConstantShapeAndType) {
+// The unit value is a `literal` of `Void` holding 0 (decision 0028).
+TEST(IRModelTest, VerifiesUnitLiteralShapeAndType) {
     Module module;
     module.types = {
         TypeName { 0, "Void", joyeer::typing::TypeKind::voidType },
@@ -148,18 +149,18 @@ TEST(IRModelTest, VerifiesUnitConstantShapeAndType) {
     function.resultType = 0;
     function.entry = 0;
     function.blocks = { BasicBlock { 0, "entry", {
-        Instruction { Opcode::unitConstant, Value { 0, 0, ValueCategory::value } },
-        Instruction { Opcode::returnVoid },
+        Instruction { Opcode::literal, Value { 0, 0, ValueCategory::value } },
+        Instruction { Opcode::ret },
     } } };
     module.functions.push_back(std::move(function));
     EXPECT_TRUE(Verifier().verify(module).succeeded());
-    EXPECT_NE(dump(module).find("unit"), std::string::npos);
+    EXPECT_NE(dump(module).find("%0: Void = literal 0"), std::string::npos) << dump(module);
     EXPECT_FALSE(requiresDestruction(module, 0));
 
     auto& unit = module.functions[0].blocks[0].instructions[0];
-    unit.result->type = 1;
+    unit.integerValue = 1;
     EXPECT_TRUE(hasError(Verifier().verify(module), VerificationErrorId::typeMismatch));
-    unit.result->type = 0;
+    unit.integerValue = 0;
     unit.result->category = ValueCategory::address;
     EXPECT_TRUE(hasError(Verifier().verify(module), VerificationErrorId::typeMismatch));
     unit.result->category = ValueCategory::value;
@@ -367,7 +368,7 @@ TEST(IRModelTest, AcceptsStackSlotsLoadsAndStores) {
             {},
         },
         Instruction {
-            Opcode::integerConstant,
+            Opcode::literal,
             Value { 1, 1, ValueCategory::value },
             {},
             {},
@@ -399,7 +400,7 @@ TEST(IRModelTest, AcceptsStackSlotsLoadsAndStores) {
             {},
             {},
         },
-        Instruction { Opcode::returnVoid },
+        Instruction { Opcode::ret },
     };
 
     const auto verification = Verifier().verify(module);
@@ -419,7 +420,7 @@ TEST(IRModelTest, VerifiesAndDumpsZeroInitializedStorage) {
             Value { 0, 1, ValueCategory::address },
         },
         Instruction { Opcode::zeroInitialize, std::nullopt, { 0 } },
-        Instruction { Opcode::returnVoid },
+        Instruction { Opcode::ret },
     };
 
     const auto verification = Verifier().verify(module);
@@ -479,7 +480,7 @@ TEST(IRModelTest, RemovedDictionaryWireSlotsAreRejectedAndNeverReused) {
 // `logicalAnd` (23) was never emitted: `&&` and `||` lower to branches. Its slot is rejected and never reused
 // (wire 26).
 TEST(IRModelTest, RemovedLogicalAndWireSlotIsRejectedAndNeverReused) {
-    EXPECT_EQ(static_cast<unsigned>(Opcode::notEqual), 22u);
+    EXPECT_EQ(static_cast<unsigned>(Opcode::compare), 17u);
     EXPECT_EQ(static_cast<unsigned>(Opcode::bitAnd), 24u);
     auto module = validAddModule();
     module.functions[0].blocks[0].instructions[0].opcode = static_cast<Opcode>(23);
@@ -598,7 +599,7 @@ TEST(IRModelTest, StringByteAndCountAcceptOnlyAStringValue) {
     function.blocks[0].instructions = {
         Instruction { Opcode::count, Value { 2, 1, ValueCategory::value }, { 0 } },
         Instruction { Opcode::subscript, Value { 3, 4, ValueCategory::value }, { 0, 1 } },
-        Instruction { Opcode::returnValue, std::nullopt, { 3 } },
+        Instruction { Opcode::ret, std::nullopt, { 3 } },
     };
     const auto valid = Verifier().verify(module);
     ASSERT_TRUE(valid.succeeded()) << dump(valid);
@@ -658,7 +659,7 @@ TEST(IRModelTest, ReportsMissingTerminatorsAndInstructionsAfterTerminators) {
     auto module = validAddModule();
     auto& instructions = module.functions[0].blocks[0].instructions;
     instructions.push_back(Instruction {
-        Opcode::integerConstant,
+        Opcode::literal,
         Value { 3, 1, ValueCategory::value },
     });
 
@@ -689,7 +690,7 @@ TEST(IRModelTest, ReportsCallSignatureMismatches) {
                     FunctionId { 0 },
                 },
                 Instruction {
-                    Opcode::returnValue,
+                    Opcode::ret,
                     std::nullopt,
                     { 0 },
                 },
@@ -810,7 +811,7 @@ Function diamondChain(size_t count, bool reversed) {
         function.blocks.push_back(terminatorBlock(head + 1, Opcode::branch, {head + 3}));
         function.blocks.push_back(terminatorBlock(head + 2, Opcode::branch, {head + 3}));
     }
-    function.blocks.push_back(terminatorBlock(static_cast<BlockId>(count * 3), Opcode::returnVoid));
+    function.blocks.push_back(terminatorBlock(static_cast<BlockId>(count * 3), Opcode::ret));
     if (reversed) std::reverse(function.blocks.begin(), function.blocks.end());
     return function;
 }
@@ -825,7 +826,7 @@ TEST(IRModelTest, DominanceFollowsBranchesSwitchesAndBackEdges) {
         switchBlock(5, {6, 7}),
         terminatorBlock(6, Opcode::branch, {8}),
         terminatorBlock(7, Opcode::branch, {8, 77}),
-        terminatorBlock(8, Opcode::returnVoid),
+        terminatorBlock(8, Opcode::ret),
         // The entry is last in the vector and is a back-edge target; a target that is not a block is ignored.
         terminatorBlock(4, Opcode::conditionalBranch, {1, 2}),
     };
@@ -852,12 +853,12 @@ TEST(IRModelTest, DominanceTreatsBlocksWithoutPredecessorsAsRootsAndUnrootedCycl
         terminatorBlock(1, Opcode::branch, {10}),
         // 5 has no predecessors, so it roots its own region; 6 joins it with the entry's region.
         terminatorBlock(5, Opcode::conditionalBranch, {6, 7}),
-        terminatorBlock(6, Opcode::returnVoid),
-        terminatorBlock(7, Opcode::returnVoid),
+        terminatorBlock(6, Opcode::ret),
+        terminatorBlock(7, Opcode::ret),
         // 8 and 9 reach each other but no root reaches them; 10 joins them with the entry.
         terminatorBlock(8, Opcode::conditionalBranch, {9, 10}),
         terminatorBlock(9, Opcode::branch, {8}),
-        terminatorBlock(10, Opcode::returnVoid),
+        terminatorBlock(10, Opcode::ret),
         terminatorBlock(11, Opcode::branch, {10}),
         terminatorBlock(12, Opcode::branch, {12}),
     };
@@ -910,7 +911,7 @@ TEST(IRModelTest, DominanceWorkForManyExitsToOneBlockGrowsWithTheirDepth) {
         function.blocks.push_back(terminatorBlock(2 * index, Opcode::conditionalBranch, {exit, 2 * index + 1}));
         function.blocks.push_back(terminatorBlock(2 * index + 1, Opcode::branch, {2 * index + 2 == exit ? exit : 2 * index + 2}));
     }
-    function.blocks.push_back(terminatorBlock(exit, Opcode::returnVoid));
+    function.blocks.push_back(terminatorBlock(exit, Opcode::ret));
     const DominanceAnalysis dominance(function);
     EXPECT_TRUE(dominance.dominates(0, exit));
     EXPECT_FALSE(dominance.dominates(2, exit));
@@ -927,8 +928,8 @@ TEST(IRModelTest, DominancePinsMalformedBlockShapes) {
         terminatorBlock(2, Opcode::branch, {4}),
         terminatorBlock(2, Opcode::branch, {5}),
         terminatorBlock(3, Opcode::branch, {4}),
-        terminatorBlock(4, Opcode::returnVoid),
-        terminatorBlock(5, Opcode::returnVoid),
+        terminatorBlock(4, Opcode::ret),
+        terminatorBlock(5, Opcode::ret),
         // Switch cases count only on a switch.
         terminatorBlock(6, Opcode::branch, {}),
     };
@@ -938,7 +939,7 @@ TEST(IRModelTest, DominancePinsMalformedBlockShapes) {
     SwitchCase stray;
     stray.target = 8;
     function.blocks[6].instructions.back().switchCases.push_back(stray);
-    function.blocks.push_back(terminatorBlock(8, Opcode::returnVoid));
+    function.blocks.push_back(terminatorBlock(8, Opcode::ret));
     const DominanceAnalysis dominance(function);
     EXPECT_TRUE(dominance.dominates(1, 4));
     EXPECT_FALSE(dominance.dominates(2, 4));
@@ -1002,7 +1003,7 @@ TEST(IRModelTest, DominanceMatchesTheSetBasedFixedPointOnRandomFunctions) {
     // std::mt19937's sequence is fixed by the standard; distributions are not, so draw with modulo.
     std::mt19937 random(20261118);
     const auto below = [&random](uint32_t bound) { return static_cast<BlockId>(random() % bound); };
-    const Opcode terminators[] = {Opcode::branch, Opcode::conditionalBranch, Opcode::switchPattern, Opcode::returnVoid};
+    const Opcode terminators[] = {Opcode::branch, Opcode::conditionalBranch, Opcode::switchPattern, Opcode::ret};
     for (int trial = 0; trial < 3000; ++trial) {
         Function function;
         const auto blockCount = 1 + below(10);
@@ -1120,7 +1121,7 @@ TEST(IRModelTest, VerifiesExplicitCopyTakeAndDestroyOperations) {
                 },
                 Instruction { Opcode::store, std::nullopt, { 3, 2 } },
                 Instruction { Opcode::destroy, std::nullopt, { 2 } },
-                Instruction { Opcode::returnVoid },
+                Instruction { Opcode::ret },
             },
         },
     };
@@ -1185,7 +1186,7 @@ TEST(IRModelTest, VerifiesStringUtf8ProducesAByteArray) {
                     Value { 1, 3, ValueCategory::value },
                     { 0 },
                 },
-                Instruction { Opcode::returnValue, std::nullopt, { 1 } },
+                Instruction { Opcode::ret, std::nullopt, { 1 } },
             },
         },
     };
@@ -1196,7 +1197,7 @@ TEST(IRModelTest, VerifiesStringUtf8ProducesAByteArray) {
     destroy.parameters = { Parameter { Value { 0, 3, ValueCategory::address }, std::nullopt, "self", true } };
     destroy.resultType = 0;
     destroy.entry = 0;
-    destroy.blocks = { BasicBlock { 0, "entry", { Instruction { Opcode::returnVoid } } } };
+    destroy.blocks = { BasicBlock { 0, "entry", { Instruction { Opcode::ret } } } };
     module.functions.push_back(destroy);
     Function clone;
     clone.id = 2;
@@ -1205,7 +1206,7 @@ TEST(IRModelTest, VerifiesStringUtf8ProducesAByteArray) {
     clone.resultType = 3;
     clone.returnsValue = true;
     clone.entry = 0;
-    clone.blocks = { BasicBlock { 0, "entry", { Instruction { Opcode::returnValue, std::nullopt, { 0 } } } } };
+    clone.blocks = { BasicBlock { 0, "entry", { Instruction { Opcode::ret, std::nullopt, { 0 } } } } };
     module.functions.push_back(clone);
 
     const auto valid = Verifier().verify(module);

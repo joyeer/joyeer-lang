@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
                     { 0, 1 },
                 },
                 joyeer::ir::Instruction {
-                    joyeer::ir::Opcode::returnValue,
+                    joyeer::ir::Opcode::ret,
                     std::nullopt,
                     { 2 },
                 },
@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
             "entry",
             {
                 joyeer::ir::Instruction {
-                    joyeer::ir::Opcode::integerConstant,
+                    joyeer::ir::Opcode::literal,
                     joyeer::ir::Value { 0, 1, joyeer::ir::ValueCategory::value },
                     {},
                     {},
@@ -121,7 +121,7 @@ int main(int argc, char** argv) {
                     1,
                 },
                 joyeer::ir::Instruction {
-                    joyeer::ir::Opcode::integerConstant,
+                    joyeer::ir::Opcode::literal,
                     joyeer::ir::Value { 1, 1, joyeer::ir::ValueCategory::value },
                     {},
                     {},
@@ -146,7 +146,7 @@ int main(int argc, char** argv) {
                     102,
                 },
                 joyeer::ir::Instruction {
-                    joyeer::ir::Opcode::returnValue,
+                    joyeer::ir::Opcode::ret,
                     std::nullopt,
                     { 3 },
                 },
@@ -217,11 +217,11 @@ int main(int argc, char** argv) {
             "none",
             {
                 joyeer::ir::Instruction {
-                    joyeer::ir::Opcode::integerConstant,
+                    joyeer::ir::Opcode::literal,
                     joyeer::ir::Value { 1, 1, joyeer::ir::ValueCategory::value },
                 },
                 joyeer::ir::Instruction {
-                    joyeer::ir::Opcode::returnValue,
+                    joyeer::ir::Opcode::ret,
                     std::nullopt,
                     { 1 },
                 },
@@ -240,7 +240,7 @@ int main(int argc, char** argv) {
                     202,
                 },
                 joyeer::ir::Instruction {
-                    joyeer::ir::Opcode::returnValue,
+                    joyeer::ir::Opcode::ret,
                     std::nullopt,
                     { 2 },
                 },
@@ -261,12 +261,12 @@ int main(int argc, char** argv) {
             "entry",
             {
                 joyeer::ir::Instruction {
-                    joyeer::ir::Opcode::integerConstant,
+                    joyeer::ir::Opcode::literal,
                     joyeer::ir::Value { 0, 1, joyeer::ir::ValueCategory::value },
                     {}, {}, std::nullopt, std::nullopt, 0,
                 },
                 joyeer::ir::Instruction {
-                    joyeer::ir::Opcode::integerConstant,
+                    joyeer::ir::Opcode::literal,
                     joyeer::ir::Value { 1, 1, joyeer::ir::ValueCategory::value },
                     {}, {}, std::nullopt, std::nullopt, 2,
                 },
@@ -276,7 +276,7 @@ int main(int argc, char** argv) {
                     { 0, 1 },
                 },
                 joyeer::ir::Instruction {
-                    joyeer::ir::Opcode::returnValue,
+                    joyeer::ir::Opcode::ret,
                     std::nullopt,
                     { 3 },
                 },
@@ -333,7 +333,7 @@ int main(int argc, char** argv) {
                     std::nullopt,
                     { 4 },
                 },
-                joyeer::ir::Instruction { joyeer::ir::Opcode::returnVoid },
+                joyeer::ir::Instruction { joyeer::ir::Opcode::ret },
             },
         },
     };

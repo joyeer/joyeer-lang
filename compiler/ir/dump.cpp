@@ -284,6 +284,17 @@ std::string dump(const Module& module) {
                 out << opcodeName(instruction.opcode);
                 const auto* descriptor = findOpcodeDescriptor(instruction.opcode);
                 const auto immediate = descriptor == nullptr ? OpcodeImmediate::none : descriptor->immediate;
+                if (descriptor != nullptr && descriptor->modifier != OpcodeModifier::none) {
+                    const auto* modifier = modifierName(descriptor->modifier, instruction.modifier);
+                    if (modifier != nullptr) {
+                        out << ' ' << modifier;
+                    } else {
+                        out << " modifier#" << static_cast<unsigned>(instruction.modifier);
+                    }
+                } else if (instruction.modifier != 0) {
+                    // A stray modifier the verifier rejects; shown so the dump explains the rejection.
+                    out << " modifier#" << static_cast<unsigned>(instruction.modifier);
+                }
                 const auto printOperands = [&] {
                     for (size_t index = 0; index < instruction.operands.size(); ++index) {
                         out << (index == 0 ? " " : ", ") << valueName(instruction.operands[index]);
@@ -367,11 +378,14 @@ std::string dump(const Module& module) {
                                 break;
                             case OpcodeImmediate::none:
                             case OpcodeImmediate::payloadIndex:
+                            case OpcodeImmediate::message:
                                 break;
                         }
                         printOperands();
                         if (immediate == OpcodeImmediate::payloadIndex) {
                             out << ", " << instruction.integerValue;
+                        } else if (immediate == OpcodeImmediate::message) {
+                            out << ", \"" << escape(instruction.text) << '"';
                         }
                         break;
                 }

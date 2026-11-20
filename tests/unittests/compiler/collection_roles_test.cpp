@@ -482,7 +482,7 @@ TEST_F(CollectionRoleTest, TheRoleStructKeepsTheThreeWordLayoutWithoutALiveFlag)
 }
 
 TEST_F(CollectionRoleTest, TheWireCarriesTheCollectionRolesAndAdvancesItsVersion) {
-    EXPECT_EQ(joyeer::llvmbackend::wire::version, 26u);
+    EXPECT_EQ(joyeer::llvmbackend::wire::version, 27u);
     load("func first(items: Buffer<Int>): Int { return items[0] }\n");
     const auto module = lower();
     ASSERT_NE(module, nullptr);
@@ -533,7 +533,7 @@ bool insertAfterIntConstant(joyeer::ir::Function& function, joyeer::ir::Instruct
                             bool yieldsInt) {
     for (auto& block : function.blocks) {
         for (auto it = block.instructions.begin(); it != block.instructions.end(); ++it) {
-            if (it->opcode != joyeer::ir::Opcode::integerConstant || !it->result.has_value()) continue;
+            if (it->opcode != joyeer::ir::Opcode::literal || !it->result.has_value()) continue;
             const auto constant = *it->result;
             if (added.integerValue == 0) added.integerValue = static_cast<int64_t>(constant.type);
             for (unsigned index = 0; index < operands; ++index) added.operands.push_back(constant.id);
@@ -565,7 +565,7 @@ TEST_F(CollectionRoleTest, TheVerifierAcceptsTheLoweredModuleAndRejectsEachMalfo
         auto& function = named(*copy, "first");
         auto* address = find(function, Opcode::integerAddress);
         ASSERT_NE(address, nullptr);
-        auto* constant = find(function, Opcode::integerConstant);
+        auto* constant = find(function, Opcode::literal);
         ASSERT_NE(constant, nullptr);
         address->operands = { constant->result->id };
         EXPECT_NE(verifierMessages(*copy).find("runtime authorization"), std::string::npos)
@@ -601,18 +601,32 @@ TEST_F(CollectionRoleTest, TheVerifierAcceptsTheLoweredModuleAndRejectsEachMalfo
         EXPECT_NE(verifierMessages(*copy).find("needs a deinit"), std::string::npos) << verifierMessages(*copy);
     }
     // Each new opcode is runtime-only: a user function that carries one is rejected.
-    for (const auto opcode : { Opcode::destroyRange, Opcode::cloneAt, Opcode::linearRangeGuard,
-                               Opcode::cloneCallback, Opcode::destroyCallback, Opcode::slotAddress }) {
+    struct Capability {
+        Opcode opcode;
+        uint8_t modifier;
+        unsigned operands;
+        const char* message;
+    };
+    const auto clone = static_cast<uint8_t>(joyeer::ir::TypeHelperKind::clone);
+    const auto destroy = static_cast<uint8_t>(joyeer::ir::TypeHelperKind::destroy);
+    for (const auto& capability : {
+                 Capability { Opcode::destroyRange, 0, 2, "a collection capability requires runtime authorization" },
+                 Capability { Opcode::cloneAt, 0, 2, "a collection capability requires runtime authorization" },
+                 Capability { Opcode::trapIf, 0, 1, "a trap requires runtime authorization" },
+                 Capability { Opcode::typeHelper, clone, 0, "a collection capability requires runtime authorization" },
+                 Capability { Opcode::typeHelper, destroy, 0,
+                              "a collection capability requires runtime authorization" },
+                 Capability { Opcode::slotAddress, 0, 2, "a collection capability requires runtime authorization" },
+         }) {
         auto copy = std::make_shared<joyeer::ir::Module>(*module);
         auto& function = named(*copy, "first");
-        joyeer::ir::Instruction added { opcode };
-        const auto count = opcode == Opcode::cloneCallback || opcode == Opcode::destroyCallback ? 0u
-                         : opcode == Opcode::linearRangeGuard ? 1u : 2u;
-        const bool yieldsInt = opcode == Opcode::cloneCallback || opcode == Opcode::destroyCallback ||
-                               opcode == Opcode::slotAddress;
-        ASSERT_TRUE(insertAfterIntConstant(function, added, count, yieldsInt));
-        EXPECT_NE(verifierMessages(*copy).find("a collection capability requires runtime authorization"),
-                  std::string::npos) << static_cast<int>(opcode) << "\n" << verifierMessages(*copy);
+        joyeer::ir::Instruction added { capability.opcode };
+        added.modifier = capability.modifier;
+        added.text = "message";
+        const bool yieldsInt = capability.opcode == Opcode::typeHelper || capability.opcode == Opcode::slotAddress;
+        ASSERT_TRUE(insertAfterIntConstant(function, added, capability.operands, yieldsInt));
+        EXPECT_NE(verifierMessages(*copy).find(capability.message), std::string::npos)
+                << static_cast<int>(capability.opcode) << "\n" << verifierMessages(*copy);
     }
 }
 
@@ -688,8 +702,8 @@ TEST_F(CollectionRoleTest, TheFourIntrinsicsLowerPerConcreteTypeInTheLibraryBodi
     const auto dumped = joyeer::ir::dump(*module);
     EXPECT_NE(dumped.find("destroy_range"), std::string::npos) << dumped;
     EXPECT_NE(dumped.find("clone_at"), std::string::npos) << dumped;
-    EXPECT_NE(dumped.find("clone_callback"), std::string::npos) << dumped;
-    EXPECT_NE(dumped.find("destroy_callback"), std::string::npos) << dumped;
+    EXPECT_NE(dumped.find("type_helper clone"), std::string::npos) << dumped;
+    EXPECT_NE(dumped.find("type_helper destroy"), std::string::npos) << dumped;
     EXPECT_EQ(verifierMessages(*module).find("ir."), std::string::npos) << verifierMessages(*module);
 }
 
@@ -708,10 +722,10 @@ TEST_F(CollectionRoleTest, ALinearOwnedTypeDropsTheRangeDestroyForAGuardAndHasNo
     const auto module = lower();
     ASSERT_NE(module, nullptr);
     const auto dumped = joyeer::ir::dump(*module);
-    EXPECT_NE(dumped.find("linear_range_guard"), std::string::npos) << dumped;
+    EXPECT_NE(dumped.find("trap_if"), std::string::npos) << dumped;
+    EXPECT_NE(dumped.find("\"linear container dropped while not empty\""), std::string::npos) << dumped;
     EXPECT_EQ(dumped.find("destroy_range"), std::string::npos) << dumped;
-    EXPECT_EQ(dumped.find("clone_callback"), std::string::npos) << dumped;
-    EXPECT_EQ(dumped.find("destroy_callback"), std::string::npos) << dumped;
+    EXPECT_EQ(dumped.find("type_helper"), std::string::npos) << dumped;
     EXPECT_EQ(verifierMessages(*module).find("ir."), std::string::npos) << verifierMessages(*module);
 }
 
@@ -820,7 +834,7 @@ TEST_F(CollectionRoleTest, TheEscapeRuleRejectsEachWayAnElementAddressCouldOutli
         auto& function = named(*copy, "first");
         const auto address = place(function)->result->id;
         auto& last = function.blocks.back().instructions.back();
-        ASSERT_EQ(last.opcode, Opcode::returnValue);
+        ASSERT_EQ(last.opcode, Opcode::ret);
         last.operands = { address };
         EXPECT_NE(verifierMessages(*copy).find("element address may not be used by ret"), std::string::npos)
                 << verifierMessages(*copy);
@@ -847,7 +861,7 @@ TEST_F(CollectionRoleTest, TheEscapeRuleRejectsEachWayAnElementAddressCouldOutli
         joyeer::ir::Instruction load { Opcode::load };
         load.operands = { address };
         load.result = joyeer::ir::Value { 9001, loaded, ValueCategory::value };
-        joyeer::ir::Instruction done { Opcode::returnValue };
+        joyeer::ir::Instruction done { Opcode::ret };
         done.operands = { 9001 };
         stray.instructions = { load, done };
         function.blocks.push_back(stray);
@@ -1368,7 +1382,7 @@ TEST_F(CollectionRoleTest, StackBlockMalformedFormsAreRejectedByTheVerifier) {
         for (auto& block : function.blocks) {
             for (auto& instruction : block.instructions) {
                 if (instruction.opcode == Opcode::stackBlock) {
-                    // The addressor's own parameter is not an integerConstant definition.
+                    // The addressor's own parameter is not an integer literal definition.
                     instruction.operands = { function.parameters.empty() ? 0 : function.parameters.back().value.id };
                     changed = true;
                 }
@@ -1883,7 +1897,7 @@ TEST_F(CollectionRoleTest, ALiteralElementMustBeEvaluatedInABlockThatDominatesTh
         instruction.targets = { target };
         return instruction;
     };
-    joyeer::ir::Instruction condition { Opcode::booleanConstant };
+    joyeer::ir::Instruction condition { Opcode::literal };
     condition.integerValue = 1;
     condition.result = joyeer::ir::Value { 9100, checking.model->types().boolType(), joyeer::ir::ValueCategory::value };
     joyeer::ir::Instruction choose { Opcode::conditionalBranch };
@@ -1962,7 +1976,7 @@ TEST_F(CollectionRoleTest, AFactoryFunctionValueWithoutLiteralStorageIsRejected)
     call.callee.reset();
     call.operands = { 9000, receiver, count, count };
     instructions.push_back(call);
-    instructions.push_back({ joyeer::ir::Opcode::returnValue, std::nullopt, { call.result->id } });
+    instructions.push_back({ joyeer::ir::Opcode::ret, std::nullopt, { call.result->id } });
     const auto verification = joyeer::ir::Verifier().verify(copy);
     EXPECT_FALSE(verification.succeeded());
     EXPECT_NE(joyeer::ir::dump(verification).find("literal factories cannot be formed as function values"),

@@ -1,0 +1,18 @@
+// Floating comparisons (decision 0028): NaN is unordered, so only `!=` is true for it.
+func compareAll(left: Double, right: Double) {
+    print(value: left == right)
+    print(value: left != right)
+    print(value: left < right)
+    print(value: left <= right)
+    print(value: left > right)
+    print(value: left >= right)
+}
+
+func main() {
+    let zero: Double = 0.0
+    let nan = zero / zero
+    compareAll(left: nan, right: nan)
+    compareAll(left: nan, right: 1.0)
+    compareAll(left: 1.0, right: 2.0)
+    compareAll(left: 2.0, right: 2.0)
+}

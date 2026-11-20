@@ -201,12 +201,12 @@ TEST(LLVMModuleConstructionTest, DoesNotRequireBasicBlocksInDefinitionOrder) {
     function.entry = 0;
     joyeer::ir::BasicBlock entry {0, "entry"};
     entry.instructions = {
-        {joyeer::ir::Opcode::integerConstant,
+        {joyeer::ir::Opcode::literal,
          joyeer::ir::Value{0, 0, joyeer::ir::ValueCategory::value}, {}, {}, {}, {}, 42},
         {joyeer::ir::Opcode::branch, {}, {}, {1}},
     };
     joyeer::ir::BasicBlock exit {1, "exit"};
-    exit.instructions = {{joyeer::ir::Opcode::returnValue, {}, {0}}};
+    exit.instructions = {{joyeer::ir::Opcode::ret, {}, {0}}};
     function.blocks = {exit, entry};
     module.functions.push_back(std::move(function));
     ASSERT_TRUE(joyeer::ir::Verifier().verify(module).succeeded());
@@ -895,12 +895,12 @@ TEST(LLVMArithmeticBackendTest, GuardsDivisionAndRemainderAtEveryOptimizationLev
             if (values.constants) {
                 block.instructions = {
                     {
-                        joyeer::ir::Opcode::integerConstant,
+                        joyeer::ir::Opcode::literal,
                         joyeer::ir::Value { 0, 0, joyeer::ir::ValueCategory::value },
                         {}, {}, std::nullopt, std::nullopt, values.left,
                     },
                     {
-                        joyeer::ir::Opcode::integerConstant,
+                        joyeer::ir::Opcode::literal,
                         joyeer::ir::Value { 1, 0, joyeer::ir::ValueCategory::value },
                         {}, {}, std::nullopt, std::nullopt, values.right,
                     },
@@ -917,7 +917,7 @@ TEST(LLVMArithmeticBackendTest, GuardsDivisionAndRemainderAtEveryOptimizationLev
                 { 0, 1 },
             });
             block.instructions.push_back({
-                joyeer::ir::Opcode::returnValue, std::nullopt, { 2 },
+                joyeer::ir::Opcode::ret, std::nullopt, { 2 },
             });
             function.blocks.push_back(std::move(block));
             module.functions.push_back(std::move(function));
@@ -1503,7 +1503,7 @@ TEST(LLVMOwnershipBackendTest, EmitsRecursiveOwnershipHelpersAndOperations) {
                     std::nullopt,
                     { 4 },
                 },
-                joyeer::ir::Instruction { joyeer::ir::Opcode::returnVoid },
+                joyeer::ir::Instruction { joyeer::ir::Opcode::ret },
             },
         },
     };
@@ -1557,6 +1557,50 @@ TEST_F(LLVMBackendTest, GenericInstanceNamesAndConcreteDebugTypesSurviveTheBacke
         EXPECT_NE(result.text.find("name: \"identity<String>\""), std::string::npos) << result.text;
         EXPECT_NE(result.text.find("name: \"value\""), std::string::npos);
         EXPECT_NE(result.text.find("name: \"String\""), std::string::npos);
+    }
+}
+
+// Floating `compare` is ordered for every predicate except `ne`, which is true for NaN (decision 0028).
+TEST(LLVMCompareTest, FloatingPredicatesAreOrderedExceptNotEqual) {
+    const std::vector<std::pair<joyeer::ir::ComparePredicate, std::string>> predicates = {
+        { joyeer::ir::ComparePredicate::less, "fcmp olt double %v0, %v1" },
+        { joyeer::ir::ComparePredicate::lessEqual, "fcmp ole double %v0, %v1" },
+        { joyeer::ir::ComparePredicate::greater, "fcmp ogt double %v0, %v1" },
+        { joyeer::ir::ComparePredicate::greaterEqual, "fcmp oge double %v0, %v1" },
+        { joyeer::ir::ComparePredicate::equal, "fcmp oeq double %v0, %v1" },
+        { joyeer::ir::ComparePredicate::notEqual, "fcmp une double %v0, %v1" },
+    };
+    for (const auto& [predicate, expected] : predicates) {
+        SCOPED_TRACE(expected);
+        joyeer::ir::Module module;
+        module.sourceName = "floating-compare.joyeer";
+        module.types = {
+            { 0, "Float64", joyeer::typing::TypeKind::float64 },
+            { 1, "Bool", joyeer::typing::TypeKind::boolean },
+        };
+        joyeer::ir::Function function;
+        function.id = 0;
+        function.name = "compare";
+        function.resultType = 1;
+        function.returnsValue = true;
+        function.entry = 0;
+        function.parameters = {
+            { { 0, 0, joyeer::ir::ValueCategory::value }, std::nullopt, "left" },
+            { { 1, 0, joyeer::ir::ValueCategory::value }, std::nullopt, "right" },
+        };
+        joyeer::ir::BasicBlock block { 0, "entry" };
+        joyeer::ir::Instruction compare { joyeer::ir::Opcode::compare,
+                                          joyeer::ir::Value { 2, 1, joyeer::ir::ValueCategory::value }, { 0, 1 } };
+        compare.modifier = static_cast<uint8_t>(predicate);
+        block.instructions.push_back(compare);
+        block.instructions.push_back({ joyeer::ir::Opcode::ret, std::nullopt, { 2 } });
+        function.blocks.push_back(std::move(block));
+        module.functions.push_back(std::move(function));
+        joyeer::llvmbackend::EmitOptions options;
+        options.optimizationLevel = joyeer::OptimizationLevel::O0;
+        const auto result = joyeer::llvmbackend::Emitter().emit(module, options);
+        ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+        EXPECT_NE(result.text.find(expected), std::string::npos) << result.text;
     }
 }
 } // namespace
