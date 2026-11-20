@@ -1,0 +1,12 @@
+// String concatenation (decision 0028 stage 3): `+` on borrowed and owned operands, each a runtime allocation.
+func main() {
+    var total = 0
+    var round = 0
+    while round < 1000000 {
+        let joined = "joy" + "ful"
+        let longer = joined + joined + joined
+        total = total + longer.count
+        round = round + 1
+    }
+    print(value: total)
+}

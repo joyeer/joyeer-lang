@@ -1091,8 +1091,9 @@ print(value: "left" + "right")
     EXPECT_NE(
             result.text.find("declare void @joyeer_print_string_abi(ptr, i64)"),
             std::string::npos);
+    // The collections prelude's declaration (decision 0028 stage 3): the runtime export's Int words.
     EXPECT_NE(
-            result.text.find("declare void @joyeer_string_concat_abi(ptr, ptr, i64, ptr, i64)"),
+            result.text.find("declare void @joyeer_string_concat_abi(i64, i64, i64, i64, i64)"),
             std::string::npos);
     EXPECT_NE(result.text.find("private unnamed_addr constant [5 x i8] c\"hello\""),
               std::string::npos);
@@ -1179,6 +1180,36 @@ func access(ints: inout [Int], bytes: inout [UInt8], flags: inout [Bool],
     EXPECT_NE(result.text.find("call void @joyeer_destroy_type_"), std::string::npos);
 }
 
+// A String byte read calls the collections prelude's `string_byte` role (decision 0028 stage 3), which the backend
+// marks `alwaysinline`, from the read's own source location: once inlined, its `string index out of bounds` panic is
+// reported in the prelude, inlined at the read. Its projections lower to no call.
+TEST_F(LLVMBackendTest, StringByteReadsCallTheInlinedPreludeFromTheirLocation) {
+    ASSERT_NO_FATAL_FAILURE(emit("func last(text: String): UInt8 {\n"
+                                 "    return text[text.count - 1]\n"
+                                 "}\n",
+                                 true, { true, joyeer::DebugInfoFormat::dwarf, joyeer::OptimizationLevel::O0, true }));
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_EQ(result.text.find("joyeer_intrinsic_string"), std::string::npos) << result.text;
+    std::smatch read;
+    ASSERT_TRUE(std::regex_search(result.text, read,
+            std::regex(R"(call i8 @(joyeer_fn_[0-9]+)\(%joyeer\.string %[A-Za-z0-9_.]+, i64 %[A-Za-z0-9_.]+\).*!dbg (![0-9]+))")))
+            << result.text;
+    const auto callee = read[1].str();
+    std::smatch location;
+    ASSERT_TRUE(std::regex_search(result.text, location,
+            std::regex("\n" + read[2].str() + R"( = !DILocation\(line: ([0-9]+), column: ([0-9]+))")))
+            << result.text;
+    EXPECT_EQ(location[1].str(), "2");
+    EXPECT_EQ(location[2].str(), "12");
+    std::smatch definition;
+    ASSERT_TRUE(std::regex_search(result.text, definition,
+            std::regex("define internal i8 @" + callee + R"(\([^)]*\) (#[0-9]+))")))
+            << result.text;
+    EXPECT_NE(result.text.find("attributes " + definition[1].str() + " = { alwaysinline }"), std::string::npos)
+            << result.text;
+    EXPECT_NE(result.text.find("c\"string index out of bounds\\00\""), std::string::npos) << result.text;
+}
+
 TEST_F(LLVMBackendTest, EmitsStringUtf8AsOwnedByteArray) {
     emit(R"JOYEER(func bytes(text: String): [UInt8] {
 return text.utf8()
@@ -1190,10 +1221,13 @@ return text.utf8()
             result.text.find(
                     "declare void @joyeer_array_create_owned_abi(i64, i64, i64, i64, i64, i64)"),
             std::string::npos);
-    EXPECT_NE(result.text.find("extractvalue %joyeer.string"), std::string::npos);
-    EXPECT_NE(
-            result.text.find("i64 1, i64 0, i64 0)"),
-            std::string::npos);
+    // The library array's `string_utf8` method on an inert zero `[UInt8]` (decision 0028 stage 3) passes the
+    // String's data address and byte count, and one byte per element.
+    EXPECT_TRUE(std::regex_search(result.text, std::regex(
+            R"(call %joyeer\.struct\.[0-9]+ @joyeer_fn_[0-9]+\(%joyeer\.struct\.[0-9]+ %v[0-9]+, %joyeer\.string %v[0-9]+\))")))
+            << result.text;
+    EXPECT_NE(result.text.find("ptrtoint (ptr getelementptr (i8, ptr null, i32 1) to i64), i64 %"), std::string::npos)
+            << result.text;
 }
 
 TEST_F(LLVMBackendTest, EmitsMutatingArrayAppendRuntimeAbi) {

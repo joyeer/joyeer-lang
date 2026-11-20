@@ -213,16 +213,13 @@ void FunctionVerifier::verifyInstruction(const BasicBlock& block, size_t index, 
         case Opcode::functionAddress: verifyFunctionAddress(site); break;
         case Opcode::callIndirect: verifyIndirectCall(site); break;
 
-        // Structs, enums and Strings (aggregates.cpp).
+        // Structs and enums (aggregates.cpp).
         case Opcode::constructStruct: verifyConstructStruct(site); break;
         case Opcode::fieldAddress:
         case Opcode::extractField: verifyFieldProjection(site); break;
         case Opcode::constructEnum: verifyConstructEnum(site); break;
         case Opcode::extractPayload: verifyExtractPayload(site); break;
         case Opcode::payloadAddress: verifyPayloadAddress(site); break;
-        case Opcode::stringUtf8: verifyStringUtf8(site); break;
-        case Opcode::count: verifyStringCount(site); break;
-        case Opcode::subscript: verifyStringSubscript(site); break;
 
         // Runtime-only layout queries, collection capabilities and raw addresses (capabilities.cpp).
         case Opcode::typeSize:
@@ -584,16 +581,23 @@ void FunctionVerifier::verifyBinaryOperator(const InstructionSite& site) {
                     location,
                     "operator operand/result categories or types do not match");
         }
+        // Only scalars (decision 0028 stage 3): String concatenation and comparison are prelude calls, so these
+        // opcodes never allocate or produce an owned value.
+        const auto* operand = types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
+        if (isArithmetic && categoriesAreValues && operandTypesMatch &&
+            (operand == nullptr || (!typing::isInteger(operand->kind) && !typing::isFloating(operand->kind)))) {
+            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                   std::string(opcodeName(instruction.opcode)) + " takes integer or floating operands");
+        }
         if (instruction.opcode == Opcode::compare && categoriesAreValues && operandTypesMatch) {
-            const auto* operand = types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
             const auto* result = types.contains(instruction.result->type)
                     ? types.at(instruction.result->type) : nullptr;
             const bool comparable = operand != nullptr &&
                     (typing::isInteger(operand->kind) || typing::isFloating(operand->kind) ||
-                     operand->kind == typing::TypeKind::boolean || operand->kind == typing::TypeKind::string);
+                     operand->kind == typing::TypeKind::boolean);
             if (!comparable || result == nullptr || result->kind != typing::TypeKind::boolean) {
                 report(VerificationErrorId::typeMismatch, functionId, block.id, location,
-                       "compare takes scalar or String operands and yields a Bool");
+                       "compare takes scalar operands and yields a Bool");
             }
         }
     }

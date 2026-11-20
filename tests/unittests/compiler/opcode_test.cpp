@@ -1,6 +1,7 @@
 // The opcode descriptor table (decision 0028): one row per opcode, pinned here, and the verifier and helpers that
 // read it. Stage 2 merged the constant, comparison, conversion, return and type-helper families and turned the
-// linear range guard into `trap_if`; stage 4 numbered the opcodes densely in table order.
+// linear range guard into `trap_if`; stage 4 numbered the opcodes densely in table order; stage 3 moved the String
+// operations into the collections prelude, so `add` and `compare` take only scalars.
 
 #include "compiler/backend/ir_wire.h"
 #include "compiler/ir/ir.h"
@@ -68,9 +69,6 @@ const std::vector<ExpectedRow>& expectedRows() {
         { Opcode::constructEnum, "construct_enum", variadic, 0, R::always, I::none, M::none, false, false },
         { Opcode::extractPayload, "extract_payload", 1, 0, R::always, I::payloadIndex, M::none, false, false },
         { Opcode::payloadAddress, "payload_address", 1, 0, R::always, I::payloadIndex, M::none, false, false },
-        { Opcode::stringUtf8, "string_utf8", 1, 0, R::always, I::none, M::none, false, false },
-        { Opcode::count, "count", 1, 0, R::always, I::none, M::none, false, false },
-        { Opcode::subscript, "subscript", 2, 0, R::always, I::none, M::none, false, false },
         { Opcode::call, "call", variadic, 0, R::directCallee, I::none, M::none, false, false },
         { Opcode::functionAddress, "function_address", 0, 0, R::always, I::none, M::none, false, false },
         { Opcode::callIndirect, "call_indirect", variadic, 0, R::functionType, I::none, M::none, false, false },
@@ -95,7 +93,7 @@ const std::vector<ExpectedRow>& expectedRows() {
 
 // Editing the rows changes opcode values: bump `wire::version` with them and update this pin.
 TEST(OpcodeDescriptorTest, EveryOpcodeHasItsPinnedRow) {
-    EXPECT_EQ(joyeer::llvmbackend::wire::version, 28u);
+    EXPECT_EQ(joyeer::llvmbackend::wire::version, 29u);
     const auto rows = opcodeDescriptors();
     const auto& expected = expectedRows();
     ASSERT_EQ(rows.size(), expected.size());
@@ -342,14 +340,33 @@ TEST(OpcodeDescriptorTest, ModifiersAreCheckedAgainstTheRow) {
     EXPECT_EQ(errorsContaining(badReturn, "ret has an invalid modifier 1"), 1u) << dump(badReturn);
 }
 
-TEST(OpcodeDescriptorTest, CompareTakesScalarOrStringOperandsAndYieldsABool) {
+Instruction stringConstant(ValueId id, const std::string& text) {
+    Instruction instruction;
+    instruction.opcode = Opcode::stringConstant;
+    instruction.result = Value { id, 5, ValueCategory::value };
+    instruction.text = text;
+    return instruction;
+}
+
+// Strings compare through the collections prelude (decision 0028 stage 3), never through `compare`.
+TEST(OpcodeDescriptorTest, CompareTakesScalarOperandsAndYieldsABool) {
     Instruction compare;
     compare.opcode = Opcode::compare;
     compare.result = Value { 2, 1, ValueCategory::value };
     compare.operands = { 0, 1 };
     const auto intResult = Verifier().verify(moduleWith(compare));
-    EXPECT_EQ(errorsContaining(intResult, "compare takes scalar or String operands and yields a Bool"), 1u)
+    EXPECT_EQ(errorsContaining(intResult, "compare takes scalar operands and yields a Bool"), 1u)
             << dump(intResult);
+
+    Instruction compareStrings;
+    compareStrings.opcode = Opcode::compare;
+    compareStrings.result = Value { 4, 2, ValueCategory::value };
+    compareStrings.operands = { 2, 3 };
+    compareStrings.modifier = static_cast<uint8_t>(ComparePredicate::equal);
+    const auto stringOperands = Verifier().verify(
+            moduleWith({ stringConstant(2, "a"), stringConstant(3, "b"), compareStrings }));
+    EXPECT_EQ(errorsContaining(stringOperands, "compare takes scalar operands and yields a Bool"), 1u)
+            << dump(stringOperands);
 
     Instruction unit = literal(2, 0, 0);
     Instruction compareUnits;
@@ -358,8 +375,48 @@ TEST(OpcodeDescriptorTest, CompareTakesScalarOrStringOperandsAndYieldsABool) {
     compareUnits.operands = { 2, 2 };
     compareUnits.modifier = static_cast<uint8_t>(ComparePredicate::equal);
     const auto voidOperands = Verifier().verify(moduleWith({ unit, compareUnits }));
-    EXPECT_EQ(errorsContaining(voidOperands, "compare takes scalar or String operands and yields a Bool"), 1u)
+    EXPECT_EQ(errorsContaining(voidOperands, "compare takes scalar operands and yields a Bool"), 1u)
             << dump(voidOperands);
+}
+
+// `add`, `sub` and `mul` never allocate or produce an owned value: String concatenation is a prelude call.
+TEST(OpcodeDescriptorTest, ArithmeticTakesIntegerOrFloatingOperands) {
+    for (const auto opcode : { Opcode::add, Opcode::subtract, Opcode::multiply }) {
+        SCOPED_TRACE(opcodeName(opcode));
+        const std::string message = std::string(opcodeName(opcode)) + " takes integer or floating operands";
+        Instruction strings;
+        strings.opcode = opcode;
+        strings.result = Value { 4, 5, ValueCategory::value };
+        strings.operands = { 2, 3 };
+        const auto stringOperands = Verifier().verify(
+                moduleWith({ stringConstant(2, "a"), stringConstant(3, "b"), strings }));
+        EXPECT_EQ(errorsContaining(stringOperands, message), 1u) << dump(stringOperands);
+
+        Instruction booleans;
+        booleans.opcode = opcode;
+        booleans.result = Value { 4, 2, ValueCategory::value };
+        booleans.operands = { 2, 3 };
+        const auto booleanOperands = Verifier().verify(moduleWith({ literal(2, 2, 1), literal(3, 2, 0), booleans }));
+        EXPECT_EQ(errorsContaining(booleanOperands, message), 1u) << dump(booleanOperands);
+
+        Instruction integers;
+        integers.opcode = opcode;
+        integers.result = Value { 2, 1, ValueCategory::value };
+        integers.operands = { 0, 1 };
+        const auto integerOperands = Verifier().verify(moduleWith(integers));
+        EXPECT_TRUE(integerOperands.succeeded()) << dump(integerOperands);
+
+        Instruction one;
+        one.opcode = Opcode::floatingConstant;
+        one.result = Value { 2, 4, ValueCategory::value };
+        one.text = "1.5";
+        Instruction floats;
+        floats.opcode = opcode;
+        floats.result = Value { 3, 4, ValueCategory::value };
+        floats.operands = { 2, 2 };
+        const auto floatingOperands = Verifier().verify(moduleWith({ one, floats }));
+        EXPECT_TRUE(floatingOperands.succeeded()) << dump(floatingOperands);
+    }
 }
 
 TEST(OpcodeDescriptorTest, OnlyIntegerLiteralsCountForStackBlocks) {
@@ -603,9 +660,6 @@ TEST(OpcodeDescriptorTest, DumpTextSpellsImmediatesAndModifiers) {
         { Opcode::extractPayload, value(28, 1), { 0 }, 1, "", 9, 0, "%28: Int = extract_payload %0, 1 symbol#9" },
         { Opcode::payloadAddress, address(29, 1), { 18 }, 0, "", 9, 0,
           "%29: &Int = payload_address %18, 0 symbol#9" },
-        { Opcode::stringUtf8, value(30, 1), { 14 }, 0, "", noSymbol, 0, "%30: Int = string_utf8 %14" },
-        { Opcode::count, value(31, 1), { 14 }, 0, "", noSymbol, 0, "%31: Int = count %14" },
-        { Opcode::subscript, value(32, 2), { 14, 0 }, 0, "", noSymbol, 0, "%32: UInt8 = subscript %14, %0" },
         { Opcode::typeSize, value(33, 1), {}, 1, "", noSymbol, 0, "%33: Int = type_size of type 1" },
         { Opcode::integerAddress, address(34, 1), { 0 }, 0, "", noSymbol, 0, "%34: &Int = integer_address %0" },
         { Opcode::pointerToInteger, value(35, 1), { 18 }, 0, "", noSymbol, 0, "%35: Int = pointer_to_integer %18" },

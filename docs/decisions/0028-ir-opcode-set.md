@@ -1,8 +1,9 @@
 # 0028: A smaller, described IR opcode set
 
-- Status: accepted (2026-11-20, by the user). Stages 0 (wire 26), 1, 2 (wire 27) and 4 (wire 28) are implemented;
-  stage 4 ran before stage 3, because with dense numbering stage 3 removes opcodes by deleting rows. Stage 3 is
-  tracked in [plan 0013](../plan/0013-ir-opcode-set.md) and starts with its mechanism choice.
+- Status: accepted (2026-11-20, by the user). Stages 0 (wire 26), 1, 2 (wire 27), 4 (wire 28) and 3 (wire 29) are
+  implemented; stage 4 ran before stage 3, because with dense numbering stage 3 removes opcodes by deleting rows.
+  Stage 3's mechanism, a String projection plus a bundled prelude, was chosen by the user on 2026-11-20. Progress is
+  tracked in [plan 0013](../plan/0013-ir-opcode-set.md).
 - Spec: none. The IR is not part of the language; [IR](../impl/ir.md) changes with each stage.
 - Builds on [0025](0025-library-collection-capabilities.md), [0026](0026-library-array.md) and
   [0027](0027-library-dict.md), which moved Array and Dict out of the instruction set.
@@ -120,12 +121,38 @@ Option 2, in stages. Each stage that changes the wire format bumps `wire::versio
   comparison opcodes accept only scalars, never allocate, and never produce owned values, and lowering's
   `add && requiresDestroy` ownership special case goes away.
 
-  The mechanism is open, because the obvious one does not work. The runtime's String functions are `@c_export`
-  functions in a separate archive; a user module sees only their declarations. The verifier rejects
-  `alwaysInline` on external functions, and there is no LTO. Inlinable wrappers must therefore live in a bundled
-  source prelude, as Array's do (`collections.joyeer`), and the prelude needs a String's data address and byte
-  count. That takes either one String projection opcode or intrinsic, which then stays, or making String a library
-  struct, which is a much larger change and would need its own decision. Stage 3 starts by choosing between them.
+  The obvious mechanism does not work. The runtime's String functions are `@c_export` functions in a separate
+  archive; a user module sees only their declarations. The verifier rejects `alwaysInline` on external functions,
+  and there is no LTO. Inlinable wrappers must therefore live in a bundled source prelude, as Array's do
+  (`collections.joyeer`), and the prelude needs a String's data address and byte count. That takes either a String
+  projection, which then stays, or making String a library struct, which is a much larger change and would need its
+  own decision.
+
+  **Chosen (the user, 2026-11-20): a projection plus the bundled prelude.**
+  - The projection is two reserved C-binding intrinsics, `joyeer_intrinsic_string_data(text: String): Int` and
+    `joyeer_intrinsic_string_count(text: String): Int`, not a new opcode. A native call already passes a String as
+    its data pointer and byte count, so the backend lowers each to one of those two halves, with no call and no new
+    IR. Like every reserved symbol they are runtime-only, and an import must match the table's signature.
+  - `collections.joyeer` holds five private, non-generic functions with closed roles, which lowering calls:
+    `string_count` (`s.count`), `string_byte` (`s[i]`), `string_concat` (`+` and `+=`), `string_equal` (`==`, and
+    `!=` as `compare eq` with `false`) and `string_order` (the four orderings, as `compare` of its -1, 0 or 1 result
+    with 0, which is what the backend emitted before). Each takes its Strings by borrowing and is always inlined.
+    They call the runtime functions by their existing Int signatures, so no declaration conflicts with the runtime's
+    exports. `string_byte` keeps the message `string index out of bounds` and addresses the byte with
+    `slot_address`, which has no overflow check, as the backend's GEP did not.
+  - A non-generic prelude function would be lowered into every module, including runtime core units, which must not
+    use String at all. So lowering collects each String role function only when a String operation first calls one,
+    and lowers those functions after every other function.
+  - Their parameters are read as their own values, with no stack slot and no debug variable. With slots, the -O0
+    byte loop of the cost gate measured 1.40 against the opcode baseline: -O0 runs the always-inliner but not SROA, so
+    each inlined call kept a 16-byte String store and its reloads. Without them it measured 1.12.
+  - `s.utf8()` is the library array's private `string_utf8` method, called on an inert zero `[UInt8]` like the
+    literal method. A free function returning `[UInt8]` would intern that type in every module and so instantiate
+    the array's methods everywhere; the method is instantiated for `[UInt8]` only. A prelude without the method can
+    still lower everything except `utf8()`.
+  - `stringUtf8`, `count` and `subscript` are removed (48 opcodes, wire 29), and `add`, `sub`, `mul` and `compare`
+    take only scalars. Literal String patterns keep calling the runtime's equality inside the backend, with the
+    prelude's Int signature.
 
   The wrappers take their String parameters by borrowing, so -O0 gains no copies. Acceptance:
   - The unoptimized cost gate of 0026 and 0027, including a `count`/`subscript` byte loop at -O0. The -O0 pipeline

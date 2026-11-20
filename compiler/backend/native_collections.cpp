@@ -83,31 +83,6 @@ bool Builder::emitCollection(const ir::Instruction& instruction, llvm::Value*& r
         case Opcode::constantValue:
             result = constantArray(source.constants.at(static_cast<size_t>(instruction.integerValue)));
             return true;
-        case Opcode::stringUtf8: {
-            auto* string = argument(0);
-            auto* address = stack(resultType());
-            call("joyeer_array_create_owned_abi", builder.getVoidTy(),
-                    {builder.CreatePtrToInt(address, builder.getInt64Ty()),
-                     builder.CreatePtrToInt(builder.CreateExtractValue(string, 0, temporary()), builder.getInt64Ty()),
-                     builder.CreateExtractValue(string, 1, temporary()), integer(1), integer(0), integer(0)});
-            result = builder.CreateLoad(resultType(), address);
-            return true;
-        }
-        case Opcode::count: result = builder.CreateExtractValue(argument(0), 1); return true;
-        case Opcode::subscript: {
-            // The verified base is a String. Byte access is inline: a checked index, then one load. The runtime has no
-            // function for it.
-            auto* base = argument(0);
-            auto* index = argument(1);
-            auto* data = builder.CreateExtractValue(base, 0, temporary());
-            auto* count = builder.CreateExtractValue(base, 1, temporary());
-            auto* negative = builder.CreateICmpSLT(index, integer(0), temporary());
-            auto* pastEnd = builder.CreateICmpSGE(index, count, temporary());
-            trap(builder.CreateOr(negative, pastEnd, temporary()), "string index out of bounds");
-            result = builder.CreateLoad(builder.getInt8Ty(),
-                    builder.CreateGEP(builder.getInt8Ty(), data, index, temporary()), temporary());
-            return true;
-        }
         default: return false;
     }
 }

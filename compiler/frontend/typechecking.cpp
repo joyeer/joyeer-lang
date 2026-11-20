@@ -25,6 +25,7 @@ semantic::LibraryRole collectionOwnerRole(semantic::LibraryRole method) {
         case semantic::LibraryRole::arrayCopy:
         case semantic::LibraryRole::containerEnd:
         case semantic::LibraryRole::arrayLiteral:
+        case semantic::LibraryRole::stringUtf8:
             return semantic::LibraryRole::arrayType;
         case semantic::LibraryRole::dictElement:
         case semantic::LibraryRole::dictSet:
@@ -52,6 +53,12 @@ const char* collectionRoleName(semantic::LibraryRole role) {
         case semantic::LibraryRole::dictCopy: return "dict_copy";
         case semantic::LibraryRole::dictLiteral: return "dict_literal";
         case semantic::LibraryRole::dictEntry: return "dict_entry";
+        case semantic::LibraryRole::stringCount: return "string_count";
+        case semantic::LibraryRole::stringByte: return "string_byte";
+        case semantic::LibraryRole::stringConcat: return "string_concat";
+        case semantic::LibraryRole::stringEqual: return "string_equal";
+        case semantic::LibraryRole::stringOrder: return "string_order";
+        case semantic::LibraryRole::stringUtf8: return "string_utf8";
         default: return "unknown";
     }
 }
@@ -613,6 +620,12 @@ std::optional<std::array<semantic::SymbolId, 2>> TypeCheckedModel::dictEntryFiel
 std::optional<TypeId> TypeCheckedModel::dictEntryType(TypeId dictionary) const {
     const auto found = dictEntryTypes.find(dictionary);
     if (found == dictEntryTypes.end()) return std::nullopt;
+    return found->second;
+}
+
+std::optional<semantic::SymbolId> TypeCheckedModel::stringRoleFunction(semantic::LibraryRole role) const {
+    const auto found = stringRoles.find(role);
+    if (found == stringRoles.end()) return std::nullopt;
     return found->second;
 }
 
@@ -1455,6 +1468,11 @@ private:
                             break;
                         }
                     }
+                    // `s.utf8()` needs the array's `string_utf8` method (decision 0028 stage 3); a prelude without
+                    // it only cannot lower that call.
+                    if (roleFailure.empty() && methodRoles[semantic::LibraryRole::stringUtf8] > 1) {
+                        roleFailure = "the " + roleName + " role allows at most one method with the role string_utf8";
+                    }
                     if (roleFailure.empty() && isDict) {
                         // The entry struct a literal packs; its own role checks its shape.
                         const auto entry = model->semanticModelValue->roleSymbol(semantic::LibraryRole::dictEntry);
@@ -1514,6 +1532,7 @@ private:
                 case semantic::LibraryRole::arrayElement:
                 case semantic::LibraryRole::arrayCopy:
                 case semantic::LibraryRole::arrayLiteral:
+                case semantic::LibraryRole::stringUtf8:
                 case semantic::LibraryRole::containerEnd:
                 case semantic::LibraryRole::dictElement:
                 case semantic::LibraryRole::dictSet:
@@ -1575,10 +1594,95 @@ private:
                                         model->typeContext.typeParameterType(ownerParameters->front()) };
                         if (!matches) roleFailure = "the array_literal role requires 'private consuming func name(address: Int, "
                                 "count: Int): Self' returning the declaring type";
+                    } else if (symbol.libraryRole == semantic::LibraryRole::stringUtf8) {
+                        // `private consuming func name(text: String): Self`, called on an inert zero `[UInt8]`
+                        // (decision 0028 stage 3).
+                        matches = symbol.visibility == syntax::Visibility::private_ &&
+                                receiver == syntax::AccessEffect::consuming && written.size() == 1 &&
+                                written[0].label == std::optional<std::string>("text") &&
+                                written[0].access == syntax::AccessEffect::borrowing &&
+                                signature->parameters == std::vector<TypeId> { model->typeContext.stringType() } &&
+                                result != nullptr && result->kind == TypeKind::structure &&
+                                result->symbol == owner->id && ownerParameters != nullptr &&
+                                ownerParameters->size() == 1 &&
+                                result->arguments == std::vector<TypeId> {
+                                        model->typeContext.typeParameterType(ownerParameters->front()) };
+                        if (!matches) roleFailure = "the string_utf8 role requires 'private consuming func name(text: "
+                                "String): Self' returning the declaring type";
                     } else {
                         matches = receiver == syntax::AccessEffect::consuming && written.empty() &&
                                 signature->result == model->typeContext.voidType();
                         if (!matches) roleFailure = "the container_end role requires 'consuming func name()' returning Void";
+                    }
+                    break;
+                }
+                case semantic::LibraryRole::stringCount:
+                case semantic::LibraryRole::stringByte:
+                case semantic::LibraryRole::stringConcat:
+                case semantic::LibraryRole::stringEqual:
+                case semantic::LibraryRole::stringOrder: {
+                    // A private, non-generic function of borrowed operands whose signature is closed by the role;
+                    // lowering passes the operands positionally (decision 0028 stage 3).
+                    const auto role = symbol.libraryRole;
+                    const std::string roleName = collectionRoleName(role);
+                    const auto string = model->typeContext.stringType();
+                    const auto integer = model->typeContext.intType();
+                    std::vector<TypeId> operands { string, string };
+                    std::vector<std::string> labels { "left", "right" };
+                    TypeId result = integer;
+                    std::string shape;
+                    switch (role) {
+                        case semantic::LibraryRole::stringCount:
+                            operands = { string };
+                            labels = { "text" };
+                            result = integer;
+                            shape = "(text: String): Int";
+                            break;
+                        case semantic::LibraryRole::stringByte:
+                            operands = { string, integer };
+                            labels = { "text", "index" };
+                            result = model->typeContext.uint8Type();
+                            shape = "(text: String, index: Int): UInt8";
+                            break;
+                        case semantic::LibraryRole::stringConcat:
+                            result = string;
+                            shape = "(left: String, right: String): String";
+                            break;
+                        case semantic::LibraryRole::stringEqual:
+                            result = model->typeContext.boolType();
+                            shape = "(left: String, right: String): Bool";
+                            break;
+                        default:
+                            shape = "(left: String, right: String): Int";
+                            break;
+                    }
+                    // Only these scalar and String types: a non-generic prelude function's signature is checked in
+                    // every module, so it must not intern a library instance such as `[UInt8]`, whose methods would
+                    // then be instantiated everywhere.
+                    const bool resultMatches = signature != nullptr && signature->result == result;
+                    // Lowering calls and lowers the body, so the role is never a C binding.
+                    const bool hasBody = node->kind == syntax::Kind::functionDecl &&
+                            std::static_pointer_cast<syntax::FunctionDeclSyntax>(node)->body != nullptr &&
+                            model->nativeBinding(symbol.id) == nullptr;
+                    matches = symbol.kind == semantic::SymbolKind::function && hasBody &&
+                            (parameters == nullptr || parameters->empty()) &&
+                            symbol.visibility == syntax::Visibility::private_ && symbol.callable.has_value() &&
+                            !symbol.acceptsLinearArguments && signature != nullptr &&
+                            signature->parameters == operands && resultMatches &&
+                            symbol.callable->parameters.size() == labels.size();
+                    for (size_t index = 0; matches && index < labels.size(); ++index) {
+                        const auto& parameter = symbol.callable->parameters[index];
+                        matches = parameter.access == syntax::AccessEffect::borrowing &&
+                                parameter.label == std::optional<std::string>(labels[index]);
+                    }
+                    if (!matches) {
+                        roleFailure = "the " + roleName + " role requires 'private func name" + shape +
+                                "' with borrowed parameters and a body";
+                        break;
+                    }
+                    if (!model->stringRoles.emplace(role, symbol.id).second) {
+                        report(TypeCheckingDiagnosticId::invalidPrelude, symbol.span,
+                               "the compiler prelude declares a second function for the " + roleName + " role");
                     }
                     break;
                 }
@@ -3042,6 +3146,11 @@ private:
                     if (const auto literal = model->arrayRoleMethod(id, semantic::LibraryRole::arrayLiteral)) {
                         required.push_back(*literal);
                     }
+                    // `s.utf8()` builds a `[UInt8]` (decision 0028 stage 3); no other array needs the method.
+                    if (const auto utf8 = model->arrayRoleMethod(id, semantic::LibraryRole::stringUtf8);
+                        utf8.has_value() && arguments == std::vector<TypeId> { model->typeContext.uint8Type() }) {
+                        required.push_back(*utf8);
+                    }
                 }
                 if (model->isDictRoleType(id)) {
                     // The role-lowered uses of a dictionary reach its addressor, `dict_set`, its literal method and,
@@ -3425,7 +3534,8 @@ private:
             for (size_t index = 0; index < signature.parameters.size(); ++index) {
                 kinds.push_back(model->typeContext.type(signature.parameters[index])->kind);
                 pointers.push_back(binding->passesPointer(static_cast<uint32_t>(index)));
-                mutables.push_back(declaration->parameters[index]->accessEffect() == syntax::AccessEffect::inout);
+                const auto effect = declaration->parameters[index]->accessEffect();
+                mutables.push_back(effect == syntax::AccessEffect::inout || effect == syntax::AccessEffect::initializing);
             }
             const auto* descriptor = intrinsic::find(binding->symbol);
             if (!importing || descriptor == nullptr ||

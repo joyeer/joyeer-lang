@@ -380,13 +380,15 @@ private:
                 state.possiblyInitialized.insert(*symbol);
                 const auto parameterType = model->typeOf(*symbol);
                 // The ending method of a library container is exempt for its `self`: it consumes the
-                // container by returning, and its destroy runs `deinit` (decision 0025). So is the literal
-                // method, whose `self` is an inert zero value with nothing to end (decision 0026).
+                // container by returning, and its destroy runs `deinit` (decision 0025). So are the literal
+                // and `string_utf8` methods, whose `self` is an inert zero value with nothing to end (decisions 0026,
+                // 0028).
                 const auto* functionSymbol = function.has_value() ? model->semanticModel()->symbol(*function)
                                                                   : nullptr;
                 const bool endsContainer = parameter->isReceiver && functionSymbol != nullptr &&
                         (functionSymbol->libraryRole == semantic::LibraryRole::containerEnd ||
-                         functionSymbol->libraryRole == semantic::LibraryRole::arrayLiteral);
+                         functionSymbol->libraryRole == semantic::LibraryRole::arrayLiteral ||
+                         functionSymbol->libraryRole == semantic::LibraryRole::stringUtf8);
                 if (parameter->accessEffect() == syntax::AccessEffect::consuming &&
                     parameterType.has_value() && model->isLinear(*parameterType) && !endsContainer) {
                     linearParameters.push_back(*symbol);

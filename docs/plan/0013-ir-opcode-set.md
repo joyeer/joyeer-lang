@@ -9,8 +9,8 @@
 ## Goal
 
 Every IR opcode is described by one table row, the families that compile to the same code are merged, String
-operations leave the scalar opcodes, and the opcodes are numbered densely. The result is about 48 opcodes, each
-with one stated shape, so a new opcode is one row plus its own verifier check and backend arm.
+operations leave the scalar opcodes, and the opcodes are numbered densely. The result is 48 opcodes, each with one
+stated shape, so a new opcode is one row plus its own verifier check and backend arm.
 
 ## Definition of done
 
@@ -24,13 +24,13 @@ with one stated shape, so a new opcode is one row plus its own verifier check an
 
 ## Current state
 
-Stage 0 removed `logicalAnd` (wire 26, [#33](https://github.com/joyeer/joyeer-lang/pull/33)). Stages 1, 2 and 4
-are implemented on `feat/ir-opcode-descriptors`: `OpcodeDescriptor` rows in `compiler/ir/opcode.cpp` drive the
-helpers, the verifier's shape, result, modifier and authorization checks, and the dumper; the families are merged
-(wire 27); and the 51 opcodes are numbered densely in table order (wire 28). What is left is stage 3: String still has
-the scalar opcodes `string_utf8`, `count` and `subscript`, and String arms in `add` and `compare`. Its mechanism is a
-design choice for the user. `Instruction::integerValue` still has four meanings; the row's immediate kind names which
-one.
+Stage 0 removed `logicalAnd` (wire 26, [#33](https://github.com/joyeer/joyeer-lang/pull/33)). Stages 1 to 4 are
+implemented on `feat/ir-opcode-descriptors`: `OpcodeDescriptor` rows in `compiler/ir/opcode.cpp` drive the helpers,
+the verifier's shape, result, modifier and authorization checks, and the dumper; the families are merged (wire 27);
+the opcodes are numbered densely in table order (wire 28); and String operations are calls to the collections
+prelude, so the String opcodes are gone and `add`, `sub`, `mul` and `compare` take only scalars (48 opcodes, wire 29).
+What is left is the Release CTest and `scripts/validate.py` for every stage. `Instruction::integerValue` still has
+four meanings; the row's immediate kind names which one.
 
 ## Todo
 
@@ -90,11 +90,51 @@ one.
 
 ### Stage 3: String operations leave the scalar opcodes
 
-- [ ] Choose the mechanism (a String projection opcode with a bundled prelude, or String as a library struct),
-  recorded in 0028 or a new decision.
-- [ ] `stringUtf8`, String `add` and comparisons become calls; `count` and `subscript` become inlinable library code.
-- [ ] The -O0 cost gate, the -O0/-O2 differential fixture, and the trap message and location check of 0028.
-- [ ] `ir-backend-reviewer` pass; `scripts/validate.py` in Debug and Release.
+- [x] Choose the mechanism, recorded in 0028. Evidence: the user chose a String projection with the bundled prelude
+  (2026-11-20). The projection is two reserved C-binding intrinsics, not an opcode, because a C binding already
+  receives a String as its data pointer and count; `utf8()` became an `Array` method instantiated for `[UInt8]`
+  only, and the five String functions are collected on first use, both so that no prelude signature or body reaches
+  modules, such as runtime core units, that do not use them.
+- [x] `stringUtf8`, String `add` and comparisons become calls; `count` and `subscript` become inlinable library code;
+  wire 29. Evidence: `OpcodeDescriptorTest.EveryOpcodeHasItsPinnedRow` (48 rows, wire 29),
+  `CompareTakesScalarOperandsAndYieldsABool`, `ArithmeticTakesIntegerOrFloatingOperands`,
+  `IRLoweringTest.LowersStringCountAndSubscript`, `LowersStringUtf8ToOwnedByteArray` and
+  `LowersStringOperatorsToPreludeCalls`, each observed failing before the change; tests that located String
+  operations by opcode now find the prelude calls.
+- [x] The -O0/-O2 differential fixture. Evidence: `tests/e2e/string_operations.joyeer` (concatenation with empty
+  sides and `+=`, `==`, `!=` and the orderings on equal, different and different-length Strings, reads at 0 and
+  count - 1, `utf8()`, and a compile-time String ordering against the same one at run time), `E2EStringOperationsO0`
+  to `O3`, passing with the pre-stage-3 compiler and with this one; reads at -1 and count are the
+  `E2ECheckedString*` trap fixtures at every level.
+- [x] The trap message and location. Evidence: `string index out of bounds` is unchanged (`E2ECheckedString*`).
+  After `opt -passes=always-inline` on `checked_string_negative_index.joyeer` built with `-g`, both bounds panics
+  are at `collections.joyeer` lines 243 and 246, inlined at the read (line 4, column 18), the subscript span the
+  backend's trap used before. `LLVMBackendTest.StringByteReadsCallTheInlinedPreludeFromTheirLocation` pins the
+  call's location and the `alwaysinline` callee.
+- [x] The -O0 cost gate (0026's limits, Windows x64). Evidence: baseline d7a246f against this tree, both built with the
+  same options (Debug compiler for -O0, Release for -O2), `benchmark_strings.py`, 30 interleaved repetitions, paired
+  bootstrap: -O0 `string_bytes` 1.119 [1.113, 1.127], concat 0.967, compare 0.997, `utf8` 1.009, all within 1.15
+  (`string_bytes` was 1.402 [1.395, 1.432] before String role parameters stopped being spilled). Sizes: unchanged
+  except `string_utf8` +512 bytes at -O0 and -O2; `hello` unchanged at both. `hello` front end (`--emit-llvm`, 30
+  paired runs) 1.012. Raw reports in `out/perf-gate/string-ops`.
+- [ ] The -O2 cost gate. Concat 0.952, compare 1.004 [0.995, 1.008] and `utf8` 1.002 pass; `string_bytes` -O2 is
+  1.023 [1.007, 1.052] (median within 1.03, lower bound above 1), and the 15-repetition run was disturbed
+  ([0.40, 1.48]). The two compilers' inner byte loops are the same instructions after `opt -O2` (load, zero
+  extension, checked add, compare and branch), so the difference is outside the loop's code, as in the 0027
+  placement finding. Under 0026's rerun rule this row needs the user's decision.
+- [x] `ir-backend-reviewer` and `type-system-reviewer` passes. Evidence: no critical or high findings. Addressed: an
+  intrinsic accepting an initializing String parameter, which the backend would have read past
+  (`CInteropTest.TheVerifierRejectsAnInitializingIntrinsicParameter`, observed failing first); a C binding accepted
+  as a String role (`CollectionRoleTest.MalformedStringRolesAreRejected`, observed failing first); parameter labels
+  now checked; tests for role validation, a prelude without the roles, collection on first use and from generic
+  instances, and the projection intrinsics; an assertion that the reserved room holds; `name-resolution.md`.
+- [x] Debug CTest. Evidence: after the review fixes, 2044 tests at `-j6`: all passed except the three known
+  parallel-load timeouts (Fern.Manifest, Fern.Workspace, Compression.Interoperability) and the five `Moss.Fern.*`
+  suites, which failed before building because all 128 Fern build-directory generations under the ignored
+  `target/debug/moss.*` are taken by runs since 2026-11-07, not because of this change; the first full run of this
+  stage, before that cap was reached, passed them (2033 of 2037, the other failure being the instantiation report
+  whose prelude line moved, now regenerated).
+- [ ] Release CTest and `scripts/validate.py`. Not run.
 
 ## Open questions
 
@@ -107,6 +147,9 @@ New opcodes, and any change to what programs observe outside stage 3's measured 
 
 ## Progress log
 
+- 2026-11-21: Stage 3 implemented (wire 29): String operations call the collections prelude, and the String opcodes
+  are removed. Both reviews addressed; the -O0 gate passes after String role parameters stopped being spilled. Open:
+  the -O2 `string_bytes` row (lower bound 1.007) needs the user's decision; Release CTest and `scripts/validate.py`.
 - 2026-11-20: Stage 4 implemented (wire 28): 51 opcodes numbered densely in seven groups; all items checked except
   Release CTest and `scripts/validate.py`. Stage 3 waits for the user's choice of mechanism.
 - 2026-11-20: Stage 2 implemented (wire 27): merged families, `Instruction::modifier`, `trap_if`, stricter `compare`;

@@ -71,16 +71,13 @@ constexpr std::array descriptors {
     value(Opcode::convert, "convert", 1, I::none, M::conversionMode),
     value(Opcode::integerFits, "fits", 1, I::type),
 
-    // Aggregates and Strings.
+    // Aggregates.
     value(Opcode::constructStruct, "construct_struct", variadic),
     value(Opcode::fieldAddress, "field_addr", 1),
     value(Opcode::extractField, "extract_field", 1),
     value(Opcode::constructEnum, "construct_enum", variadic),
     value(Opcode::extractPayload, "extract_payload", 1, I::payloadIndex),
     value(Opcode::payloadAddress, "payload_address", 1, I::payloadIndex),
-    value(Opcode::stringUtf8, "string_utf8", 1),
-    value(Opcode::count, "count", 1),
-    value(Opcode::subscript, "subscript", 2),
 
     // Calls and function values.
     call(Opcode::call, "call", R::directCallee),

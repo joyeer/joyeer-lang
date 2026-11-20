@@ -299,6 +299,8 @@ function values (§5.6.1).
 | `joyeer_intrinsic_float_bits` | `(value: Float) -> UInt32` | The IEEE 754 bit pattern of `value` |
 | `joyeer_intrinsic_syscall` | `(number: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int) -> Int` | A Linux system call: `number` and the six arguments in the architecture's registers, the kernel's result returned unchanged (-4095 to -1 is a negated `errno`). Lowers to inline assembly (`syscall` on x86-64, `svc #0` on AArch64); it is a diagnostic on any other architecture, and only a Linux program can run it. [Decision 0011](../docs/decisions/0011-runtime-without-the-c-library.md) |
 | `joyeer_intrinsic_target_architecture` | `() -> Int` | A constant: 1 for an x86-64 target, 2 for AArch64, 0 otherwise, so a runtime unit can choose the system call numbers of its architecture |
+| `joyeer_intrinsic_string_data` | `(text: String) -> Int` | The address of the bytes of the borrowed `text`, as a C binding receives them; meaningful only while `text` is alive and unchanged. The collections prelude's String operations build on it ([0028](../docs/decisions/0028-ir-opcode-set.md)) |
+| `joyeer_intrinsic_string_count` | `(text: String) -> Int` | The byte count of `text` |
 
 The generic layout intrinsics (`joyeer_intrinsic_size_of`, `_align_of`,
 `_move_in`, `_move_out`, `_destroy_at`, `_stack_slot`, `_needs_destroy`, `_callback_address`) are a separate family: they are not

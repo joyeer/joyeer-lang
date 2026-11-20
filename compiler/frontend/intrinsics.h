@@ -46,6 +46,8 @@ enum class Operation {
     floatBits,
     systemCall,
     targetArchitecture,
+    stringData,
+    stringCount,
 };
 
 struct Descriptor {
@@ -60,7 +62,7 @@ struct Descriptor {
 
 using typing::TypeKind;
 
-inline constexpr std::array<Descriptor, 25> table {{
+inline constexpr std::array<Descriptor, 27> table {{
     { "joyeer_intrinsic_address_of", Operation::addressOf, TypeKind::integer,
       { TypeKind::structure, TypeKind::error }, 1, true },
     { "joyeer_intrinsic_load_u8", Operation::load8, TypeKind::uint8,
@@ -134,6 +136,12 @@ inline constexpr std::array<Descriptor, 25> table {{
     // can pick the system call numbers of the architecture it was built for.
     { "joyeer_intrinsic_target_architecture", Operation::targetArchitecture, TypeKind::integer,
       { TypeKind::error, TypeKind::error, TypeKind::error }, 0, false },
+    // The two halves of a borrowed String (decision 0028 stage 3): the address of its bytes and its byte count, as a
+    // C binding already passes them. The collections prelude's String roles build on these; no call is emitted.
+    { "joyeer_intrinsic_string_data", Operation::stringData, TypeKind::integer,
+      { TypeKind::string, TypeKind::error, TypeKind::error }, 1, false },
+    { "joyeer_intrinsic_string_count", Operation::stringCount, TypeKind::integer,
+      { TypeKind::string, TypeKind::error, TypeKind::error }, 1, false },
 }};
 
 // The layout intrinsics (spec 20.12.5) are compiler-known generic functions, not `` imports.
@@ -167,9 +175,11 @@ inline constexpr std::array<Descriptor, 25> table {{
 }
 
 // Whether a declaration's parameter and result kinds, which parameters are bare
-// byte pointers, and which are `inout`, are exactly what the intrinsic requires.
-// The byte pointer must be `inout`: a borrowed array may live in read-only
-// memory (a constant), and a store through its address would then be undefined.
+// byte pointers, and which are `inout` or `initializing`, are exactly what the
+// intrinsic requires. The byte pointer must be `inout`: a borrowed array may live
+// in read-only memory (a constant), and a store through its address would then be
+// undefined. Every other parameter is borrowed: an initializing String would reach
+// the backend as one output address, not as its data and count.
 [[nodiscard]] inline bool matches(
         const Descriptor& descriptor,
         TypeKind result,
@@ -183,7 +193,7 @@ inline constexpr std::array<Descriptor, 25> table {{
     for (size_t index = 0; index < parameters.size(); ++index) {
         if (parameters[index] != descriptor.parameters[index]) return false;
         if (pointers[index] != (index == 0 && descriptor.bytePointer)) return false;
-        if (pointers[index] && !mutables[index]) return false;
+        if (mutables[index] != pointers[index]) return false;
     }
     return true;
 }

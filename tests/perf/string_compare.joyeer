@@ -1,0 +1,16 @@
+// String equality and ordering (decision 0028 stage 3): `==`, `!=`, `<` and `>=`, each a runtime comparison.
+func main() {
+    let first = "alpha-beta-gamma"
+    let second = "alpha-beta-gammb"
+    let third = "alpha-beta-gamma"
+    var total = 0
+    var round = 0
+    while round < 5000000 {
+        if first == third { total = total + 1 }
+        if first != second { total = total + 2 }
+        if first < second { total = total + 4 }
+        if second >= third { total = total + 8 }
+        round = round + 1
+    }
+    print(value: total)
+}

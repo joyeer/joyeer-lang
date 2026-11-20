@@ -79,6 +79,18 @@ protected:
         return count;
     }
 
+    // Calls from `function` to the function named exactly `name`, such as a String role of the collections prelude.
+    size_t callsNamed(const joyeer::ir::Function& function, const std::string& name) const {
+        size_t count = 0;
+        for (const auto& block : function.blocks) {
+            for (const auto& instruction : block.instructions) {
+                if (instruction.opcode != joyeer::ir::Opcode::call || !instruction.callee.has_value()) continue;
+                count += result.module->functions.at(*instruction.callee).name == name;
+            }
+        }
+        return count;
+    }
+
     // The number of `literal` instructions of an integer type in `function`.
     size_t integerLiteralCount(const joyeer::ir::Function& function) const {
         size_t count = 0;
@@ -870,8 +882,10 @@ return number
 )JOYEER");
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     ASSERT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+    // The String `+` is a call to the collections prelude's `concatenate` (decision 0028 stage 3).
     const auto& forward = function("forward");
-    EXPECT_EQ(opcodeCount(forward, joyeer::ir::Opcode::call), 2u);
+    EXPECT_EQ(opcodeCount(forward, joyeer::ir::Opcode::call), 3u);
+    EXPECT_EQ(callsNamed(forward, "concatenate"), 1u);
     EXPECT_EQ(opcodeCount(forward, joyeer::ir::Opcode::switchPattern), 1u);
     EXPECT_EQ(opcodeCount(forward, joyeer::ir::Opcode::extractPayload), 2u);
     EXPECT_EQ(opcodeCount(forward, joyeer::ir::Opcode::copyValue), 1u)
@@ -1471,9 +1485,12 @@ return text[0]
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     const auto verification = joyeer::ir::Verifier().verify(*result.module);
     ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    // The String roles of the collections prelude (decision 0028 stage 3), always inlined.
     const auto& first = function("first");
-    EXPECT_EQ(opcodeCount(first, joyeer::ir::Opcode::count), 1u);
-    EXPECT_EQ(opcodeCount(first, joyeer::ir::Opcode::subscript), 1u);
+    EXPECT_EQ(callsNamed(first, "byteCount"), 1u);
+    EXPECT_EQ(callsNamed(first, "byteAt"), 1u);
+    EXPECT_TRUE(function("byteCount").alwaysInline);
+    EXPECT_TRUE(function("byteAt").alwaysInline);
 }
 
 TEST_F(IRLoweringTest, LowersStringUtf8ToOwnedByteArray) {
@@ -1485,9 +1502,112 @@ return text.utf8()
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     const auto verification = joyeer::ir::Verifier().verify(*result.module);
     ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    // The library array's `string_utf8` method on an inert zero `[UInt8]` (decision 0028 stage 3), always inlined,
+    // and instantiated for no other array.
     const auto& bytes = function("bytes");
-    EXPECT_EQ(opcodeCount(bytes, joyeer::ir::Opcode::stringUtf8), 1u);
+    EXPECT_EQ(callsTo(bytes, ".utf8"), 1u);
+    EXPECT_EQ(opcodeCount(bytes, joyeer::ir::Opcode::zeroInitialize), 1u);
     EXPECT_EQ(opcodeCount(bytes, joyeer::ir::Opcode::ret), 1u);
+    size_t methods = 0;
+    for (const auto& candidate : result.module->functions) {
+        if (candidate.name.ends_with(".utf8")) {
+            ++methods;
+            EXPECT_TRUE(candidate.alwaysInline) << candidate.name;
+        }
+    }
+    EXPECT_EQ(methods, 1u);
+}
+
+// The String role functions are collected only when a String operation calls one (decision 0028 stage 3), so a
+// module without String operations, such as a runtime core unit, has none of them; and the array's `utf8` method is
+// instantiated for `[UInt8]` alone, even next to other arrays.
+TEST_F(IRLoweringTest, CollectsStringRolesOnlyWhenUsed) {
+    lower("func add(left: Int, right: Int): Int { return left + right }\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    for (const auto& candidate : result.module->functions) {
+        for (const auto* name : { "byteCount", "byteAt", "concatenate", "equals", "order" }) {
+            EXPECT_NE(candidate.name, name);
+        }
+        EXPECT_FALSE(candidate.name.ends_with(".utf8")) << candidate.name;
+    }
+
+    lower(R"JOYEER(func bytes(text: String, values: [Int]): Int {
+let utf8 = text.utf8()
+return utf8.count + values.count + text.count
+}
+)JOYEER");
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    size_t methods = 0;
+    size_t counts = 0;
+    for (const auto& candidate : result.module->functions) {
+        methods += candidate.name.ends_with(".utf8");
+        counts += candidate.name == "byteCount";
+        EXPECT_NE(candidate.name, "byteAt");
+    }
+    EXPECT_EQ(methods, 1u);
+    EXPECT_EQ(counts, 1u);
+
+    // From generic instance bodies: collected once, outside the instance, and called by both instances.
+    lower(R"JOYEER(func measure<T>(value: T, text: String): Int { return text.count }
+func run(text: String): Int { return measure(value: 1, text: text) + measure(value: true, text: text) }
+)JOYEER");
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto generic = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(generic.succeeded()) << joyeer::ir::dump(generic);
+    std::vector<const joyeer::ir::Function*> roles;
+    std::vector<const joyeer::ir::Function*> instances;
+    for (const auto& candidate : result.module->functions) {
+        if (candidate.name == "byteCount") roles.push_back(&candidate);
+        if (candidate.name.starts_with("measure<")) instances.push_back(&candidate);
+    }
+    ASSERT_EQ(roles.size(), 1u);
+    EXPECT_TRUE(roles[0]->alwaysInline);
+    ASSERT_EQ(instances.size(), 2u);
+    for (const auto* instance : instances) EXPECT_EQ(callsNamed(*instance, "byteCount"), 1u) << instance->name;
+}
+
+// String concatenation, equality and ordering are calls to the collections prelude's String roles (decision 0028
+// stage 3): `!=` negates the equality, and the orderings compare the -1, 0 or 1 result with 0. The verifier rejects
+// String operands of `add` and `compare`, so verifying the module also shows that none are left.
+TEST_F(IRLoweringTest, LowersStringOperatorsToPreludeCalls) {
+    lower(R"JOYEER(func join(left: String, right: String): String {
+var text = left + right
+text += right
+return text
+}
+func same(left: String, right: String): Bool {
+return left == right
+}
+func differ(left: String, right: String): Bool {
+return left != right
+}
+func before(left: String, right: String): Bool {
+return left < right
+}
+func after(left: String, right: String): Bool {
+return left >= right
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    EXPECT_EQ(callsNamed(function("join"), "concatenate"), 2u);
+    EXPECT_EQ(opcodeCount(function("join"), joyeer::ir::Opcode::add), 0u);
+    EXPECT_EQ(callsNamed(function("same"), "equals"), 1u);
+    EXPECT_EQ(opcodeCount(function("same"), joyeer::ir::Opcode::compare), 0u);
+    EXPECT_EQ(callsNamed(function("differ"), "equals"), 1u);
+    EXPECT_EQ(compareCount(function("differ"), joyeer::ir::ComparePredicate::equal), 1u);
+    EXPECT_EQ(callsNamed(function("before"), "order"), 1u);
+    EXPECT_EQ(compareCount(function("before"), joyeer::ir::ComparePredicate::less), 1u);
+    EXPECT_EQ(callsNamed(function("after"), "order"), 1u);
+    EXPECT_EQ(compareCount(function("after"), joyeer::ir::ComparePredicate::greaterEqual), 1u);
+    for (const auto* name : { "concatenate", "equals", "order" }) {
+        SCOPED_TRACE(name);
+        EXPECT_TRUE(function(name).alwaysInline);
+    }
 }
 
 // Compile-time regression (decision 0027 rule 4): the dictionary literal protocol once walked the function's blocks
@@ -1559,7 +1679,7 @@ return values[0] + lookup["answer"]
     // subscripts go through an addressor.
     const auto& build = function("build");
     EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::stackBlock), 2u);
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::subscript), 0u);
+    EXPECT_EQ(callsNamed(build, "byteAt"), 0u);
     EXPECT_EQ(callsTo(build, ".literal"), 2u);
     EXPECT_EQ(callsTo(build, ".element"), 2u);
     EXPECT_GE(opcodeCount(build, joyeer::ir::Opcode::fieldAddress), 2u);
@@ -1592,8 +1712,10 @@ return values
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     const auto verification = joyeer::ir::Verifier().verify(*result.module);
     ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    // Two appends, the literal and the String `+`, a call to the collections prelude's `concatenate`.
     const auto& build = function("build");
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::call), 3u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::call), 4u);
+    EXPECT_EQ(callsNamed(build, "concatenate"), 1u);
     EXPECT_GE(opcodeCount(build, joyeer::ir::Opcode::copyValue), 1u);
     EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::ret), 1u);
 }
@@ -1818,7 +1940,7 @@ TEST_F(IRLoweringTest, LowersTheCompleteJsonParserMvpFixture) {
             << (result.module == nullptr ? std::string() : joyeer::ir::dump(*result.module));
     const auto verification = joyeer::ir::Verifier().verify(*result.module);
     ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
-    EXPECT_EQ(opcodeCount(function("peek"), joyeer::ir::Opcode::subscript), 1u);
+    EXPECT_EQ(callsNamed(function("peek"), "byteAt"), 1u);
     EXPECT_EQ(opcodeCount(function("parseValue"), joyeer::ir::Opcode::switchPattern), 2u);
     EXPECT_GE(opcodeCount(function("parseValue"), joyeer::ir::Opcode::constructEnum), 7u);
 }
@@ -1938,11 +2060,13 @@ accept(value: consume text, flag: if flag { return } else { false })
 
         ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
         const auto& instructions = function("run").blocks[0].instructions;
+        // String `+`, `==` and `!=` call the collections prelude's roles (decision 0028 stage 3).
         const auto binary = std::find_if(
             instructions.begin(), instructions.end(),
-            [](const auto& instruction) {
-                return instruction.opcode == joyeer::ir::Opcode::add ||
-                    instruction.opcode == joyeer::ir::Opcode::compare;
+            [this](const auto& instruction) {
+                if (instruction.opcode != joyeer::ir::Opcode::call || !instruction.callee.has_value()) return false;
+                const auto& name = result.module->functions.at(*instruction.callee).name;
+                return name == "concatenate" || name == "equals";
             });
         ASSERT_NE(binary, instructions.end());
         const auto capture = std::find_if(

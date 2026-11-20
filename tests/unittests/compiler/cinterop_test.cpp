@@ -525,6 +525,50 @@ TEST_F(CInteropTest, RejectsFloatingPointBitPatternsOfTheWrongType) {
     }
 }
 
+// The String projections of the collections prelude (decision 0028 stage 3): a borrowed String, an Int result.
+TEST_F(CInteropTest, ChecksTheStringProjectionIntrinsics) {
+    check(R"(
+@c_extern(symbol: "joyeer_intrinsic_string_data")
+func data(text: String): Int
+@c_extern(symbol: "joyeer_intrinsic_string_count")
+func count(text: String): Int
+func use(text: String): Int { return data(text: text) + count(text: text) }
+)");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    for (const auto& declaration : std::vector<std::string> {
+            "@c_extern(symbol: \"joyeer_intrinsic_string_count\")\nfunc f(text: initializing String): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_string_count\")\nfunc f(text: inout String): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_string_count\")\nfunc f(text: String): Int32\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_string_data\")\nfunc f(text: String, extra: Int): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_string_data\")\nfunc f(text: [UInt8]): Int\n" }) {
+        check(declaration);
+        EXPECT_FALSE(checking.succeeded()) << declaration;
+    }
+    // Not in an ordinary unit.
+    check("@c_extern(symbol: \"joyeer_intrinsic_string_count\")\nfunc f(text: String): Int\n", false);
+    EXPECT_FALSE(checking.succeeded());
+}
+
+// The verifier, the trust boundary for IR from the wire, rejects an intrinsic whose String parameter is an
+// initializing output: the backend would pass one output address, not the String's data and count.
+TEST_F(CInteropTest, TheVerifierRejectsAnInitializingIntrinsicParameter) {
+    ASSERT_NO_FATAL_FAILURE(lower("@c_extern(symbol: \"joyeer_intrinsic_string_count\")\n"
+                                  "func count(text: String): Int\n"));
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    auto mutated = *module;
+    const auto found = std::find_if(mutated.functions.begin(), mutated.functions.end(), [](const auto& function) {
+        return function.nativeBinding.has_value() && function.nativeBinding->symbol == "joyeer_intrinsic_string_count";
+    });
+    ASSERT_NE(found, mutated.functions.end());
+    auto& parameter = found->parameters.at(0);
+    parameter.value.category = joyeer::ir::ValueCategory::address;
+    parameter.isMutable = true;
+    parameter.isInitializing = true;
+    const auto verification = joyeer::ir::Verifier().verify(mutated);
+    EXPECT_NE(joyeer::ir::dump(verification).find("invalid or unauthorized C binding"), std::string::npos)
+            << joyeer::ir::dump(verification);
+}
+
 TEST_F(CInteropTest, ChecksTheSystemCallAndArchitectureIntrinsics) {
     check(R"(
 @c_extern(symbol: "joyeer_intrinsic_syscall")

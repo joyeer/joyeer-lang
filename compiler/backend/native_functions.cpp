@@ -407,13 +407,6 @@ llvm::Value* Builder::arithmetic(const ir::Instruction& instruction) {
     auto* left = operand(instruction.operands[0]);
     auto* right = operand(instruction.operands[1]);
     const auto kind = type(values.at(instruction.operands[0]).type).kind;
-    if (kind == typing::TypeKind::string && instruction.opcode == ir::Opcode::add) {
-        auto* address = stack(left->getType());
-        call("joyeer_string_concat_abi", builder.getVoidTy(), {address,
-                builder.CreateExtractValue(left, 0, temporary()), builder.CreateExtractValue(left, 1, temporary()),
-                builder.CreateExtractValue(right, 0, temporary()), builder.CreateExtractValue(right, 1, temporary())});
-        return builder.CreateLoad(left->getType(), address);
-    }
     if (typing::isFloating(kind)) {
         switch (instruction.opcode) {
             case ir::Opcode::add: return builder.CreateFAdd(left, right);
@@ -514,6 +507,19 @@ llvm::Value* Builder::shift(const ir::Instruction& instruction) {
                                          : builder.CreateLShr(value, amount);
 }
 
+// Literal String patterns keep this call in the backend; String operators are prelude calls (decision 0028 stage 3).
+// The data pointers pass as integers, the collections prelude's declaration of the same symbol.
+llvm::Value* Builder::stringsEqual(llvm::Value* left, llvm::Value* right) {
+    const auto data = [&](llvm::Value* string) {
+        return builder.CreatePtrToInt(builder.CreateExtractValue(string, 0, temporary()), builder.getInt64Ty(),
+                                      temporary());
+    };
+    return call("joyeer_string_equal_abi", builder.getInt1Ty(), {data(left),
+            builder.CreateExtractValue(left, 1, temporary()), data(right),
+            builder.CreateExtractValue(right, 1, temporary())});
+}
+
+// Scalar operands only: the verifier rejects any other `compare`.
 llvm::Value* Builder::comparison(ir::ComparePredicate compared, llvm::Value* left, llvm::Value* right,
         typing::TypeKind kind) {
     using Predicate = ir::ComparePredicate;
@@ -529,19 +535,6 @@ llvm::Value* Builder::comparison(ir::ComparePredicate compared, llvm::Value* lef
             case Predicate::notEqual: predicate = llvm::CmpInst::FCMP_UNE; break;
         }
         return builder.CreateFCmp(predicate, left, right);
-    }
-    if (auto* aggregate = llvm::dyn_cast<llvm::StructType>(left->getType());
-            aggregate != nullptr && aggregate->getName() == "joyeer.string") {
-        std::vector<llvm::Value*> arguments {builder.CreateExtractValue(left, 0, temporary()),
-                builder.CreateExtractValue(left, 1, temporary()), builder.CreateExtractValue(right, 0, temporary()),
-                builder.CreateExtractValue(right, 1, temporary())};
-        if (compared == Predicate::equal || compared == Predicate::notEqual) {
-            auto* equal = call("joyeer_string_equal_abi", builder.getInt1Ty(), arguments);
-            return compared == Predicate::equal ? equal : builder.CreateNot(equal);
-        }
-        left = call("joyeer_string_compare_abi", builder.getInt64Ty(), arguments);
-        right = integer(0);
-        kind = typing::TypeKind::integer;
     }
     const bool signedValue = typing::isSignedInteger(kind);
     llvm::CmpInst::Predicate predicate = llvm::CmpInst::ICMP_EQ;
@@ -586,7 +579,7 @@ llvm::Value* Builder::extractPayload(ir::TypeId id, llvm::Value* value,
 llvm::Value* Builder::pattern(const ir::Pattern& tested, llvm::Value* value) {
     if (tested.kind == ir::PatternKind::wildcard) return integer(1, 1);
     if (tested.kind == ir::PatternKind::stringLiteral) {
-        return comparison(ir::ComparePredicate::equal, value, stringLiteral(tested.text));
+        return stringsEqual(value, stringLiteral(tested.text));
     }
     if (tested.kind == ir::PatternKind::floatingLiteral) {
         return builder.CreateFCmpOEQ(value, llvm::ConstantFP::get(value->getType(), tested.text));

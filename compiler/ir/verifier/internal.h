@@ -236,9 +236,6 @@ private:
     void verifyConstructEnum(const InstructionSite& site);
     void verifyExtractPayload(const InstructionSite& site);
     void verifyPayloadAddress(const InstructionSite& site);
-    void verifyStringUtf8(const InstructionSite& site);
-    void verifyStringCount(const InstructionSite& site);
-    void verifyStringSubscript(const InstructionSite& site);
 
     // calls.cpp
     void verifyCall(const InstructionSite& site);

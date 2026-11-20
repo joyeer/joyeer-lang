@@ -62,6 +62,17 @@ public struct Array<T> {
         return .Some(joyeer_intrinsic_move_out<T>(address: slot))
     }
 
+    // `text.utf8()`: an owned copy of a String's bytes (decision 0028 stage 3), called on an inert zero value. The
+    // compiler instantiates it only for `[UInt8]`, so each byte is one element.
+    @compiler_role(string_utf8)
+    private consuming func utf8(text: String): Array<T> {
+        let slot = joyeer_intrinsic_stack_slot<Array<T>>()
+        createOwned(output: slot, values: stringData(text: text), count: stringCount(text: text),
+                elementSize: joyeer_intrinsic_size_of<T>(), cloneElement: joyeer_intrinsic_clone_callback<T>(),
+                destroyElement: joyeer_intrinsic_destroy_callback<T>())
+        return joyeer_intrinsic_move_out<Array<T>>(address: slot)
+    }
+
     @compiler_role(container_end)
     public consuming func consumeEmpty(): Void {
         consumeEmptyArray(array: joyeer_intrinsic_place_address<Array<T>>(value: &self))
@@ -192,4 +203,70 @@ public struct Dict<K, V> {
         if self.address == 0 { return }
         destroyDictionary(dictionary: joyeer_intrinsic_place_address<Dict<K, V>>(value: &self))
     }
+}
+
+// The String operations (decision 0028 stage 3). A String is a borrowed `{ data, count }` pair: the two projection
+// intrinsics read its halves, and the runtime functions take them as Int words, as their exports in
+// `core/strings.joyeer` and `core/text.joyeer` declare them. Lowering calls these private functions for `s.count`,
+// `s[i]`, `+` and `+=`, `==` and `!=`, and the orderings, and always inlines them; `s.utf8()` is `Array`'s
+// `string_utf8` method. They must not use those String operations themselves. Lowering emits each only into a
+// module that uses it, but every module checks their signatures, so these name no library type.
+
+@c_extern(symbol: "joyeer_intrinsic_string_data")
+private func stringData(text: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_string_count")
+private func stringCount(text: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u8")
+private func loadByte(address: Int): UInt8
+
+@c_extern(symbol: "joyeer_string_concat_abi")
+private func concatenateBytes(output: Int, leftData: Int, leftCount: Int, rightData: Int, rightCount: Int): Void
+
+@c_extern(symbol: "joyeer_string_equal_abi")
+private func equalBytes(leftData: Int, leftCount: Int, rightData: Int, rightCount: Int): Bool
+
+@c_extern(symbol: "joyeer_string_compare_abi")
+private func compareBytes(leftData: Int, leftCount: Int, rightData: Int, rightCount: Int): Int
+
+@compiler_role(string_count)
+private func byteCount(text: String): Int {
+    return stringCount(text: text)
+}
+
+// `text[index]`: the index is checked against the byte count, then one byte is read. `slot_address` has no overflow
+// check; the index is already within the String.
+@compiler_role(string_byte)
+private func byteAt(text: String, index: Int): UInt8 {
+    if index < 0 {
+        panic(message: literalAddress(text: "string index out of bounds"))
+    }
+    if index >= stringCount(text: text) {
+        panic(message: literalAddress(text: "string index out of bounds"))
+    }
+    return loadByte(address: joyeer_intrinsic_slot_address<UInt8>(base: stringData(text: text), index: index))
+}
+
+// `left + right`: a new owned String.
+@compiler_role(string_concat)
+private func concatenate(left: String, right: String): String {
+    let slot = joyeer_intrinsic_stack_slot<String>()
+    concatenateBytes(output: slot, leftData: stringData(text: left), leftCount: stringCount(text: left),
+            rightData: stringData(text: right), rightCount: stringCount(text: right))
+    return joyeer_intrinsic_move_out<String>(address: slot)
+}
+
+// `left == right`; `!=` is its negation.
+@compiler_role(string_equal)
+private func equals(left: String, right: String): Bool {
+    return equalBytes(leftData: stringData(text: left), leftCount: stringCount(text: left),
+            rightData: stringData(text: right), rightCount: stringCount(text: right))
+}
+
+// -1, 0 or 1 by the first differing byte, else by length: each ordering compares the result with 0.
+@compiler_role(string_order)
+private func order(left: String, right: String): Int {
+    return compareBytes(leftData: stringData(text: left), leftCount: stringCount(text: left),
+            rightData: stringData(text: right), rightCount: stringCount(text: right))
 }

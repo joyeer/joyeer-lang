@@ -43,17 +43,13 @@ enum class Opcode {
     convert,
     integerFits,
 
-    // Aggregates and Strings. `count` is the byte length of a String; `subscript` is the byte of a String at an Int
-    // offset and traps out of range.
+    // Aggregates. String operations are calls to the collections prelude (decision 0028 stage 3).
     constructStruct,
     fieldAddress,
     extractField,
     constructEnum,
     extractPayload,
     payloadAddress,
-    stringUtf8,
-    count,
-    subscript,
 
     // Calls and function values (decision 0020). `functionAddress` yields `callee` as a value of its function type;
     // `callIndirect` calls operand 0, a function value, with the remaining operands passed by the type's parameter

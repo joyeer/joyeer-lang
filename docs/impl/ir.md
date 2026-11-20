@@ -177,7 +177,8 @@ The current instruction set covers:
 - `literal` (integer, byte, Boolean and unit values), floating and String constants;
 - stack allocation, zero initialization, load, and store;
 - explicit `copy`, `take`, and `destroy` ownership operations;
-- implemented arithmetic, `compare` (scalar or String operands, a Bool result) and bitwise operations;
+- implemented arithmetic (`add`, `sub` and `mul` take integer or floating operands), `compare` (scalar operands, a
+  Bool result) and bitwise operations;
 - checked `div` / `rem` with exactly two `Int` value operands and an `Int`
   value result;
 - direct source and external calls, including the external builtins (`print`, byte conversions) and native bindings;
@@ -228,8 +229,15 @@ The current instruction set covers:
   `dict_get` method. There is no dictionary type kind or dictionary-specific opcode: wire 25 removed
   `construct_dictionary`, `dictionary_set`, `dictionary_get`, `subscript_addr` and type kind 11, and the verifier
   rejects that type kind;
-- `String` `count` and byte `subscript` (a value; a byte is never addressed), plus owned `String.utf8()`
-  byte-array extraction;
+- ordinary calls for String operations ([0028](../decisions/0028-ir-opcode-set.md), stage 3): `s.count`, `s[i]`
+  (a value; a byte is never addressed), `+` and `+=`, `==`, and the orderings call private, always-inlined functions
+  of the collections prelude with closed `string_*` roles; `!=` is `compare eq` of the equality with `false`, and an
+  ordering compares the -1, 0 or 1 order with 0. Lowering collects each of these functions only when a String
+  operation first calls one and lowers them after every other function, so a module without String operations, such
+  as a runtime core unit, has none. Their parameters are read as values, with no stack slot or debug variable, so an
+  inlined call keeps no spill at -O0. `s.utf8()` calls the library array's `string_utf8` method on an inert zero
+  `[UInt8]`, which is instantiated for no other array. There is no String opcode; String keeps `string` constants,
+  literal patterns (whose test still calls the runtime's equality inside the backend) and native ABI marshalling;
 - high-level recursive pattern switching.
 
 An array literal prepares all owned elements first, then moves them into one `stack_block` and calls the
@@ -260,7 +268,8 @@ Proven literal blocks use the same protocol in runtime and ordinary functions; o
 retain their existing capability rules. Wire decoding checks full-width enum and unsigned values before narrowing.
 The removed array and dictionary type kinds' slots 10 and 11 stay reserved and are rejected. Opcode values are
 dense and follow the descriptor table ([0028](../decisions/0028-ir-opcode-set.md), stage 4, wire 28): the verifier
-rejects a value outside the table, and adding, removing or reordering an opcode bumps the wire version. Wire 27
+rejects a value outside the table, and adding, removing or reordering an opcode bumps the wire version. Wire 29
+removed `string_utf8`, `count` and `subscript` (stage 3). Wire 27
 merged opcode families (0028, stage 2): `literal` replaces the integer, Boolean, byte and unit constants, `compare`
 the six comparisons, `convert` the checked and wrapping conversions, `ret` both returns, and `type_helper` the clone
 and destroy callbacks; `trap_if` replaces the linear range guard. The predicate, mode or helper kind is the

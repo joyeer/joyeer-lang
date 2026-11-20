@@ -32,9 +32,11 @@ Generated Joyeer arithmetic uses inline LLVM checks, and array element access is
 library `Array<T>` (`lib/Runtime/collections.joyeer`); the runtime has no checked-arithmetic or
 array-indexing entry points of its own (the former ones were removed in runtime plan stage 0). The runtime does
 provide the array ownership ABI (`joyeer_array_*_abi`) that the library type calls. String and dictionary
-accesses use runtime operations. The LLVM emitter generates `joyeer_main` and implements
-`String.utf8()` using the runtime's owned-array creation API; neither is a
-dedicated C runtime operation.
+accesses use runtime operations. The LLVM emitter generates `joyeer_main`, which is not a dedicated C runtime
+operation. String byte reads and `count`, concatenation, equality, ordering and `String.utf8()` are always-inlined
+functions of the collections prelude ([0028](../decisions/0028-ir-opcode-set.md)); a byte read is an inline bounds
+check and load, and the others call `joyeer_string_concat_abi`, `joyeer_string_equal_abi`,
+`joyeer_string_compare_abi` and the owned-array creation API by their Int signatures.
 
 Scalar printing includes all integer widths, `Float`, and `Double`. Signed
 integers use the existing 64-bit printer after sign extension; unsigned
@@ -182,9 +184,9 @@ zero-address return. A live handle then clears its count and invokes `joyeer_arr
 exactly the original block. Literal and clone output use typed raw stack slots, moved out without creating
 extra owning zero-output locals. The C imports use the runtime's scalar
 address ABI (`Int`), avoiding a second LLVM pointer-typed declaration of those same functions.
-The compiler retains role-keyed constant-block encoding, native byte/string-array marshalling,
-`String.utf8()`, syntax/display binding, and the collection capability checks; it does not dispatch array
-methods by their public names.
+The compiler retains role-keyed constant-block encoding, native byte/string-array marshalling, syntax/display
+binding, and the collection capability checks; it does not dispatch array methods by their public names.
+`String.utf8()` calls the array's `string_utf8` role method on an inert zero `[UInt8]`.
 
 Dictionary lookup is linear, not hashed. Dictionaries provide construction,
 count, primitive/string-key lookup, mutable insert/update growth, recursive

@@ -1,0 +1,21 @@
+// String byte reads (decision 0028 stage 3): `text.count` and `text[i]` in a tight loop, the operations that moved
+// from inline backend code to the collections prelude's always-inlined String roles.
+func main() {
+    var text = ""
+    var index = 0
+    while index < 64 {
+        text = text + "abcdefghijklmnop"
+        index = index + 1
+    }
+    var total = 0
+    var round = 0
+    while round < 200000 {
+        index = 0
+        while index < text.count {
+            total = total + byteToInt(value: text[index])
+            index = index + 1
+        }
+        round = round + 1
+    }
+    print(value: total)
+}

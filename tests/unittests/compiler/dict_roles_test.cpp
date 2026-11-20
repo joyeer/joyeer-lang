@@ -595,9 +595,10 @@ TEST_F(DictRoleTest, ANoncopyableValueHasNoCopier) {
 }
 
 // Wire 24 added the dictionary roles; wire 25 removed the builtin dictionary's slots, wire 26 the
-// `logicalAnd` slot, wire 27 merged opcode families, and wire 28 numbered opcodes densely (decision 0028).
+// `logicalAnd` slot, wire 27 merged opcode families, wire 28 numbered opcodes densely, and wire 29 removed the
+// String opcodes (decision 0028).
 TEST_F(DictRoleTest, TheWireCarriesTheDictionaryRoles) {
-    EXPECT_EQ(joyeer::llvmbackend::wire::version, 28u);
+    EXPECT_EQ(joyeer::llvmbackend::wire::version, 29u);
     load("func size(table: Table<String, [Int]>): Int { return table.count }\n");
     const auto module = lower();
     ASSERT_NE(module, nullptr);

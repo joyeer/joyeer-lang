@@ -155,6 +155,115 @@ protected:
 
 // ---- Roles: shape validation ----
 
+// The String roles of the collections prelude (decision 0028 stage 3): five private, non-generic functions with
+// closed signatures, labels and borrowed parameters, each with a body, and an optional `string_utf8` method of the
+// array role. The test prelude here has none unless a test adds them.
+constexpr auto stringRoles = R"(
+@c_extern(symbol: "joyeer_intrinsic_string_count")
+private func stringCount(text: String): Int
+@compiler_role(string_count)
+private func byteCount(text: String): Int { return stringCount(text: text) }
+@compiler_role(string_byte)
+private func byteAt(text: String, index: Int): UInt8 { return 0 }
+@compiler_role(string_concat)
+private func concatenate(left: String, right: String): String { return left }
+@compiler_role(string_equal)
+private func equals(left: String, right: String): Bool { return false }
+@compiler_role(string_order)
+private func order(left: String, right: String): Int { return 0 }
+)";
+constexpr auto bufferUtf8 = R"(
+    @compiler_role(string_utf8)
+    private consuming func utf8(text: String): Buffer<T> {
+        return joyeer_intrinsic_move_out<Buffer<T>>(address: 0)
+    }
+)";
+
+TEST_F(CollectionRoleTest, WellShapedStringRolesAreAccepted) {
+    load("func main() {}\n", buffer() + stringRoles);
+    EXPECT_TRUE(checks()) << diagnostics();
+    load("func main() {}\n", buffer(bufferHead, bufferElement, bufferCopy, bufferEnd,
+                                    std::string(bufferUtf8) + bufferTail));
+    EXPECT_TRUE(checks()) << diagnostics();
+}
+
+TEST_F(CollectionRoleTest, MalformedStringRolesAreRejected) {
+    const std::string valid = buffer();
+    const auto role = [](const std::string& declaration) {
+        return std::string("@compiler_role(string_count)\n") + declaration + "\n";
+    };
+    for (const auto& declaration : std::vector<std::string> {
+            "public func byteCount(text: String): Int { return 0 }",
+            "private func byteCount<T>(text: String): Int { return 0 }",
+            "private func byteCount(text: consuming String): Int { return 0 }",
+            "private func byteCount(text: inout String): Int { return 0 }",
+            "private func byteCount(t: String): Int { return 0 }",
+            "private func byteCount(text: String): Int32 { return 0 }",
+            "private func byteCount(text: String, extra: Int): Int { return 0 }",
+            "@c_extern(symbol: \"joyeer_intrinsic_string_count\")\nprivate func byteCount(text: String): Int" }) {
+        SCOPED_TRACE(declaration);
+        EXPECT_TRUE(rejectedAsInvalidPrelude(valid + role(declaration), "the string_count role requires"))
+                << diagnostics();
+    }
+    EXPECT_TRUE(rejectedAsInvalidPrelude(valid + "@compiler_role(string_order)\n"
+                                         "private func order(left: String, right: String): Bool { return false }\n",
+                                         "the string_order role requires"))
+            << diagnostics();
+    EXPECT_TRUE(rejectedAsInvalidPrelude(valid + "@compiler_role(string_byte)\n"
+                                         "private func byteAt(text: String, index: Int32): UInt8 { return 0 }\n",
+                                         "the string_byte role requires"))
+            << diagnostics();
+    EXPECT_TRUE(rejectedAsInvalidPrelude(valid + stringRoles + role("private func again(text: String): Int { return 0 }"),
+                                         "declares a second function for the string_count role"))
+            << diagnostics();
+    // The utf8 method: consuming, private, `text: String`, returning the declaring type, at most once.
+    for (const auto& method : std::vector<std::string> {
+            "    @compiler_role(string_utf8)\n    private borrowing func utf8(text: String): Buffer<T> {\n"
+            "        return joyeer_intrinsic_move_out<Buffer<T>>(address: 0)\n    }\n",
+            "    @compiler_role(string_utf8)\n    public consuming func utf8(text: String): Buffer<T> {\n"
+            "        return joyeer_intrinsic_move_out<Buffer<T>>(address: 0)\n    }\n",
+            "    @compiler_role(string_utf8)\n    private consuming func utf8(bytes: String): Buffer<T> {\n"
+            "        return joyeer_intrinsic_move_out<Buffer<T>>(address: 0)\n    }\n",
+            "    @compiler_role(string_utf8)\n    private consuming func utf8(text: String): Buffer<Int> {\n"
+            "        return joyeer_intrinsic_move_out<Buffer<Int>>(address: 0)\n    }\n" }) {
+        SCOPED_TRACE(method);
+        EXPECT_TRUE(rejectedAsInvalidPrelude(
+                buffer(bufferHead, bufferElement, bufferCopy, bufferEnd, method + bufferTail),
+                "the string_utf8 role requires"))
+                << diagnostics();
+    }
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            buffer(bufferHead, bufferElement, bufferCopy, bufferEnd,
+                   std::string(bufferUtf8) + R"(
+    @compiler_role(string_utf8)
+    private consuming func bytes(text: String): Buffer<T> {
+        return joyeer_intrinsic_move_out<Buffer<T>>(address: 0)
+    }
+)" + bufferTail),
+            "allows at most one method with the role string_utf8"))
+            << diagnostics();
+}
+
+// A prelude without the String roles still checks; only lowering a String operation reports the missing function.
+TEST_F(CollectionRoleTest, AStringOperationWithoutItsRoleIsALoweringDiagnostic) {
+    for (const auto* body : { "return left + right", "return left == right", "return left.count",
+                              "return left[0]", "return left.utf8()" }) {
+        SCOPED_TRACE(body);
+        const std::string type = std::string(body).find("+") != std::string::npos ? "String"
+                : std::string(body).find("==") != std::string::npos ? "Bool"
+                : std::string(body).find("count") != std::string::npos ? "Int"
+                : std::string(body).find("utf8") != std::string::npos ? "[UInt8]" : "UInt8";
+        load("func use(left: String, right: String): " + type + " { " + body + " }\n");
+        ASSERT_TRUE(checks()) << diagnostics();
+        analysis = joyeer::analysis::Analyzer().analyze(checking.model);
+        ASSERT_TRUE(analysis.succeeded()) << joyeer::analysis::dump(analysis.diagnostics);
+        const auto result = joyeer::lowering::Lowerer().lower(checking.model, "fixture.joyeer");
+        EXPECT_FALSE(result.succeeded());
+        const auto text = joyeer::lowering::dump(result.diagnostics);
+        EXPECT_NE(text.find("ir-lowering.missing-symbol"), std::string::npos) << text;
+    }
+}
+
 TEST_F(CollectionRoleTest, AWellShapedArrayRoleIsAccepted) {
     load("func main() {}\n");
     ASSERT_TRUE(resolution.succeeded()) << diagnostics();
@@ -478,7 +587,7 @@ TEST_F(CollectionRoleTest, TheRoleStructKeepsTheThreeWordLayoutWithoutALiveFlag)
 }
 
 TEST_F(CollectionRoleTest, TheWireCarriesTheCollectionRolesAndAdvancesItsVersion) {
-    EXPECT_EQ(joyeer::llvmbackend::wire::version, 28u);
+    EXPECT_EQ(joyeer::llvmbackend::wire::version, 29u);
     load("func first(items: Buffer<Int>): Int { return items[0] }\n");
     const auto module = lower();
     ASSERT_NE(module, nullptr);
@@ -738,7 +847,8 @@ TEST_F(CollectionRoleTest, TheBackendEmitsTheRoleStructWithoutALiveFlagAndTheCap
     }
 }
 )");
-    load("func text(items: Buffer<String>): Int { return items.callbacks() + items[1].count }\n"
+    // The replacement prelude has no String roles (decision 0028 stage 3), so the String element is only read.
+    load("func text(items: Buffer<String>): Int { let value = items[1]\n return items.callbacks() }\n"
          "func number(items: Buffer<Int>): Int { return items.callbacks() + items[0] }\n"
          "func twice(items: Buffer<Int>): Buffer<Int> { let again = items\n return again }\n"
          "func main() {}\n", library);
@@ -1086,7 +1196,7 @@ TEST_F(CollectionRoleTest, SlotAddressIsAnAuthorizedUncheckedElementAddress) {
     }
 )", bufferCopy, bufferEnd, bufferTail);
     load("func first(items: Buffer<Int>): Int { return items[1] }\n"
-         "func text(items: Buffer<String>): Int { return items[0].count }\n"
+         "func text(items: Buffer<String>) { let value = items[0] }\n"
          "func unit(items: Buffer<Void>) { let value = items[2] }\n", library);
     const auto module = lower();
     ASSERT_NE(module, nullptr);

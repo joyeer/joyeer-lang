@@ -72,7 +72,7 @@ and `compiler/backend/`:
 | [native_types.cpp](../../compiler/backend/native_types.cpp) | Construction sequence, type/layout mapping, runtime declarations, globals, and stack utilities. For each dictionary entry structure it asserts that the target layout places the value at `alignTo(size_of<K>, align_of<V>)` within the runtime's entry size, the formula the library passes the runtime ([0027](../decisions/0027-library-dict.md)) |
 | [native_ownership.cpp](../../compiler/backend/native_ownership.cpp) | Type-specific clone/destroy helpers and active-payload ownership; destruction calls `deinit` when live, unconditionally for an inert-zero role struct. The `String` helper tests `data` inline and calls the runtime only when it is not null: every allocating producer stores a non-null block, and the zero value (moved-from, zero-initialized, or an unassigned native output) owns nothing, so dropping a moved-from `String` costs no call. Artificial helper subprograms and unknown-line implicit call locations preserve debug scopes while permitting inlining. Helpers inherit the referenced closed wrapper's `alwaysInline` policy |
 | [native_functions.cpp](../../compiler/backend/native_functions.cpp) | Functions, instructions, checked arithmetic, patterns, and runtime entry adapters |
-| [native_collections.cpp](../../compiler/backend/native_collections.cpp) | Role-array constant blocks and `String.utf8()`, dictionary operations, and String/Dict bounds checks |
+| [native_collections.cpp](../../compiler/backend/native_collections.cpp) | Role-array constant blocks and constant values. String operations are calls to the collections prelude ([0028](../decisions/0028-ir-opcode-set.md)), whose String projections `joyeer_intrinsic_string_data` and `_count` lower in `native_host.cpp` |
 | [native_host.cpp](../../compiler/backend/native_host.cpp) | External builtins (`print`, byte conversions), native-binding calls, and the memory intrinsics |
 | [native_debug.cpp](../../compiler/backend/native_debug.cpp) | DIBuilder types, scopes, variables, source files, and instruction locations |
 | [backend.cpp](../../compiler/backend/backend.cpp) | Target-specific optimization/object generation and embedded LLD drivers |
@@ -99,7 +99,7 @@ interfaces change. This is not a backward-compatibility promise between
 development revisions: rebuild and deploy the compiler and backend together
 from the same revision. The interface includes module construction, printing,
 destruction, and the object options' module handle. The private IR wire version
-is version 28. Numeric fields use 64-bit little-endian encoding; strings are
+is version 29. Numeric fields use 64-bit little-endian encoding; strings are
 length-prefixed arbitrary bytes.
 Inputs and callback messages are borrowed only during a call. Callbacks must
 not throw, and clients must never delete or interpret the opaque handle.
