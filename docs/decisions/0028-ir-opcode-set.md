@@ -200,14 +200,28 @@ calls, control flow, and runtime-only memory operations.
 - Stage 3 is the only stage that can change generated code. Its acceptance is the cost measurement, not just the
   tests.
 
-## Open questions
+## Resolved questions
 
-1. `destroyRange` can be written in library code as a loop over `destroy_at` guarded by `needs_destroy`. Keep it
-   for code size, or remove it?
-2. `extractPayload` can be expressed as a spill, `payloadAddress` and `load`, which the backend already does
-   internally. It is kept so every aggregate has construct, extract and address; is that rule worth one opcode?
-3. Should `trapIf` also replace the implicit traps in arithmetic, shifts and conversions? That would make each
-   trap visible in the IR, at the cost of larger IR.
+The user accepted these answers on 2026-11-21; each keeps the opcode set as stage 4 left it.
+
+1. **Keep `destroyRange`.** Library code cannot express it. For a linear element type it must trap with `linear
+   container dropped while not empty`, but `destroy_at` and `needs_destroy` never accept a linear type (spec
+   §20), and the callback queries return 0 for linear and trivial types alike. Removing the opcode would need a new
+   linearity intrinsic, which moves the opcode rather than removing it. Its one caller is the library array's
+   `deinit`, which every `Array<T>` instance runs. At -O0 the backend's loop is a bare decrement and call, where a
+   library loop would add an overflow check for each element.
+2. **Keep `extractPayload`.** Lowering uses it for both arms of `?` on `Optional` and `Result` and for payload
+   bindings in `match`. Each use would become four instructions (a stack slot, a store, `payloadAddress` and a load)
+   that generate the same LLVM the backend already emits, so nothing runs faster. Removing it would also break the
+   construct, extract and address rule that `extractField` keeps for structs, and give the loaded value new
+   ownership handling.
+3. **Keep the implicit traps.** The backend has seven: signed add, subtract and multiply overflow, division and
+   remainder by zero, the minimum value divided by -1, conversion out of range, and shift count out of range. The
+   three overflow traps read LLVM's overflow flag, which no IR opcode produces, so making them explicit needs new
+   opcodes. A checked opcode also cannot lose its check; with separate guards, a lowering bug that dropped one would
+   silently wrap and the verifier could not detect it. Every signed arithmetic operation would also take two or
+   three instructions instead of one. `trapIf` remains for checks that lowering and library code write themselves,
+   such as the linear-container check.
 
 ## Evidence
 

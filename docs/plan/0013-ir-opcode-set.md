@@ -143,8 +143,9 @@ immediate kind names which one.
 
 ## Open questions
 
-The three open questions of [0028](../decisions/0028-ir-opcode-set.md#open-questions): `destroyRange`,
-`extractPayload`, and whether `trapIf` replaces implicit traps.
+None. The three questions of 0028 are [resolved](../decisions/0028-ir-opcode-set.md#resolved-questions):
+`destroyRange` and `extractPayload` stay, and the implicit traps stay in their opcodes rather than becoming
+`trapIf`.
 
 ## Out of scope
 
@@ -152,6 +153,8 @@ New opcodes, and any change to what programs observe outside stage 3's measured 
 
 ## Progress log
 
+- 2026-11-21: The user accepted answers to 0028's three open questions: keep `destroyRange`, keep `extractPayload`,
+  and keep the implicit traps in their opcodes. Recorded in 0028 under "Resolved questions"; no code change.
 - 2026-11-21: With the five full `target/debug/moss.*` folders cleared (by the user's choice),
   `scripts/validate.py --configs Debug` at 025d80b passes: build, CTest 2045 of 2045 and `fern test` 7 of 7. With the
   Release run below, every stage's validation item is checked.
