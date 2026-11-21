@@ -2142,6 +2142,19 @@ set_tests_properties(DiagnosticsCliRejectsCopyOfNoncopyableValue PROPERTIES
         LABELS "diagnostics;type-checking;deinit"
 )
 
+add_test(NAME DiagnosticsCliRejectsIfBranchCopyInBorrowingArgument
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/err/if_branch_copy_argument.joyeer
+                "-DEXPECTED_HEADER=if_branch_copy_argument.joyeer:14:9: error[type-checking.copy-of-noncopyable]"
+                "-DEXPECTED_SOURCE=        t"
+                "-DEXPECTED_HELP=help: move an owning local or consuming parameter with 'consume'"
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
+)
+set_tests_properties(DiagnosticsCliRejectsIfBranchCopyInBorrowingArgument PROPERTIES
+        LABELS "diagnostics;type-checking;deinit"
+)
+
 add_test(NAME DiagnosticsCliRejectsRunProcessWithTasks
         COMMAND ${CMAKE_COMMAND}
                 -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>

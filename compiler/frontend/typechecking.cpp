@@ -4259,6 +4259,10 @@ private:
                 const auto elseType = checkExpression(conditional->elseBranch, expected).value_or(
                     model->typeContext.errorType());
                 result = commonType(thenType, elseType, conditional->elseBranch->span);
+                if (producesBranchValue(result)) {
+                    requireNoImplicitCopy(conditional->thenBranch, thenType);
+                    requireNoImplicitCopy(conditional->elseBranch, elseType);
+                }
                 break;
             }
             case syntax::Kind::returnExpr: {
@@ -6578,8 +6582,18 @@ private:
         }
     }
 
+    // Whether an `if` or `match` of this type stores its branch values into a result, which IR
+    // lowering does for every type but `Void` and `Never`: a branch that names a noncopyable place
+    // then copies it, wherever the expression appears (a borrowing argument, a member base or a
+    // statement as much as a binding). An error type has already been reported.
+    bool producesBranchValue(TypeId type) const {
+        return type != model->typeContext.voidType() && type != model->typeContext.neverType() &&
+                type != model->typeContext.errorType();
+    }
+
     // The places a value-producing expression copies: the expression itself when it names
-    // storage, or the branch values of an `if`, `match` or block, or the operand of `?`.
+    // storage, or the value of a block. The branches of an `if` or `match` are checked where the
+    // expression is checked, and the operand of `?` where the propagation is.
     void collectCopiedPlaces(const syntax::ExprPtr& expression,
                              std::vector<syntax::ExprPtr>& places) const {
         if (expression == nullptr) return;
@@ -6597,17 +6611,10 @@ private:
                 collectCopiedPlaces(last, places);
                 return;
             }
-            case syntax::Kind::ifExpr: {
-                const auto branch = std::static_pointer_cast<syntax::IfExprSyntax>(expression);
-                collectCopiedPlaces(branch->thenBranch, places);
-                collectCopiedPlaces(branch->elseBranch, places);
-                return;
-            }
+            case syntax::Kind::ifExpr:
             case syntax::Kind::matchExpr:
-                for (const auto& arm :
-                     std::static_pointer_cast<syntax::MatchExprSyntax>(expression)->arms) {
-                    collectCopiedPlaces(arm->body, places);
-                }
+                // A value-producing `if` or `match` checks its own branches, in every context
+                // (see producesBranchValue), so its result is already an owned temporary here.
                 return;
             case syntax::Kind::propagateExpr:
                 return; // checkPropagation checks its owned operand independently of the result's context.
@@ -6962,6 +6969,11 @@ private:
 
         if (validPatterns) checkMatchExhaustiveness(expression, scrutinee, coverage);
         requireOwnedScrutineeForMovedBindings(expression);
+        if (result.has_value() && producesBranchValue(*result)) {
+            for (const auto& arm : expression->arms) {
+                requireNoImplicitCopy(arm->body, model->typeOf(arm->body));
+            }
+        }
         return result.value_or(model->typeContext.voidType());
     }
 

@@ -2483,11 +2483,82 @@ TEST_F(TypeCheckingTest, ReportsCopiesThroughIfMatchBlockPropagationAndTrailingE
     }
 }
 
+// A value-producing `if` or `match` always yields an owned temporary, so a branch that names a
+// noncopyable place copies it wherever the expression appears, not only where it is stored.
+TEST_F(TypeCheckingTest, ReportsBranchCopiesOfAValueProducingIfOrMatchInEveryContext) {
+    const std::vector<std::string> copies {
+        // a borrowing argument, with the place moved into a branch-local first
+        "func look(handle: Handle): Int { return handle.fd }\n"
+        "func f(flag: Bool): Int { let h = open()\n"
+        " return look(handle: if flag { let t = consume h\n t } else { Handle(fd: 3) }) }\n",
+        "func look(handle: Handle): Int { return handle.fd }\n"
+        "func f(flag: Bool): Int { let a = open()\n"
+        " return look(handle: if flag { a } else { open() }) }\n",
+        // a member base
+        "func f(flag: Bool): Int { let a = open()\n return (if flag { a } else { open() }).fd }\n",
+        // an `if` in statement position whose branches still produce a value
+        "func f(flag: Bool) { let a = open()\n if flag { a } else { open() } }\n",
+        // a nested `else if`
+        "func look(handle: Handle): Int { return handle.fd }\n"
+        "func f(flag: Bool, other: Bool): Int { let a = open()\n"
+        " return look(handle: if flag { open() } else if other { a } else { open() }) }\n",
+        // `match` arms in a borrowing argument and in statement position
+        "func look(handle: Handle): Int { return handle.fd }\n"
+        "func f(o: Optional<Handle>): Int {\n"
+        " return look(handle: match consume o { .Some(x) => x, .None => open() }) }\n",
+        "func f(n: Int) { let a = open()\n match n { 1 => a, _ => open() } }\n",
+        // a block arm
+        "func look(handle: Handle): Int { return handle.fd }\n"
+        "func f(o: Optional<Handle>): Int {\n"
+        " return look(handle: match consume o { .Some(x) => { x }, .None => open() }) }\n",
+        // a type parameter is noncopyable in the generic body (decision 0021)
+        "func g<T>(flag: Bool, a: T, b: T) { if flag { a } else { b } }\n",
+    };
+    for (const auto& body : copies) {
+        SCOPED_TRACE(body);
+        check(std::string(handlePrelude) + body);
+        EXPECT_TRUE(hasMethodDiagnostic(
+                joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+// The branch check and the check of a storing context see the same copy: it is reported once.
+TEST_F(TypeCheckingTest, ReportsABranchCopyInAStoringContextOnce) {
+    const std::vector<std::string> copies {
+        "func f(flag: Bool) { let a = open()\n let c = if flag { a } else { open() } }\n",
+        "func f(flag: Bool, other: Bool) { let a = open()\n"
+        " let c = if flag { open() } else if other { a } else { open() } }\n",
+        "func f(n: Int) { let a = open()\n let c = match n { 1 => a, _ => open() } }\n",
+        "func f(flag: Bool): Handle { let a = open()\n return if flag { a } else { open() } }\n",
+        "func f(flag: Bool): Handle { let a = open()\n if flag { a } else { open() } }\n",
+        "func f(flag: Bool) { let a = open()\n let c = (if flag { a } else { open() }) }\n",
+        // a branch whose type is coerced to the expected Optional still names the place
+        "func f(flag: Bool) { let a = open()\n let c: Optional<Handle> = if flag { a } else { .None } }\n",
+    };
+    for (const auto& body : copies) {
+        SCOPED_TRACE(body);
+        check(std::string(handlePrelude) + body);
+        const auto copiesReported = std::count_if(
+                checking.diagnostics.begin(), checking.diagnostics.end(), [](const auto& diagnostic) {
+                    return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable;
+                });
+        EXPECT_EQ(copiesReported, 1) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
 TEST_F(TypeCheckingTest, AllowsAnIfOrMatchThatProducesFreshNoncopyableValues) {
     const std::vector<std::string> fresh {
         "func f(flag: Bool): Handle { return if flag { open() } else { Handle(fd: 2) } }\n",
         "func f(n: Int): Handle { return match n { 1 => open(), _ => Handle(fd: 3) } }\n",
         "func f(): Handle { open() }\n",
+        "func look(handle: Handle): Int { return handle.fd }\n"
+        "func f(flag: Bool): Int { let h = open()\n"
+        " return look(handle: if flag { take(handle: consume h)\n open() } else { Handle(fd: 3) }) }\n",
+        // a branch that reads a field of a noncopyable place copies only the copyable field
+        "func f(flag: Bool): Int { let a = open()\n return if flag { a.fd } else { 0 } }\n",
+        // an `if` of type `Never` stores no value: each `return` moves its owning local
+        "func f(flag: Bool): Handle { let a = open()\n if flag { return a } else { return open() } }\n",
     };
     for (const auto& body : fresh) {
         SCOPED_TRACE(body);
