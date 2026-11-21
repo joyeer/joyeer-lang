@@ -1,10 +1,10 @@
 # 0012: Equality through `Equatable`
 
-- Status: in progress (updated 2026-11-21); phase 1: decision 0029 drafted and reviewed, awaiting the user's acceptance
+- Status: in progress (updated 2026-11-21); phase 1 is done (decision 0029 accepted, spec amended); phase 2 is next
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0024](../decisions/0024-library-optional-and-result.md) (rejects `==` on `Optional`/`Result`),
-  [0029](../decisions/0029-equatable.md) (this plan's decision, proposed)
+  [0029](../decisions/0029-equatable.md) (this plan's decision, accepted 2026-11-21)
 - Spec: [§5.2](../../specs/05-expressions.md), [§12.4](../../specs/12-modules.md) (reserved names),
   [§20.5](../../specs/20-protocols.md), [§20.10](../../specs/20-protocols.md) item 2
 
@@ -71,10 +71,13 @@ types it cannot compile (0024, "Equality is rejected").
 - [x] Run the language-designer and type-system reviewers on it; record the outcome in the decision.
   Evidence: 0029 "Review": one critical, three high and the medium and low findings, all addressed in the
   revision.
-- [ ] The user accepts 0029 as revised (status `accepted`).
-- [ ] Amend the sections 0029 lists (§2.1.2, §2.4, §2.5, §2.6, §5.2, §12.4, §20.2, §20.3, §20.4.2,
+- [x] The user accepts 0029 as revised (status `accepted`). Evidence: the user's acceptance on
+  2026-11-21; 0029's status line.
+- [x] Amend the sections 0029 lists (§2.1.2, §2.4, §2.5, §2.6, §5.2, §12.4, §20.2, §20.3, §20.4.2,
   §20.5, §20.6, §20.8, §20.10, §20.12.2, §20.12.5, Appendix C) and 0024. Add §20.13 for `Equatable`
-  with its diagnostics.
+  with its diagnostics. Evidence: §20.13 (marked specified, not implemented), the listed sections and
+  0024's amendment notes; a search of `specs/` finds no remaining rule that rejects `==` on `Optional`,
+  `Result` or user types, or reserves `Equatable` as unusable. Documentation only; nothing built.
 
 ### Phase 2: builtin types and the operator
 
@@ -128,7 +131,7 @@ types it cannot compile (0024, "Equality is rejected").
 
 ## Open questions
 
-All are answered in [0029](../decisions/0029-equatable.md), pending its acceptance: the requirement is
+All are answered in [0029](../decisions/0029-equatable.md): the requirement is
 `equals(other: Self)`; conformance is opt-in and derivable; conditional conformance is structural and
 limited to derived `Equatable`; `x == nil` is a presence test; `Float` and `Double` conform with IEEE
 equality; `Dict` does not conform until a `Hashable` decision; noncopyable types may conform and linear
@@ -165,6 +168,9 @@ types may not; conformances stay in the type's module.
 
 ## Progress log
 
+- 2026-11-21: The user accepted 0029 as revised. Amended chapters 2, 5, 12 and 20 (new §20.13, marked
+  not implemented), Appendix C (`prelude_protocol`) and 0024. Phase 1 is done; phase 2 starts with
+  failing tests.
 - 2026-11-21: Phase 1 started. Drafted 0029 with the user's four choices (opt-in, `equals(other:)`,
   `== nil` presence test, noncopyable but not linear); ran the language-designer and type-system
   reviewers and revised for every finding (derived witnesses are not members, conditional conformance

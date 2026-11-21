@@ -118,7 +118,7 @@ in the spec.
 | [0028](decisions/0028-ir-opcode-set.md) | A smaller IR opcode set described by one table (accepted, in implementation) |
 | [0029](decisions/0029-contracts-and-owned-host-resources.md) | Prelude contracts, host queries and clocks, and noncopyable native resource owners |
 | [0030](decisions/0030-literal-patterns-are-not-promoted.md) | Literal patterns match only their own type; no implicit Optional promotion (accepted, implemented) |
-| [0029](decisions/0029-equatable.md) | Equality through a compiler-known `Equatable` protocol: opt-in derived conformances, `== nil` presence test (proposed) |
+| [0029](decisions/0029-equatable.md) | Equality through a compiler-known `Equatable` protocol: opt-in derived conformances, `== nil` presence test (accepted, not implemented) |
 
 ## Conventions
 

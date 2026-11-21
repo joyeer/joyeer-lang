@@ -1,11 +1,13 @@
 # 0029: Equality through `Equatable`
 
-- Status: proposed (2026-11-21). The user chose explicit opt-in, the requirement `equals(other:)`, `x == nil` as a
-  presence test on any optional, and conformance for noncopyable but not linear types (2026-11-21). The other answers
-  are the author's, revised after a language-designer and a type-system review (see "Review"). Work is tracked in
-  [plan 0012](../plan/0012-equatable.md).
-- Spec, once accepted: §2.1.2, §2.4, §2.5, §2.6, §5.2, §12.4, §20.2, §20.3, §20.4.2, §20.5, §20.6, §20.8, §20.10,
-  §20.12.2, §20.12.5, a new §20.13 and Appendix C. [0024](0024-library-optional-and-result.md) is amended (below).
+- Status: accepted (2026-11-21, by the user, as revised after review); not yet implemented. The user chose explicit
+  opt-in, the requirement `equals(other:)`, `x == nil` as a presence test on any optional, and conformance for
+  noncopyable but not linear types. The other answers are the author's, revised after a language-designer and a
+  type-system review (see "Review"). Work is tracked in [plan 0012](../plan/0012-equatable.md).
+- Spec: [§2.1.2, §2.4, §2.5, §2.6](../../specs/02-types.md), [§5.2](../../specs/05-expressions.md),
+  [§12.4](../../specs/12-modules.md), [§20.1–20.6, §20.8, §20.10, §20.12.2, §20.12.5 and §20.13](../../specs/20-protocols.md),
+  [Appendix C](../../specs/appendix-c-grammar.md), amended 2026-11-21. [0024](0024-library-optional-and-result.md) is
+  amended (below).
 - Builds on [0021](0021-protocols-and-generic-functions.md) (protocols), [0022](0022-generic-types-and-layout-intrinsics.md)
   (generic types), [0024](0024-library-optional-and-result.md) (which rejects `==` on `Optional` and `Result`) and
   [0026](0026-library-array.md) (library `Array`).

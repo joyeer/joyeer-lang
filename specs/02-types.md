@@ -95,9 +95,11 @@ apply. Containers and enclosing enums can have storage and resources of their
 own; a zero-sized element does not make its container allocation-free.
 
 The pattern `()` matches a `Void` value exhaustively. It does not implicitly
-unwrap an optional or result. Unit equality, ordering, printing, and dictionary
-keys are not part of the implemented primitive operations; use a unit pattern
-or wildcard when matching. See §7 and §8.2.2.
+unwrap an optional or result. `Void` conforms to `Equatable` and every pair of
+unit values is equal (§20.13), so that `Void?` and `Result<Void, E>` can be
+compared. Unit ordering, printing, and dictionary keys are not part of the
+primitive operations; use a unit pattern or wildcard when matching. See §7 and
+§8.2.2.
 
 #### 2.1.3 C boundary representations
 
@@ -177,8 +179,8 @@ function, with no captured state (closures are deferred, §5.11). How a function
 becomes a value and how a value is called are in §5.6.1. Function values are
 copyable, never linear, and trivially destroyed (§4.1.1); they cross tasks and
 channels freely (§21), because they hold no state. A function type has no
-equality: `==` is rejected, it cannot be a dictionary key, and `print` does not
-accept it.
+equality: it never conforms to `Equatable` (§20.13), so `==` is rejected, it
+cannot be a dictionary key, and `print` does not accept it.
 
 ### 2.4 Optional<T>
 
@@ -198,7 +200,7 @@ The sugar binds to that declaration, not to the name `Optional`: a user-declared
 `enum Optional<T>` shadows the name in its scope but never changes the meaning of `T?`, `nil`,
 implicit wrapping, `x!`, `x?.field`, or `?`. The one-`?` look-through of an expected type (§20.12.1) does not apply when
 the type being constructed is `Optional` itself, so `let x: Optional<Int?> = nil` is the outer `None` (`Int??` is not written: it lexes as the `??` operator).
-`==` and `!=` are not defined on `Optional` (§5.2).
+`X?` conforms to `Equatable` when `X` does (§20.13), and `x == nil` tests presence on every optional (§20.13.4).
 
 Construction: `nil` for `None`, `T` is implicitly coerced to `Some(T)` in
 positions expecting `T?`. Force-unwrap with `x!` (traps on `None`).
@@ -216,8 +218,8 @@ enum Result<T, E> {
 }
 ```
 
-`?` propagation (§8.3) binds to the role, not to the name. `==` and `!=` are not defined on `Result`
-(§5.2). See §8 for error-handling semantics.
+`?` propagation (§8.3) binds to the role, not to the name. `Result<X, Y>` conforms to `Equatable` when
+`X` and `Y` do (§20.13). See §8 for error-handling semantics.
 
 ### 2.6 Generics
 
@@ -264,7 +266,8 @@ addressed. The address and
 capacity fields and the compiler-called methods are private. A literal evaluates every key and value
 left to right before any entry is stored; a duplicate key keeps the last value.
 
-**Dictionary keys (closed until plan 0012).** The admitted key types are exactly `Int`, `Bool`, `UInt8`
+**Dictionary keys (closed until a `Hashable` decision).** `Equatable` (§20.13) does not open the key
+types, and a `Dict` does not conform to it. The admitted key types are exactly `Int`, `Bool`, `UInt8`
 and `String`, by type, not by spelling. Any other key, written at a `[K: V]` annotation, a `Dict<K, V>`
 or a literal, is `type-checking.invalid-type-argument`; a function type, a type parameter or `Never` as a
 key keeps its own diagnostic. Keys are compared by the runtime's key kind; lookup is a linear scan.
