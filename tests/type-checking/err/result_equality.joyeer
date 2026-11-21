@@ -1,3 +1,4 @@
-func same(a: Result<Int, String>, b: Result<Int, String>): Bool {
+// `Result<X, Y>` conforms to `Equatable` only when both payloads do (spec 20.13.3); a function never does.
+func same(a: Result<Int, (Int): Int>, b: Result<Int, (Int): Int>): Bool {
     return a != b
 }

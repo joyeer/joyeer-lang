@@ -2995,4 +2995,21 @@ func main() {
     EXPECT_EQ(named("Manual.equals"), 1);
     EXPECT_EQ(callsNamed(function("manual"), "Manual.equals"), 1u);
 }
+
+// Plan 0012 phase 4: `Optional` equality calls its derived witness, `[X]` equality the `array_equal` instance, and a
+// presence test is a tag test with no call (decision 0029, spec 20.13.4).
+TEST_F(IRLoweringTest, LowersContainerEqualityAndPresenceTests) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"JOYEER(func square(value: Int): Int { return value }
+func optionals(a: Int?, b: Int?): Bool { return a == b }
+func arrays(a: [Int], b: [Int]): Bool { return a != b }
+func presence(run: ((Int): Int)?): Bool { return run == nil }
+)JOYEER"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    EXPECT_EQ(callsTo(function("optionals"), ".equals"), 1u);
+    EXPECT_EQ(callsTo(function("arrays"), "arrayEqual<Int>"), 1u);
+    EXPECT_EQ(opcodeCount(function("presence"), joyeer::ir::Opcode::call), 0u);
+    EXPECT_EQ(opcodeCount(function("presence"), joyeer::ir::Opcode::switchPattern), 1u);
+}
 } // namespace

@@ -246,10 +246,9 @@ TEST(ArrayCharacterization, FunctionValueElementsAreAccepted) {
     EXPECT_EQ(diagnose("func f(a: [(Int): Int]) {}\nfunc main() {}\n"), "");
 }
 
+// Decision 0029: `[X]` conforms to `Equatable` when `X` does (spec 20.13.3, item 4).
 TEST(ArrayCharacterization, EqualityOfLibraryArraysWaitsForEquatable) {
-    const auto text = diagnose("func main() { let equal = [1] == [1]\n print(value: equal) }\n");
-    EXPECT_TRUE(contains(text, "type-checking.invalid-operator-operands")) << text;
-    EXPECT_TRUE(contains(text, "[Int]")) << text;
+    EXPECT_EQ(diagnose("func main() { let equal = [1] == [1]\n print(value: equal) }\n"), "");
 }
 
 } // namespace

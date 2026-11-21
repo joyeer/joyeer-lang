@@ -1,3 +1,8 @@
-func same(a: Int?, b: Int?): Bool {
+// `X?` conforms to `Equatable` only when `X` does (spec 20.13.3); `Point` declares no conformance.
+struct Point {
+    var x: Int
+}
+
+func same(a: Point?, b: Point?): Bool {
     return a == b
 }

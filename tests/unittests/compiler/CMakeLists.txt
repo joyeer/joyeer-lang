@@ -1579,6 +1579,30 @@ true
 true
 "
             0 1 2 3)
+    # Optional, Result and array equality, the presence test and recursive types (decision 0029, plan 0012 phase 4).
+    add_joyeer_native_regression(
+            E2EEquatableContainers equatable_containers
+            "true
+false
+true
+true
+true
+false
+true
+true
+true
+false
+false
+true
+false
+true
+true
+false
+true
+false
+false
+"
+            0 1 2 3)
     # String operations through the collections prelude's String roles (decision 0028 stage 3), one expected
     # output at every level.
     add_joyeer_native_regression(

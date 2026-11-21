@@ -4203,22 +4203,21 @@ bool diagnosticHelpContains(const joyeer::typing::TypeCheckingResult& checking,
 
 }  // namespace
 
+// Decision 0029 replaces 0024's rejection: `X?` and `Result<X, Y>` conform when their payloads do (spec 20.13.3),
+// so only a payload without equality is rejected, and the help names the payload.
 TEST_F(TypeCheckingTest, EqualityOnOptionalAndResultIsRejectedWithMatchHelp) {
     using Id = joyeer::typing::TypeCheckingDiagnosticId;
     for (const auto* text : {
-            "func f(a: Int?, b: Int?): Bool { return a == b }\n",
-            "func f(a: Int?, b: Int?): Bool { return a != b }\n",
-            "func f(a: Int?): Bool { return a == nil }\n",
-            "func f(a: Int?): Bool { return a != nil }\n",
             "struct Point { var x: Int }\nfunc f(a: Point?, b: Point?): Bool { return a == b }\n",
-            "func f(a: Result<Int, String>, b: Result<Int, String>): Bool { return a == b }\n",
+            "struct Point { var x: Int }\nfunc f(a: Result<Point, String>, b: Result<Point, String>): Bool "
+            "{ return a != b }\n",
         }) {
         SCOPED_TRACE(text);
         check(text);
         EXPECT_FALSE(checking.succeeded());
         EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidOperatorOperands))
                 << joyeer::typing::dump(checking.diagnostics);
-        EXPECT_TRUE(diagnosticHelpContains(checking, Id::invalidOperatorOperands, "match"))
+        EXPECT_NE(joyeer::typing::dump(checking.diagnostics).find("Point"), std::string::npos)
                 << joyeer::typing::dump(checking.diagnostics);
     }
 }
@@ -4226,13 +4225,11 @@ TEST_F(TypeCheckingTest, EqualityOnOptionalAndResultIsRejectedWithMatchHelp) {
 // Spec 20.13.2: `nil` takes the other operand's type on either side, so `nil == a` is optional equality, which
 // waits for plan 0012 phase 4 and is rejected meanwhile.
 TEST_F(TypeCheckingTest, NilOnTheLeftOfEqualityNeedsContextUnlessAnOptionalIsExpected) {
-    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    // Phase 4 of plan 0012: `nil == a` is the presence test of spec 20.13.4, on either side.
     check("func f(a: Int?): Bool { return nil == a }\n");
-    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidOperatorOperands))
-            << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
     check("func f(a: Int?): Bool? { return nil == a }\n");
-    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidOperatorOperands))
-            << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
 }
 
 // A literal pattern compares a value of the literal's own type (spec 7, decision 0030): it is not
@@ -4675,7 +4672,7 @@ TEST_F(TypeCheckingTest, EqualityHelpNeverSuggestsAConformanceTheCompilerRejects
     check("func square(value: Int): Int { return value }\nfunc f(): Bool { return square == square }\n");
     EXPECT_TRUE(diagnosticHelpContains(checking, Id::invalidOperatorOperands, "never"))
             << joyeer::typing::dump(checking.diagnostics);
-    check("func f(a: [Int], b: [Int]): Bool { return a == b }\n");
+    check("func f(a: [(Int): Int], b: [(Int): Int]): Bool { return a == b }\n");
     EXPECT_TRUE(diagnosticHelpContains(checking, Id::invalidOperatorOperands, "element"))
             << joyeer::typing::dump(checking.diagnostics);
 }
@@ -4911,4 +4908,55 @@ TEST_F(TypeCheckingTest, DerivedConformanceBoundariesAtTheExtensionAndAtTypeArgu
           "func square(value: Int): Int { return value }\n"
           "func f() {\n    let w = Wrapper(inner: Box(value: square))\n}\n");
     EXPECT_TRUE(hasTypeDiagnostic(checking, Id::unsatisfiedConstraint)) << joyeer::typing::dump(checking.diagnostics);
+}
+
+// Plan 0012 phase 4 (decision 0029, spec 20.13.3 items 3 and 4, 20.13.4): `Optional`, `Result` and arrays conform when
+// their payloads or elements do, `x == nil` tests presence on any optional, and recursive types conform through arrays.
+TEST_F(TypeCheckingTest, OptionalResultAndArraysConformWhenTheirComponentsDo) {
+    check("struct Point {\n    var x: Int\n}\nextension Point: Equatable {}\n"
+          "func same<T: Equatable>(a: T, b: T): Bool { return a == b }\n"
+          "func optionals(a: Int?, b: Point?): Bool { return a == a && b != b && same(a: a, b: a) }\n"
+          "func results(a: Result<Int, String>, b: Result<Point, Int>): Bool { return a == a && b != b }\n"
+          "func arrays(a: [Int], b: [[String]], c: [Point?]): Bool { return a == a && b != b && c == c }\n"
+          "func generic<T: Equatable>(a: [T], b: T?, c: Result<T, T>): Bool { return a == a && b == b && c == c }\n"
+          "func literal(bytes: [UInt8]): Bool { return [1, 2] == bytes }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ContainersOfNonConformingComponentsHaveNoEquality) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "func square(value: Int): Int { return value }\nfunc f(a: [(Int): Int]): Bool { return a == a }\n",
+            "func f<T>(a: [T]): Bool { return a == a }\n",
+            "func f<T>(a: T?): Bool { return a == a }\n",
+            "func f(a: [Int: Int]?): Bool { return a == a }\n",
+        }) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidOperatorOperands) ||
+                    hasDiagnosticNamed(checking, "type-checking.non-equatable-member"))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, NilComparisonTestsPresenceOnEveryOptional) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("struct Handle {\n    var fd: Int\n    deinit() {}\n}\n"
+          "struct Plain {\n    var n: Int\n}\n"
+          "func f(run: ((Int): Int)?, handle: Handle?, plain: Plain?, n: Int?): Bool {\n"
+          "    return run == nil && nil != run && run != .None && handle == nil && (nil) == plain && n != nil\n"
+          "}\n"
+          "func g<T>(value: T?): Bool { return value == nil }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check("func f(): Bool { return nil == nil }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::missingContextualType)) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, RecursiveTypesConformThroughArrays) {
+    check("struct Tree {\n    var value: Int\n    var kids: [Tree]\n}\nextension Tree: Equatable {}\n"
+          "enum Json {\n    Number(Int),\n    List([Json]),\n}\nextension Json: Equatable {}\n"
+          "struct Left {\n    var items: [Right]\n}\nextension Left: Equatable {}\n"
+          "struct Right {\n    var items: [Left]\n    var id: Int\n}\nextension Right: Equatable {}\n"
+          "func f(t: Tree, j: Json, l: Left): Bool { return t == t && j != j && l == l }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
 }
