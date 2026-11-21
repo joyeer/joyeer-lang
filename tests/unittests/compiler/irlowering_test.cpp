@@ -2954,4 +2954,45 @@ func main() {
     EXPECT_EQ(callsNamed(function("boxes"), "Box<Int>.equals"), 1u);
     EXPECT_EQ(opcodeCount(function("Box<Int>.equals"), joyeer::ir::Opcode::call), 0u);
 }
+
+// Review findings on plan 0012 phase 3: `==` in a stored-field default reaches its witness; a concrete `==` in a
+// generic body that nothing instantiates generates no witness (spec 20.6); an `equals` method in a later extension is
+// the only `Point.equals`.
+TEST_F(IRLoweringTest, DerivedWitnessesFollowWhatTheProgramReaches) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"JOYEER(struct Point {
+    var x: Int
+}
+extension Point: Equatable {}
+struct Unused {
+    var y: Int
+}
+extension Unused: Equatable {}
+struct Manual {
+    var z: Int
+}
+extension Manual: Equatable {}
+extension Manual {
+    func equals(other: Manual): Bool { return true }
+}
+struct Defaults {
+    var same: Bool = Point(x: 1) == Point(x: 1)
+}
+func never<T>(value: T): Bool { return Unused(y: 1) == Unused(y: 2) }
+func manual(a: Manual): Bool { return a == a }
+func main() {
+    let d = Defaults()
+}
+)JOYEER"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto named = [&](const std::string& name) {
+        return std::count_if(result.module->functions.begin(), result.module->functions.end(),
+                [&](const auto& candidate) { return candidate.name == name; });
+    };
+    EXPECT_EQ(named("Point.equals"), 1);
+    EXPECT_EQ(named("Unused.equals"), 0);
+    EXPECT_EQ(named("Manual.equals"), 1);
+    EXPECT_EQ(callsNamed(function("manual"), "Manual.equals"), 1u);
+}
 } // namespace

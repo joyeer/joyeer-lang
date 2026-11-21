@@ -4841,3 +4841,74 @@ TEST_F(TypeCheckingTest, ADerivedConformanceAddsNoEqualsMember) {
         return diagnostic.id == joyeer::semantic::NameResolutionDiagnosticId::unknownMember;
     })) << joyeer::semantic::dump(resolution.diagnostics);
 }
+
+// Review findings on plan 0012 phase 3 (decision 0029): `Never` conforms only as a member, one mistake is reported
+// once, the conformance check stays linear on types that share members, operands without a type of their own, a
+// later `equals`, help text, and conformance checks at generic type arguments.
+TEST_F(TypeCheckingTest, NeverOperandsHaveNoEquality) {
+    check("func f(): Bool { return fatalError(message: \"a\") == fatalError(message: \"b\") }\n");
+    EXPECT_FALSE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ADerivedConformanceMistakeIsReportedOnceAtTheExtension) {
+    check("struct Holder {\n    var run: (Int): Int\n}\nextension Holder: Equatable {}\n"
+          "func same<T: Equatable>(a: T, b: T): Bool { return a == b }\n"
+          "func f(h: Holder): Bool { return h == h && same(a: h, b: h) }\n");
+    ASSERT_EQ(checking.diagnostics.size(), 1u) << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_TRUE(hasDiagnosticNamed(checking, "type-checking.non-equatable-member"))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+// Every level holds two members of the next type; without memoization each `==` costs 2^depth checks.
+TEST_F(TypeCheckingTest, DerivedConformanceChecksStayLinearOnTypesThatShareMembers) {
+    std::string text;
+    constexpr int depth = 40;
+    for (int level = 0; level < depth; ++level) {
+        const auto name = "L" + std::to_string(level);
+        const auto next = level + 1 == depth ? std::string("Int") : "L" + std::to_string(level + 1);
+        text += "struct " + name + " {\n    var a: " + next + "\n    var b: " + next + "\n}\n";
+        text += "extension " + name + ": Equatable {}\n";
+    }
+    text += "func f(x: L0): Bool { return x == x }\n";
+    check(text);
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, LiteralAndCaseOperandsAreTypedByTheOtherSide) {
+    check("enum Tree<T> {\n    Leaf,\n    Node(T),\n}\nextension Tree<T>: Equatable {}\n"
+          "func cases(t: Tree<Int>): Bool { return Tree.Leaf == t }\n"
+          "func numbers(): Bool { return 0 == 0 }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AnEqualsMethodInALaterExtensionMakesTheConformanceHandWritten) {
+    check("struct Point {\n    var x: Int\n    var run: (Int): Int\n}\nextension Point: Equatable {}\n"
+          "extension Point {\n    func equals(other: Point): Bool { return self.x == other.x }\n}\n"
+          "func f(a: Point): Bool { return a == a }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AFieldNamedEqualsIsExplainedAsNotAMethod) {
+    check("struct Point {\n    var equals: Int\n}\nextension Point: Equatable {}\n");
+    EXPECT_TRUE(diagnosticHelpContains(checking, joyeer::typing::TypeCheckingDiagnosticId::missingWitness, "method"))
+            << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_FALSE(diagnosticHelpContains(checking, joyeer::typing::TypeCheckingDiagnosticId::missingWitness, "builtin"))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, DerivedConformanceBoundariesAtTheExtensionAndAtTypeArguments) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("struct Table<T> {\n    var rows: [Int: T]\n}\nextension Table<T>: Equatable {}\n");
+    EXPECT_TRUE(hasDiagnosticNamed(checking, "type-checking.non-equatable-member"))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("struct Pair<T> {\n    var first: T\n}\nextension Pair<T>: Equatable {\n"
+          "    func equals(other: Pair<T>): Bool { return true }\n}\n"
+          "struct Holder {\n    var pair: Pair<Int>\n}\nextension Holder: Equatable {}\n"
+          "func f(h: Holder): Bool { return h == h }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check("struct Box<T> {\n    var value: T\n}\nextension Box<T>: Equatable {}\n"
+          "struct Wrapper<T: Equatable> {\n    var inner: T\n}\n"
+          "func square(value: Int): Int { return value }\n"
+          "func f() {\n    let w = Wrapper(inner: Box(value: square))\n}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::unsatisfiedConstraint)) << joyeer::typing::dump(checking.diagnostics);
+}

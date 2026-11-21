@@ -334,6 +334,26 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "llvm-backend;debug-info;optimization"
     )
 
+    # Derived Equatable witnesses call other witnesses; every such call carries a debug location (decision 0029).
+    foreach(variant IN ITEMS "O0Dwarf;-O0;-gdwarf" "O2Dwarf;-O2;-gdwarf" "O0CodeView;-O0;-gfull;-gcodeview")
+        list(GET variant 0 suffix)
+        list(SUBLIST variant 1 -1 arguments)
+        list(JOIN arguments ";" compiler_arguments)
+        add_test(NAME LLVMBackendDerivedEqualityDebug${suffix}Validation
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DCLANG=${JOYEER_CLANG_EXECUTABLE}
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/equatable_derived.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-derived-equality-${suffix}.ll
+                        "-DCOMPILER_ARGS=${compiler_arguments}"
+                        "-DEXPECTED_IR_PATTERNS=!llvm.dbg.cu;!DILocation"
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyCompilerLLVMOutput.cmake
+        )
+        set_tests_properties(LLVMBackendDerivedEqualityDebug${suffix}Validation PROPERTIES
+                LABELS "llvm-backend;debug-info;equatable"
+        )
+    endforeach()
+
     add_test(NAME LLVMBackendCompilerFullDebugValidation
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
@@ -1539,6 +1559,23 @@ false
 false
 4
 5
+true
+"
+            0 1 2 3)
+    # Edge cases of derived Equatable conformances (decision 0029, plan 0012 phase 3 review).
+    add_joyeer_native_regression(
+            E2EEquatableDerivedEdges equatable_derived_edges
+            "true
+true
+true
+true
+true
+false
+true
+false
+false
+true
+true
 true
 "
             0 1 2 3)
