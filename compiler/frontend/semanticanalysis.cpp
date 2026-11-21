@@ -1120,8 +1120,10 @@ private:
         // `==` borrows both operands (spec 20.13.2, 20.13.4), so a linear temporary compared, such as
         // `maybe() == nil`, would be dropped.
         if (expression->op != nullptr && (expression->op->kind == equalEqual || expression->op->kind == notEqual)) {
-            reportBorrowedLinearTemporary(expression->left, state);
-            reportBorrowedLinearTemporary(expression->right, state);
+            // A presence test's `nil` or `.None` is not a value of the operand; only the operand can be dropped.
+            const auto nilOnLeft = model->presenceTest(expression);
+            if (!nilOnLeft.has_value() || !*nilOnLeft) reportBorrowedLinearTemporary(expression->left, state);
+            if (!nilOnLeft.has_value() || *nilOnLeft) reportBorrowedLinearTemporary(expression->right, state);
         }
     }
 

@@ -2754,7 +2754,10 @@ private:
                 const auto memberType = model->typeContext.displayName(member.type);
                 const auto* record = model->typeContext.type(member.type);
                 std::string help = "give '" + memberType + "' a conformance, or write 'equals(other:)' by hand";
-                if (record != nullptr && record->kind == TypeKind::function) {
+                if (model->isArrayRoleType(member.type) || model->typeContext.isOptional(member.type) ||
+                    model->typeContext.isResult(member.type)) {
+                    help = equatableHelp(member.type, span).value_or(help) + "; or write 'equals(other:)' by hand";
+                } else if (record != nullptr && record->kind == TypeKind::function) {
                     help = "a function type never conforms (spec 2.3.1); write 'equals(other:)' by hand and compare "
                            "the other members";
                 } else if (model->isDictRoleType(member.type)) {
@@ -3140,6 +3143,10 @@ private:
                 std::optional<std::string> help;
                 if (isCopyable) {
                     if (const auto reason = model->noncopyableReason(argument)) help = *reason;
+                } else if (protocol == model->equatableProtocol() &&
+                           (model->typeContext.isOptional(argument) || model->typeContext.isResult(argument) ||
+                            model->isArrayRoleType(argument))) {
+                    help = equatableHelp(argument, span).value_or("");
                 } else if (const auto path = protocol == model->equatableProtocol() ? nonEquatablePath(argument)
                                                                                    : std::nullopt) {
                     help = "'" + model->typeContext.displayName(argument) + "' derives 'Equatable', but its member '" +
@@ -3148,10 +3155,6 @@ private:
                 } else if (model->typeContext.mentionsTypeParameter(argument)) {
                     help = "inside a generic function, only a type parameter whose constraint lists '" +
                             symbolName(protocol) + "' satisfies it";
-                } else if (protocol == model->equatableProtocol() &&
-                           (model->typeContext.isOptional(argument) || model->typeContext.isResult(argument) ||
-                            model->isArrayRoleType(argument))) {
-                    help = equatableHelp(argument, span).value_or("");
                 } else if (model->typeContext.isOptional(argument) || model->typeContext.isResult(argument)) {
                     // An optional or result type cannot be extended (decision 0024), so no extension can fix this.
                     help = "an optional or result type cannot conform to '" + symbolName(protocol) +
@@ -5014,6 +5017,14 @@ private:
                 const auto& value = leftAbsent ? expression->right : expression->left;
                 const auto& absent = leftAbsent ? expression->left : expression->right;
                 const auto valueType = checkExpression(value).value_or(model->typeContext.errorType());
+                if (valueType != model->typeContext.errorType() && !model->typeContext.isOptional(valueType) &&
+                    !isContextualNone(absent)) {
+                    report(TypeCheckingDiagnosticId::invalidOperatorOperands, expression->span,
+                           "'nil' cannot be compared with a value of the type '" +
+                                   model->typeContext.displayName(valueType) + "', which is not optional",
+                           "only an optional can be absent; compare with a value of the type instead");
+                    return model->typeContext.errorType();
+                }
                 const auto absentType = checkExpression(absent, valueType).value_or(model->typeContext.errorType());
                 if (valueType == model->typeContext.errorType() || absentType == model->typeContext.errorType()) {
                     return model->typeContext.errorType();
@@ -5076,6 +5087,14 @@ private:
         }
         reportInvalidOperator(expression->op, { left, right }, expression->span);
         return model->typeContext.errorType();
+    }
+
+    bool isContextualNone(const syntax::ExprPtr& expression) const {
+        if (expression == nullptr) return false;
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return isContextualNone(std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+        }
+        return expression->kind == syntax::Kind::contextualCaseExpr;
     }
 
     // `nil` or `.None` with no payload, in parentheses or not (spec 20.13.4).
@@ -5163,6 +5182,16 @@ private:
         const bool equality = op != nullptr && (op->rawValue == "==" || op->rawValue == "!=");
         if (equality && operands.size() == 2 && operands[0] == operands[1]) {
             help = equatableHelp(operands[0], span);
+        } else if (equality && operands.size() == 2) {
+            // No wrapping between the operands (spec 20.13.2): `opt == 5` compares with `.Some(5)`.
+            for (size_t index = 0; index < 2; ++index) {
+                const auto* optional = model->typeContext.type(operands[index]);
+                if (model->typeContext.isOptional(operands[index]) && optional != nullptr &&
+                    !optional->arguments.empty() && optional->arguments[0] == operands[1 - index]) {
+                    help = "the operands have different types; wrap the plain one as '.Some(...)' to compare it "
+                           "with the optional, or compare with 'nil' to test for a value";
+                }
+            }
         }
         report(TypeCheckingDiagnosticId::invalidOperatorOperands, span, std::move(message), std::move(help));
     }
@@ -5179,16 +5208,21 @@ private:
         if (record->kind == TypeKind::function) {
             return "a function type never conforms to 'Equatable' (spec 2.3.1); compare what the functions return";
         }
-        if (model->isLinear(type)) {
-            return "'" + name + "' is linear, and a linear type never conforms to 'Equatable' (spec 20.13.3); "
-                   "compare a field instead";
-        }
-        // A container conforms when its components do (spec 20.13.3): name the first that does not.
+        // A container conforms when its components do (spec 20.13.3): name the first that does not. A component that
+        // already has a conformance is explained by its failing member, never told to declare another.
         if (model->isArrayRoleType(type) || model->typeContext.isOptional(type) || model->typeContext.isResult(type)) {
             const auto arguments = record->arguments;
             for (const auto argument : arguments) {
                 if (argument == model->typeContext.neverType() || isEquatable(argument)) continue;
-                const auto inner = equatableHelp(argument, span);
+                std::optional<std::string> inner;
+                if (model->equatableConformance(argument) != nullptr) {
+                    if (const auto path = nonEquatablePath(argument)) {
+                        inner = "its member '" + path->first + "' has the type '" +
+                                model->typeContext.displayName(path->second) + "', which does not conform";
+                    }
+                } else {
+                    inner = equatableHelp(argument, span);
+                }
                 const auto what = model->isArrayRoleType(type) ? "element" : "payload";
                 std::string help = "'" + name + "' compares its " + what + "s, and its " + what + " type '" +
                         model->typeContext.displayName(argument) + "' does not conform to 'Equatable'";
@@ -5196,6 +5230,10 @@ private:
                 if (model->typeContext.isOptional(type)) help += "; to test for a value, compare with 'nil'";
                 return help;
             }
+        }
+        if (model->isLinear(type)) {
+            return "'" + name + "' is linear, and a linear type never conforms to 'Equatable' (spec 20.13.3); "
+                   "compare a field instead";
         }
         if (model->isDictRoleType(type)) {
             return "a dictionary never conforms to 'Equatable' (spec 20.13.3)";
