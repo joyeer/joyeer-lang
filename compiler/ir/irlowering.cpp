@@ -1807,14 +1807,15 @@ private:
             TokenKind op, const syntax::ExprPtr& leftOperand, const syntax::ExprPtr& rightOperand,
             typing::TypeId type, SourceSpan span) {
         auto left = lowerExpression(leftOperand);
-        if (!left.has_value()) return std::nullopt;
+        if (!left.has_value() || currentBlockTerminated()) return std::nullopt;
         const auto checked = model->typeOf(leftOperand);
-        if (!checked.has_value() || !model->types().mentionsTypeParameter(*checked)) {
+        const bool equality = op == equalEqual || op == notEqual;
+        if (!equality || !checked.has_value() || !model->types().mentionsTypeParameter(*checked)) {
             left = prepareOwned(*left, leftOperand->span);
             if (!left.has_value()) return std::nullopt;
         }
         const auto right = lowerExpression(rightOperand);
-        if (!left.has_value() || !right.has_value()) return std::nullopt;
+        if (!left.has_value() || !right.has_value() || currentBlockTerminated()) return std::nullopt;
         if ((op == equalEqual || op == notEqual) && left->type == model->types().voidType()) {
             return emitBoolLiteral(op == equalEqual, span);
         }

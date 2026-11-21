@@ -1,6 +1,7 @@
 // `==` on a generic type with a hand-written `equals` reaches that witness's instance (decision 0029), from concrete
 // code, from a generic function, from a method of the type, and through a nested instance. An owned temporary operand
-// is destroyed once, after the comparison, and `Void` operands are evaluated left to right.
+// is destroyed once, at the end of its scope as any call argument's temporary is (so `2` prints before `1`), and
+// `Void` operands are evaluated left to right.
 struct Box<T: Equatable> {
     var value: T
 }

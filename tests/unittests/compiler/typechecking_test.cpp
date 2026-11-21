@@ -4678,9 +4678,11 @@ TEST_F(TypeCheckingTest, EqualityHelpNeverSuggestsAConformanceTheCompilerRejects
             << joyeer::typing::dump(checking.diagnostics);
 }
 
+// `Equatable` in an extension header names the prelude protocol, not a fresh parameter, so the header is a rejected
+// specialization rather than a parameter that shadows the protocol.
 TEST_F(TypeCheckingTest, AnExtensionHeaderParameterCannotBeNamedEquatable) {
     check("struct Box<T> {\n    var n: Int\n}\nextension Box<Equatable> {\n    func get(): Int { return self.n }\n}\n");
-    EXPECT_TRUE(hasTypeDiagnostic(checking, joyeer::typing::TypeCheckingDiagnosticId::reservedProtocolName))
+    EXPECT_TRUE(hasTypeDiagnostic(checking, joyeer::typing::TypeCheckingDiagnosticId::invalidExtensionHeader))
             << joyeer::typing::dump(checking.diagnostics);
 }
 
