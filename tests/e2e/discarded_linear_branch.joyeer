@@ -1,0 +1,23 @@
+func square(value: consuming Int): Int {
+    return value * value
+}
+
+func makeTask(input: consuming Int): JoinHandle<Int> {
+    return spawn(function: square, input: consume input)
+}
+
+// A discarded `if` or `match` names its linear places without moving them, through parentheses too, so both
+// handles are still joined afterwards.
+func main() {
+    let flag = true
+    let a = makeTask(input: consume 3)
+    let b = makeTask(input: consume 4)
+    (if flag { a } else { b })
+    ((if flag { b } else { a }))
+    let n = 1
+    (match n { 1 => a, _ => b })
+    let ra = consume a.join()
+    print(value: ra)
+    let rb = consume b.join()
+    print(value: rb)
+}

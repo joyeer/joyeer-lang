@@ -1,0 +1,15 @@
+func square(value: consuming Int): Int {
+    return value * value
+}
+
+func makeTask(): JoinHandle<Int> {
+    return spawn(function: square, input: consume 3)
+}
+
+// An `if` without `else` is `Void`: its branch value is discarded, so the task handle would be
+// dropped without a join.
+func main() {
+    let flag = true
+    let v = if flag { makeTask() }
+    print(value: 1)
+}
