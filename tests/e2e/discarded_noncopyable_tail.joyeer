@@ -1,0 +1,59 @@
+struct Handle {
+    var id: Int
+
+    deinit() {
+        print(value: self.id)
+    }
+}
+
+// The trailing `h` of a `Void` body is discarded: it is read, not copied.
+func voidTail(h: Handle) {
+    print(value: h.id)
+    h
+}
+
+func whileTail() {
+    let h = Handle(id: 2)
+    var count = 0
+    while count < 2 {
+        count = count + 1
+        print(value: 20 + count)
+        h
+    }
+}
+
+func ifWithoutElse(flag: Bool) {
+    let h = Handle(id: 3)
+    if flag { h }
+    print(value: 30)
+}
+
+// An `if` or `match` whose value is discarded produces no result, so a branch that names `h`
+// copies nothing, and a fresh branch value is destroyed when its branch ends.
+func statementIf(flag: Bool) {
+    let h = Handle(id: 4)
+    if flag { h } else { Handle(id: 40) }
+    print(value: 41)
+    if flag { Handle(id: 42) } else { h }
+}
+
+func statementMatch(n: Int) {
+    let h = Handle(id: 5)
+    match n {
+        1 => h,
+        _ => Handle(id: 50),
+    }
+    print(value: 51)
+}
+
+func main() {
+    let one = Handle(id: 1)
+    voidTail(h: one)
+    print(value: 10)
+    whileTail()
+    ifWithoutElse(flag: true)
+    statementIf(flag: false)
+    statementIf(flag: true)
+    statementMatch(n: 1)
+    statementMatch(n: 2)
+}

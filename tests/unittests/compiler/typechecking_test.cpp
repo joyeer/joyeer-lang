@@ -2483,8 +2483,8 @@ TEST_F(TypeCheckingTest, ReportsCopiesThroughIfMatchBlockPropagationAndTrailingE
     }
 }
 
-// A value-producing `if` or `match` always yields an owned temporary, so a branch that names a
-// noncopyable place copies it wherever the expression appears, not only where it is stored.
+// A value-producing `if` or `match` whose value is used yields an owned temporary, so a branch that
+// names a noncopyable place copies it wherever the expression appears, not only where it is stored.
 TEST_F(TypeCheckingTest, ReportsBranchCopiesOfAValueProducingIfOrMatchInEveryContext) {
     const std::vector<std::string> copies {
         // a borrowing argument, with the place moved into a branch-local first
@@ -2496,23 +2496,22 @@ TEST_F(TypeCheckingTest, ReportsBranchCopiesOfAValueProducingIfOrMatchInEveryCon
         " return look(handle: if flag { a } else { open() }) }\n",
         // a member base
         "func f(flag: Bool): Int { let a = open()\n return (if flag { a } else { open() }).fd }\n",
-        // an `if` in statement position whose branches still produce a value
-        "func f(flag: Bool) { let a = open()\n if flag { a } else { open() } }\n",
         // a nested `else if`
         "func look(handle: Handle): Int { return handle.fd }\n"
         "func f(flag: Bool, other: Bool): Int { let a = open()\n"
         " return look(handle: if flag { open() } else if other { a } else { open() }) }\n",
-        // `match` arms in a borrowing argument and in statement position
+        // `match` arms in a borrowing argument
         "func look(handle: Handle): Int { return handle.fd }\n"
         "func f(o: Optional<Handle>): Int {\n"
         " return look(handle: match consume o { .Some(x) => x, .None => open() }) }\n",
-        "func f(n: Int) { let a = open()\n match n { 1 => a, _ => open() } }\n",
         // a block arm
         "func look(handle: Handle): Int { return handle.fd }\n"
         "func f(o: Optional<Handle>): Int {\n"
         " return look(handle: match consume o { .Some(x) => { x }, .None => open() }) }\n",
         // a type parameter is noncopyable in the generic body (decision 0021)
-        "func g<T>(flag: Bool, a: T, b: T) { if flag { a } else { b } }\n",
+        "func g<T>(flag: Bool, a: T, b: T): T { if flag { a } else { b } }\n",
+        // a used value inside a statement whose own value is discarded
+        "func f(flag: Bool) { let a = open()\n if flag { take(handle: if flag { a } else { open() }) } }\n",
     };
     for (const auto& body : copies) {
         SCOPED_TRACE(body);
@@ -2520,6 +2519,34 @@ TEST_F(TypeCheckingTest, ReportsBranchCopiesOfAValueProducingIfOrMatchInEveryCon
         EXPECT_TRUE(hasMethodDiagnostic(
                 joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
                 << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+// A value that is discarded is never needed as an owned one (spec 4.1.1), so naming a noncopyable
+// place there copies nothing: an expression statement, the trailing expression of a `Void` body,
+// a `while` body or an `if` without `else`, and the branches of an `if` or `match` whose own value
+// is discarded.
+TEST_F(TypeCheckingTest, AcceptsANoncopyablePlaceWhoseValueIsDiscarded) {
+    const std::vector<std::string> discarded {
+        "func f(flag: Bool) { let a = open()\n if flag { a } }\n",
+        "func f() { let a = open()\n a }\n",
+        "func f(a: Handle) { a }\n",
+        "func f(flag: Bool) { let a = open()\n while flag { a } }\n",
+        "func f() { let a = open()\n a\n print(value: 1) }\n",
+        "func f(flag: Bool) { let a = open()\n if flag { a } else { open() } }\n",
+        "func f(flag: Bool) { let a = open()\n if flag { a } else { open() }\n print(value: 1) }\n",
+        "func f(flag: Bool, other: Bool) { let a = open()\n"
+        " if flag { open() } else if other { a } else { open() } }\n",
+        "func f(flag: Bool, other: Bool) { let a = open()\n if flag { if other { a } else { open() } } }\n",
+        "func f(flag: Bool) { let a = open()\n (if flag { a } else { open() }) }\n",
+        "func f(n: Int) { let a = open()\n match n { 1 => a, _ => open() } }\n",
+        "func f(n: Int) { let a = open()\n match n { 1 => { a }, _ => open() }\n print(value: 1) }\n",
+        "func g<T>(flag: Bool, a: T, b: T) { if flag { a } else { b } }\n",
+    };
+    for (const auto& body : discarded) {
+        SCOPED_TRACE(body);
+        check(std::string(handlePrelude) + body);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
     }
 }
 
