@@ -307,8 +307,13 @@ is read as a value before the right is evaluated, then `compare` (or the `String
 equality is a `literal` after both operands. In a generic body the left operand stays borrowed, as the checked
 body decided. On a hand-written conformance, `==` is a `call` of the witness (or of its instance for a generic
 type, which type checking requires like a call of `equals`) with both operands borrowed, and `!=` adds `compare
-eq` with `false`. `t.equals(other: u)` in an instance whose `T` is a builtin conformer is the builtin `==`. No
-opcode is added.
+eq` with `false`. `t.equals(other: u)` in an instance whose `T` is a builtin conformer is the builtin `==`. A derived
+conformance has a generated function `Type.equals(self, other)` per concrete type the program compares (found
+with the instances): a struct's `extractField`s each stored field (not the hidden live flag) of both operands
+and compares them in declaration order, an enum's `switchPattern`s on both tags and `extractPayload`s the
+payloads of equal tags; each `conditionalBranch`es to a shared `false` return at the first difference, and
+`Void` and `Never` members are skipped. Its instructions are located at the type's declaration in the
+function's root scope. No opcode is added.
 
 `&&` and `||` emit conditional right-hand blocks and Boolean merge slots.
 Their right operands and temporaries are evaluated only on the true-left and

@@ -1,6 +1,6 @@
 # 0012: Equality through `Equatable`
 
-- Status: in progress (updated 2026-11-21); phases 1 and 2 are done (builtin and hand-written equality); phase 3 is next
+- Status: in progress (updated 2026-11-21); phases 1 to 3 are done (builtin, hand-written and derived equality); phase 4 is next
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0024](../decisions/0024-library-optional-and-result.md) (rejects `==` on `Optional`/`Result`),
@@ -123,18 +123,36 @@ types it cannot compile (0024, "Equality is rejected").
 
 ### Phase 3: derived conformances
 
-- [ ] Type an operand without a type of its own (`nil`, `.Red`, `[]`) against the other operand on
+- [x] Type an operand without a type of its own (`nil`, `.Red`, `[]`) against the other operand on
   either side, and stop passing the enclosing expected type (§20.13.2), so `.Red == c` works with a
-  derived conformance. Today `nil == x` and `.Red == c` still type the left operand first.
-
-- [ ] Accept `extension S: Equatable {}` with no body on a user struct or enum, and derive memberwise
+  derived conformance. Evidence: 23d9945, 5242c84 (literal arrays, open generic cases);
+  `AnOperandWithoutATypeOfItsOwnIsTypedByTheOtherOnEitherSide`,
+  `LiteralAndCaseOperandsAreTypedByTheOtherSide`; `nil == a` is now typed and waits for phase 4.
+- [x] Accept `extension S: Equatable {}` with no body on a user struct or enum, and derive memberwise
   (or case-then-payload) equality. Reject it when a field or payload is not `Equatable`, naming the
-  field.
-- [ ] Accept a hand-written `equals` witness in place of the derived one.
-- [ ] For a generic type, define when `Box<X>` conforms: the derived conformance holds when every
+  field. Evidence: c42dd76 tests (12 observed failing), 23d9945; `AnEmptyConformanceDerives*`,
+  `ADerivedConformanceRejectsAMemberThatCanNeverConformAtTheExtension`, `TypeEquatableDerivedMember`,
+  `DerivedEqualityIsAGeneratedFunctionPerConcreteType`.
+- [x] Accept a hand-written `equals` witness in place of the derived one. Evidence: any member named
+  `equals` selects the hand-written path, also from a later extension
+  (`AMemberNamedEqualsSelectsTheHandWrittenPath`, `AnEqualsMethodInALaterExtension*`,
+  `DerivedWitnessesFollowWhatTheProgramReaches`).
+- [x] For a generic type, define when `Box<X>` conforms: the derived conformance holds when every
   field type, with `X` substituted, conforms. Check it at use, and record the rule in the decision.
-- [ ] End-to-end fixtures: compare structs, payload enums, recursive `indirect` enums, and generic
-  instances; reject the non-conforming ones.
+  Evidence: 0029 and §20.13.5 record it; `ADerivedConformanceOfAGenericTypeIsConditionalOnItsArguments`,
+  `DerivedConformanceBoundariesAtTheExtensionAndAtTypeArguments`.
+- [x] End-to-end fixtures: compare structs, payload enums and generic instances; reject the
+  non-conforming ones. Evidence: `E2EEquatableDerived` and `E2EEquatableDerivedEdges` at -O0 to -O3,
+  and the -gdwarf/-gcodeview compiles of `equatable_derived`.
+- [ ] Recursive types: compare a recursive enum or struct. Blocked: `indirect` cases are not implemented
+  (the lexer rejects them), so recursion needs an array, which conforms in phase 4. The coinductive check
+  is in place.
+- [x] Type-system and IR/backend reviews of this phase. Evidence: their findings (a stored-field
+  default without its witness, a `-g` LLVM verification failure, `Never` operands, cascading
+  diagnostics, exponential checks, operand typing, witnesses for uninstantiated bodies, help text)
+  have tests in 9c3c654 (9 observed failing) and fixes in 5242c84.
+- [x] Debug and Release CTest of phase 3. Evidence: at 5242c84 on Windows x64, Debug 2104 of 2104 and
+  Release 2102 of 2103; `ValidationScriptTests` timed out under parallel load and passed alone.
 
 ### Phase 4: Optional, Result and containers
 
@@ -196,6 +214,10 @@ types may not; conformances stay in the type's module.
 - Existential `any Equatable`.
 
 ## Progress log
+
+- 2026-11-21: Phase 3 implemented (c42dd76 tests, 4616d7c, 23d9945 implementation, 9c3c654 and
+  5242c84 review findings). Recursive types wait for phase 4 arrays (no `indirect`). The full Debug run
+  of 23d9945 passed 2087 of 2088 (`ValidationScriptTests` timed out under load).
 
 - 2026-11-21: Phase 2 done (e70e44b tests, 952c0e7 implementation, 8be2a99 and ed38353 review findings).
   Hand-written conformances came forward from phase 3; the reviews added the prelude-shape check
