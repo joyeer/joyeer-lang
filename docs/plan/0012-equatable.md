@@ -1,6 +1,6 @@
 # 0012: Equality through `Equatable`
 
-- Status: proposed (updated 2026-11-14)
+- Status: proposed (updated 2026-11-21)
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0024](../decisions/0024-library-optional-and-result.md) (rejects `==` on `Optional`/`Result`);
@@ -21,8 +21,8 @@ types it cannot compile (0024, "Equality is rejected").
 - `Equatable` is declarable as a constraint and as a conformance; it is no longer only a reserved
   name.
 - `a == b` and `a != b` type-check exactly when both sides have one type that conforms to `Equatable`.
-  They lower to the conformance's witness, or to the existing scalar and string comparisons, with no
-  extra call for builtin scalars.
+  They lower to the conformance's witness, or to the existing scalar `compare` and the inlined `String`
+  prelude call, with no extra call for builtin scalars.
 - `Int?`, `Result<Int, String>`, `[Int]`, and a user struct or enum with an explicit conformance
   compare correctly in end-to-end fixtures, in Debug and Release.
 - `x == nil` and `x != nil` work on any optional, as a tag test that needs no payload equality.
@@ -38,13 +38,19 @@ types it cannot compile (0024, "Equality is rejected").
   sides have the same type and that type:
   - is not `Void`, is copyable, contains no function type, and mentions no type parameter;
   - is not a user enum or struct.
-- **Lowering:** `Builder::comparison` (`native_functions.cpp`) handles only:
-  - floating point (`FCMP_OEQ`/`UNE`);
-  - `joyeer.string` (`joyeer_string_equal_abi`);
-  - integers (`ICMP_EQ`/`NE`).
+- **Lowering:** equality takes one of two paths
+  ([0028](../decisions/0028-ir-opcode-set.md) stage 3):
+  - Scalars lower to the `compare` opcode, which accepts only scalar operands. `Builder::comparison`
+    (`native_functions.cpp`) emits `FCMP_OEQ`/`UNE` for floating point and `ICMP_EQ`/`NE` for integers
+    and `Bool`.
+  - `String` `==` calls the collections prelude's `string_equal` role function
+    (`lib/Runtime/collections.joyeer`), which is always inlined and calls `joyeer_string_equal_abi`;
+    `!=` is `compare eq` of that result with `false` (`emitStringOperator` in `irlowering.cpp`).
+    Only literal String patterns in `switchPattern` still call the runtime from the backend
+    (`Builder::stringsEqual`).
 
-  So `[Int] == [Int]`, `[Int: Int] == …` and optionals are accepted but do not lower. No fixture
-  compares them.
+  Before 0024 and the 0026 array switch, `[Int] == [Int]`, `[Int: Int] == …` and optionals were
+  accepted but did not lower, and no fixture compared them.
 - **After 0024:** `Optional` and `Result` reject `==`, with help pointing to `match`.
 - **After the 0026 array switch:** arrays are ordinary role-bound structs, so the existing struct rule
   rejects `[Int] == [Int]` during type checking rather than accepting it and failing LLVM verification.
@@ -74,7 +80,9 @@ types it cannot compile (0024, "Equality is rejected").
 - [ ] Make `Equatable` a compiler-known protocol bound by a closed prelude role, like 0024, not by
   its name. State its requirement.
 - [ ] Give builtin conformances to the integer types, `Bool`, `UInt8`, `Float`, `Double` and `String`.
-  Lower them through the existing `comparison` paths so code size and speed do not change.
+  Keep their current lowering, so code size and speed do not change: the scalars to the `compare`
+  opcode, and `String` to the prelude's `string_equal` role call. Decide whether `String`'s witness is
+  that role function or a new one that wraps it.
 - [ ] Replace the kind test in `binaryResult` with conformance lookup. Keep `invalid-operator-operands`
   and add help naming `Equatable`.
 - [ ] Accept `==` on `T` when the constraint lists `Equatable` (§20.5). Lower it to the witness after
@@ -148,4 +156,6 @@ All are settled in the Phase 1 decision.
 
 ## Progress log
 
+- 2026-11-21: Current state and the phase 2 builtin-conformance item updated for 0028 stage 3:
+  `String` equality is now an inlined prelude call, and `compare` takes only scalars. No item changed.
 - 2026-11-14: Created after 0024 rejected `==` on `Optional`/`Result`. All items are open.
