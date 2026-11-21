@@ -146,6 +146,9 @@ Option 2, in stages. Each stage that changes the wire format bumps `wire::versio
   - Their parameters are read as their own values, with no stack slot and no debug variable. With slots, the -O0
     byte loop of the cost gate measured 1.40 against the opcode baseline: -O0 runs the always-inliner but not SROA, so
     each inlined call kept a 16-byte String store and its reloads. Without them it measured 1.12.
+  - At -O2 the same byte loop measured 1.023 [1.007, 1.052]: within the 1.03 median, but with the lower bound above
+    1. After `opt -O2` both compilers' inner loops are the same instructions, so the difference is attributed to code
+    placement, as in 0027. The user accepted this row on 2026-11-21.
   - `s.utf8()` is the library array's private `string_utf8` method, called on an inert zero `[UInt8]` like the
     literal method. A free function returning `[UInt8]` would intern that type in every module and so instantiate
     the array's methods everywhere; the method is instantiated for `[UInt8]` only. A prelude without the method can

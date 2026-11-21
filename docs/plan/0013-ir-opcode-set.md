@@ -1,6 +1,6 @@
 # 0013: A smaller, described IR opcode set
 
-- Status: in progress (updated 2026-11-20)
+- Status: in progress (updated 2026-11-21)
 - Decisions: [0028](../decisions/0028-ir-opcode-set.md); builds on
   [0025](../decisions/0025-library-collection-capabilities.md), [0026](../decisions/0026-library-array.md) and
   [0027](../decisions/0027-library-dict.md)
@@ -117,11 +117,11 @@ four meanings; the row's immediate kind names which one.
   (`string_bytes` was 1.402 [1.395, 1.432] before String role parameters stopped being spilled). Sizes: unchanged
   except `string_utf8` +512 bytes at -O0 and -O2; `hello` unchanged at both. `hello` front end (`--emit-llvm`, 30
   paired runs) 1.012. Raw reports in `out/perf-gate/string-ops`.
-- [ ] The -O2 cost gate. Concat 0.952, compare 1.004 [0.995, 1.008] and `utf8` 1.002 pass; `string_bytes` -O2 is
-  1.023 [1.007, 1.052] (median within 1.03, lower bound above 1), and the 15-repetition run was disturbed
+- [x] The -O2 cost gate. Evidence: concat 0.952, compare 1.004 [0.995, 1.008] and `utf8` 1.002 pass; `string_bytes`
+  -O2 is 1.023 [1.007, 1.052] (median within 1.03, lower bound above 1), and the 15-repetition run was disturbed
   ([0.40, 1.48]). The two compilers' inner byte loops are the same instructions after `opt -O2` (load, zero
   extension, checked add, compare and branch), so the difference is outside the loop's code, as in the 0027
-  placement finding. Under 0026's rerun rule this row needs the user's decision.
+  placement finding. Under 0026's rerun rule the user accepted this row on that evidence (2026-11-21).
 - [x] `ir-backend-reviewer` and `type-system-reviewer` passes. Evidence: no critical or high findings. Addressed: an
   intrinsic accepting an initializing String parameter, which the backend would have read past
   (`CInteropTest.TheVerifierRejectsAnInitializingIntrinsicParameter`, observed failing first); a C binding accepted
@@ -147,6 +147,8 @@ New opcodes, and any change to what programs observe outside stage 3's measured 
 
 ## Progress log
 
+- 2026-11-21: The user accepted the stage 3 -O2 `string_bytes` row (attributed to code placement); recorded in 0028.
+  Every stage's remaining item is the Release CTest and `scripts/validate.py`.
 - 2026-11-21: Stage 3 implemented (wire 29): String operations call the collections prelude, and the String opcodes
   are removed. Both reviews addressed; the -O0 gate passes after String role parameters stopped being spilled. Open:
   the -O2 `string_bytes` row (lower bound 1.007) needs the user's decision; Release CTest and `scripts/validate.py`.
