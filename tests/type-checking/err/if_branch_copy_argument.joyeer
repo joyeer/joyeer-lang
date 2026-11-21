@@ -1,0 +1,22 @@
+struct Handle {
+    var fd: Int
+    deinit() {}
+}
+
+func look(handle: Handle): Int {
+    return handle.fd
+}
+
+func pick(flag: Bool): Int {
+    let h = Handle(fd: 1)
+    return look(handle: if flag {
+        let t = consume h
+        t
+    } else {
+        Handle(fd: 3)
+    })
+}
+
+func main() {
+    print(value: pick(flag: true))
+}
