@@ -4223,10 +4223,12 @@ TEST_F(TypeCheckingTest, EqualityOnOptionalAndResultIsRejectedWithMatchHelp) {
     }
 }
 
+// Spec 20.13.2: `nil` takes the other operand's type on either side, so `nil == a` is optional equality, which
+// waits for plan 0012 phase 4 and is rejected meanwhile.
 TEST_F(TypeCheckingTest, NilOnTheLeftOfEqualityNeedsContextUnlessAnOptionalIsExpected) {
     using Id = joyeer::typing::TypeCheckingDiagnosticId;
     check("func f(a: Int?): Bool { return nil == a }\n");
-    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::missingContextualType))
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidOperatorOperands))
             << joyeer::typing::dump(checking.diagnostics);
     check("func f(a: Int?): Bool? { return nil == a }\n");
     EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidOperatorOperands))
@@ -4724,8 +4726,113 @@ TEST_F(TypeCheckingTest, BuiltinConformersHaveNoEqualsMember) {
 
 TEST_F(TypeCheckingTest, EqualityOnAConformanceWithAMissingWitnessReportsOnlyTheConformance) {
     using Id = joyeer::typing::TypeCheckingDiagnosticId;
-    check("struct Point {\n    var x: Int\n}\nextension Point: Equatable {}\n"
+    // A field named `equals` selects the hand-written path (spec 20.13.3), which then has no witness method.
+    check("struct Point {\n    var equals: Int\n}\nextension Point: Equatable {}\n"
           "func f(a: Point, b: Point): Bool { return a == b }\n");
     EXPECT_TRUE(hasTypeDiagnostic(checking, Id::missingWitness)) << joyeer::typing::dump(checking.diagnostics);
     EXPECT_FALSE(hasTypeDiagnostic(checking, Id::invalidOperatorOperands)) << joyeer::typing::dump(checking.diagnostics);
+}
+
+namespace {
+
+// By its stable string, for an ID this phase adds (`type-checking.non-equatable-member`).
+bool hasDiagnosticNamed(const joyeer::typing::TypeCheckingResult& checking, const std::string& id) {
+    return joyeer::typing::dump(checking.diagnostics).find(id) != std::string::npos;
+}
+
+}  // namespace
+
+// Derived `Equatable` conformances (decision 0029, spec 20.13.5), plan 0012 phase 3: an empty conformance derives
+// memberwise or case-then-payload equality, conditionally for a generic type, coinductively for a recursive type, and
+// whatever the order of the extensions; operands without a type of their own are typed by the other operand.
+TEST_F(TypeCheckingTest, AnEmptyConformanceDerivesEqualityForStructsAndEnums) {
+    check("struct Point {\n    var x: Int\n    var y: Int\n}\nextension Point: Equatable {}\n"
+          "enum Shape {\n    Circle(Double),\n    Square(Int, String),\n    Empty,\n}\nextension Shape: Equatable {}\n"
+          "struct Handle {\n    var name: String\n    deinit() {}\n}\nextension Handle: Equatable {}\n"
+          "struct Empty {}\nextension Empty: Equatable {}\n"
+          "func points(a: Point, b: Point): Bool { return a == b }\n"
+          "func shapes(a: Shape, b: Shape): Bool { return a != b }\n"
+          "func handles(a: Handle, b: Handle): Bool { return a == b }\n"
+          "func empties(a: Empty, b: Empty): Bool { return a == b }\n"
+          "func same<T: Equatable>(a: T, b: T): Bool { return a == b }\n"
+          "func run(p: Point, s: Shape): Bool { return same(a: p, b: p) && same(a: s, b: s) }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AnOperandWithoutATypeOfItsOwnIsTypedByTheOtherOnEitherSide) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("enum Color {\n    Red,\n    Green,\n}\nextension Color: Equatable {}\n"
+          "func right(c: Color): Bool { return c == .Red }\n"
+          "func left(c: Color): Bool { return .Green != c }\n"
+          "func literal(n: UInt8): Bool { return 3 == n }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check("enum Color {\n    Red,\n    Green,\n}\nextension Color: Equatable {}\n"
+          "func both(): Bool { return .Red == .Red }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::missingContextualType)) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ADerivedConformanceRejectsAMemberThatCanNeverConformAtTheExtension) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "struct Holder {\n    var run: (Int): Int\n}\nextension Holder: Equatable {}\n",
+            "struct Holder {\n    var table: [Int: Int]\n}\nextension Holder: Equatable {}\n",
+            "struct Plain {\n    var n: Int\n}\nstruct Holder {\n    var plain: Plain\n}\nextension Holder: Equatable {}\n",
+            "enum Job {\n    Run((Int): Int),\n    Idle,\n}\nextension Job: Equatable {}\n",
+            "struct Box<T> {\n    var run: (T): Int\n}\nextension Box<T>: Equatable {}\n",
+        }) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasDiagnosticNamed(checking, "type-checking.non-equatable-member")) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, ADerivedConformanceOfAGenericTypeIsConditionalOnItsArguments) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    const std::string box = "struct Box<T> {\n    var value: T\n}\nextension Box<T>: Equatable {}\n";
+    check(box + "func f(a: Box<Int>, b: Box<String>): Bool { return a == a && b != b }\n"
+                "func g<T: Equatable>(a: Box<T>, b: Box<T>): Bool { return a == b }\n"
+                "func h(a: Box<Box<Int>>): Bool { return a == a }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check(box + "func square(value: Int): Int { return value }\n"
+                "func f(): Bool {\n    let a = Box(value: square)\n    return a == a\n}\n");
+    EXPECT_TRUE(hasDiagnosticNamed(checking, "type-checking.non-equatable-member")) << joyeer::typing::dump(checking.diagnostics);
+    check(box + "func g<T>(a: Box<T>, b: Box<T>): Bool { return a == b }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidOperatorOperands)) << joyeer::typing::dump(checking.diagnostics);
+    check(box + "func same<U: Equatable>(a: U, b: U): Bool { return a == b }\n"
+                "func square(value: Int): Int { return value }\n"
+                "func f(): Bool {\n    let a = Box(value: square)\n    return same(a: a, b: a)\n}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::unsatisfiedConstraint)) << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_TRUE(diagnosticHelpContains(checking, Id::unsatisfiedConstraint, "value"))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, DerivedConformancesOfRecursiveTypesAndInAnyExtensionOrderTerminate) {
+    check("enum List {\n    Nil,\n    indirect Cons(Int, List),\n}\nextension List: Equatable {}\n"
+          "struct Outer {\n    var inner: Inner\n}\nextension Outer: Equatable {}\n"
+          "struct Inner {\n    var n: Int\n}\nextension Inner: Equatable {}\n"
+          "enum Tree<T> {\n    Leaf(T),\n    indirect Node(Tree<T>, Tree<T>),\n}\nextension Tree<T>: Equatable {}\n"
+          "func f(a: List, b: Outer, c: Tree<Int>): Bool { return a == a && b == b && c == c }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AMemberNamedEqualsSelectsTheHandWrittenPath) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("struct Point {\n    var x: Int\n    func equals(to other: Point): Bool { return true }\n}\n"
+          "extension Point: Equatable {}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::witnessMismatch)) << joyeer::typing::dump(checking.diagnostics);
+    check("struct Point {\n    var equals: Int\n}\nextension Point: Equatable {}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::missingWitness)) << joyeer::typing::dump(checking.diagnostics);
+}
+
+// The derived witness is not a member (decision 0029): `==` is the spelling.
+TEST_F(TypeCheckingTest, ADerivedConformanceAddsNoEqualsMember) {
+    source = std::make_shared<SourceFile>("struct Point {\n    var x: Int\n}\nextension Point: Equatable {}\n"
+                                          "func f(a: Point, b: Point): Bool { return a.equals(other: b) }\n");
+    LexParser(&lexerDiagnostics).parse(source);
+    parseResult = joyeer::parser::Parser(source->tokens).parse();
+    ASSERT_TRUE(parseResult.succeeded()) << joyeer::parser::dump(parseResult.diagnostics);
+    resolution = joyeer::semantic::NameResolver().resolve(parseResult.root);
+    EXPECT_TRUE(std::any_of(resolution.diagnostics.begin(), resolution.diagnostics.end(), [](const auto& diagnostic) {
+        return diagnostic.id == joyeer::semantic::NameResolutionDiagnosticId::unknownMember;
+    })) << joyeer::semantic::dump(resolution.diagnostics);
 }

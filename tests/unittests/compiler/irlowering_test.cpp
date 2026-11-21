@@ -2903,4 +2903,54 @@ func main() {
     }
     EXPECT_TRUE(destroyedAfterCall);
 }
+
+// A derived conformance (decision 0029, spec 20.13.5) is a generated function per concrete type: `==` calls it; a
+// struct's compares its fields in order and stops at the first that differs; an enum's dispatches on both tags and
+// compares the payloads of equal tags; a generic instance and a recursive type get theirs.
+TEST_F(IRLoweringTest, DerivedEqualityIsAGeneratedFunctionPerConcreteType) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"JOYEER(struct Point {
+    var x: Int
+    var label: String
+}
+extension Point: Equatable {}
+enum List {
+    Nil,
+    indirect Cons(Int, List),
+}
+extension List: Equatable {}
+struct Box<T> {
+    var value: T
+}
+extension Box<T>: Equatable {}
+func points(a: Point, b: Point): Bool { return a == b }
+func lists(a: List, b: List): Bool { return a != b }
+func boxes(a: Box<Int>, b: Box<Int>): Bool { return a == b }
+func same<T: Equatable>(a: T, b: T): Bool { return a == b }
+func main() {
+    let p = Point(x: 1, label: "a")
+    let r = same(a: p, b: p)
+}
+)JOYEER"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+
+    EXPECT_EQ(callsNamed(function("points"), "Point.equals"), 1u);
+    EXPECT_EQ(callsNamed(function("same<Point>"), "Point.equals"), 1u);
+    const auto& point = function("Point.equals");
+    EXPECT_EQ(point.parameters.size(), 2u);
+    EXPECT_EQ(opcodeCount(point, joyeer::ir::Opcode::extractField), 4u);
+    EXPECT_EQ(compareCount(point, joyeer::ir::ComparePredicate::equal), 1u);
+    EXPECT_EQ(callsNamed(point, "equals"), 1u);
+    EXPECT_EQ(opcodeCount(point, joyeer::ir::Opcode::conditionalBranch), 1u);
+    EXPECT_EQ(opcodeCount(point, joyeer::ir::Opcode::copyValue), 0u);
+    EXPECT_EQ(opcodeCount(point, joyeer::ir::Opcode::destroy), 0u);
+
+    EXPECT_EQ(callsNamed(function("lists"), "List.equals"), 1u);
+    const auto& list = function("List.equals");
+    EXPECT_GE(opcodeCount(list, joyeer::ir::Opcode::switchPattern), 2u);
+    EXPECT_EQ(callsNamed(list, "List.equals"), 1u);
+    EXPECT_EQ(callsNamed(function("boxes"), "Box<Int>.equals"), 1u);
+    EXPECT_EQ(opcodeCount(function("Box<Int>.equals"), joyeer::ir::Opcode::call), 0u);
+}
 } // namespace

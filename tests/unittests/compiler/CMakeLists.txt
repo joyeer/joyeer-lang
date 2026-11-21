@@ -1522,6 +1522,28 @@ true
 1
 "
             0 1 2 3)
+    # Derived Equatable conformances (decision 0029, plan 0012 phase 3).
+    add_joyeer_native_regression(
+            E2EEquatableDerived equatable_derived
+            "true
+true
+true
+false
+true
+false
+false
+false
+true
+false
+true
+false
+1
+false
+4
+5
+true
+"
+            0 1 2 3)
     # String operations through the collections prelude's String roles (decision 0028 stage 3), one expected
     # output at every level.
     add_joyeer_native_regression(
@@ -1932,7 +1954,9 @@ add_joyeer_rejected_regression(TypeGenericEqualityUnconstrained type-checking
         generic_equality_unconstrained type-checking.invalid-operator-operands)
 add_joyeer_rejected_regression(TypeEquatableLinear type-checking
         equatable_linear type-checking.invalid-conformance)
-set_tests_properties(TypeGenericEqualityUnconstrained TypeEquatableLinear PROPERTIES
+add_joyeer_rejected_regression(TypeEquatableDerivedMember type-checking
+        equatable_derived_member type-checking.non-equatable-member)
+set_tests_properties(TypeGenericEqualityUnconstrained TypeEquatableLinear TypeEquatableDerivedMember PROPERTIES
         LABELS "type-checking;regression;equatable")
 add_joyeer_rejected_regression(TypeRegressionConditionalExclusivity type-checking
         regression_type_conditional_exclusivity type-checking.overlapping-access)

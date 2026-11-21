@@ -1,0 +1,87 @@
+// Derived `Equatable` conformances (decision 0029, spec 20.13.5): structs compare fields in declaration order and
+// stop at the first that differs, enums compare tags and then payloads, recursive and generic types derive too, and
+// floating-point fields keep IEEE equality.
+struct Point {
+    var x: Int
+    var y: Int
+}
+
+extension Point: Equatable {}
+
+enum Color {
+    Red,
+    Green,
+}
+
+extension Color: Equatable {}
+
+enum Shape {
+    Circle(Double),
+    Label(Int, String),
+    Empty,
+}
+
+extension Shape: Equatable {}
+
+enum List {
+    Nil,
+    indirect Cons(Int, List),
+}
+
+extension List: Equatable {}
+
+struct Box<T> {
+    var value: T
+}
+
+extension Box<T>: Equatable {}
+
+struct Named {
+    var name: String
+    deinit() {}
+}
+
+extension Named: Equatable {}
+
+// A hand-written witness that prints, to show which fields a derived comparison reaches.
+struct Loud {
+    var id: Int
+}
+
+extension Loud: Equatable {
+    func equals(other: Loud): Bool {
+        print(value: self.id)
+        return self.id == other.id
+    }
+}
+
+struct Pair {
+    var first: Loud
+    var second: Loud
+}
+
+extension Pair: Equatable {}
+
+func same<T: Equatable>(a: T, b: T): Bool {
+    return a == b
+}
+
+func main() {
+    print(value: Point(x: 1, y: 2) == Point(x: 1, y: 2))
+    print(value: Point(x: 1, y: 2) != Point(x: 1, y: 3))
+    let color = Color.Green
+    print(value: color == .Green)
+    print(value: .Red == color)
+    print(value: Shape.Label(1, "a") == Shape.Label(1, "a"))
+    print(value: Shape.Label(1, "a") == Shape.Label(1, "b"))
+    print(value: Shape.Circle(1.0) == Shape.Empty)
+    let zero: Double = 0.0
+    print(value: Shape.Circle(zero / zero) == Shape.Circle(zero / zero))
+    let list = List.Cons(1, List.Cons(2, List.Nil))
+    print(value: list == List.Cons(1, List.Cons(2, List.Nil)))
+    print(value: list == List.Cons(1, List.Nil))
+    print(value: same(a: Box(value: Box(value: "x")), b: Box(value: Box(value: "x"))))
+    print(value: Named(name: "a") == Named(name: "b"))
+    print(value: Pair(first: Loud(id: 1), second: Loud(id: 2)) == Pair(first: Loud(id: 3), second: Loud(id: 2)))
+    print(value: Pair(first: Loud(id: 4), second: Loud(id: 5)) == Pair(first: Loud(id: 4), second: Loud(id: 5)))
+}
