@@ -4846,7 +4846,7 @@ TEST_F(TypeCheckingTest, ADerivedConformanceAddsNoEqualsMember) {
 // once, the conformance check stays linear on types that share members, operands without a type of their own, a
 // later `equals`, help text, and conformance checks at generic type arguments.
 TEST_F(TypeCheckingTest, NeverOperandsHaveNoEquality) {
-    check("func f(): Bool { return fatalError(message: \"a\") == fatalError(message: \"b\") }\n");
+    check("func stop(): Never {\n    while true {}\n}\nfunc f(): Bool { return stop() == stop() }\n");
     EXPECT_FALSE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
 }
 
