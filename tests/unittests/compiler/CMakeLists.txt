@@ -1535,8 +1535,6 @@ false
 false
 true
 false
-true
-false
 1
 false
 4

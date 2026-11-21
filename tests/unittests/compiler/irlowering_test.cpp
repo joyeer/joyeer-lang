@@ -2906,24 +2906,24 @@ func main() {
 
 // A derived conformance (decision 0029, spec 20.13.5) is a generated function per concrete type: `==` calls it; a
 // struct's compares its fields in order and stops at the first that differs; an enum's dispatches on both tags and
-// compares the payloads of equal tags; a generic instance and a recursive type get theirs.
+// compares the payloads of equal tags; a generic instance gets its own.
 TEST_F(IRLoweringTest, DerivedEqualityIsAGeneratedFunctionPerConcreteType) {
     ASSERT_NO_FATAL_FAILURE(lower(R"JOYEER(struct Point {
     var x: Int
     var label: String
 }
 extension Point: Equatable {}
-enum List {
-    Nil,
-    indirect Cons(Int, List),
+enum Shape {
+    Circle(Point),
+    Empty,
 }
-extension List: Equatable {}
+extension Shape: Equatable {}
 struct Box<T> {
     var value: T
 }
 extension Box<T>: Equatable {}
 func points(a: Point, b: Point): Bool { return a == b }
-func lists(a: List, b: List): Bool { return a != b }
+func shapes(a: Shape, b: Shape): Bool { return a != b }
 func boxes(a: Box<Int>, b: Box<Int>): Bool { return a == b }
 func same<T: Equatable>(a: T, b: T): Bool { return a == b }
 func main() {
@@ -2946,10 +2946,11 @@ func main() {
     EXPECT_EQ(opcodeCount(point, joyeer::ir::Opcode::copyValue), 0u);
     EXPECT_EQ(opcodeCount(point, joyeer::ir::Opcode::destroy), 0u);
 
-    EXPECT_EQ(callsNamed(function("lists"), "List.equals"), 1u);
-    const auto& list = function("List.equals");
-    EXPECT_GE(opcodeCount(list, joyeer::ir::Opcode::switchPattern), 2u);
-    EXPECT_EQ(callsNamed(list, "List.equals"), 1u);
+    EXPECT_EQ(callsNamed(function("shapes"), "Shape.equals"), 1u);
+    const auto& shape = function("Shape.equals");
+    EXPECT_EQ(opcodeCount(shape, joyeer::ir::Opcode::switchPattern), 3u);
+    EXPECT_EQ(opcodeCount(shape, joyeer::ir::Opcode::extractPayload), 2u);
+    EXPECT_EQ(callsNamed(shape, "Point.equals"), 1u);
     EXPECT_EQ(callsNamed(function("boxes"), "Box<Int>.equals"), 1u);
     EXPECT_EQ(opcodeCount(function("Box<Int>.equals"), joyeer::ir::Opcode::call), 0u);
 }

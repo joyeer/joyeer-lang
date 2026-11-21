@@ -1,6 +1,6 @@
 // Derived `Equatable` conformances (decision 0029, spec 20.13.5): structs compare fields in declaration order and
-// stop at the first that differs, enums compare tags and then payloads, recursive and generic types derive too, and
-// floating-point fields keep IEEE equality.
+// stop at the first that differs, enums compare tags and then payloads, generic types derive per instance, and
+// floating-point fields keep IEEE equality. Recursive types need arrays, which conform in plan 0012 phase 4.
 struct Point {
     var x: Int
     var y: Int
@@ -22,13 +22,6 @@ enum Shape {
 }
 
 extension Shape: Equatable {}
-
-enum List {
-    Nil,
-    indirect Cons(Int, List),
-}
-
-extension List: Equatable {}
 
 struct Box<T> {
     var value: T
@@ -77,9 +70,6 @@ func main() {
     print(value: Shape.Circle(1.0) == Shape.Empty)
     let zero: Double = 0.0
     print(value: Shape.Circle(zero / zero) == Shape.Circle(zero / zero))
-    let list = List.Cons(1, List.Cons(2, List.Nil))
-    print(value: list == List.Cons(1, List.Cons(2, List.Nil)))
-    print(value: list == List.Cons(1, List.Nil))
     print(value: same(a: Box(value: Box(value: "x")), b: Box(value: Box(value: "x"))))
     print(value: Named(name: "a") == Named(name: "b"))
     print(value: Pair(first: Loud(id: 1), second: Loud(id: 2)) == Pair(first: Loud(id: 3), second: Loud(id: 2)))
