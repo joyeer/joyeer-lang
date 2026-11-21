@@ -1,10 +1,10 @@
 # 0012: Equality through `Equatable`
 
-- Status: proposed (updated 2026-11-21)
+- Status: in progress (updated 2026-11-21); phase 1: decision 0029 drafted and reviewed, awaiting the user's acceptance
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
-  [0024](../decisions/0024-library-optional-and-result.md) (rejects `==` on `Optional`/`Result`);
-  a new decision record is the first todo item
+  [0024](../decisions/0024-library-optional-and-result.md) (rejects `==` on `Optional`/`Result`),
+  [0029](../decisions/0029-equatable.md) (this plan's decision, proposed)
 - Spec: [§5.2](../../specs/05-expressions.md), [§12.4](../../specs/12-modules.md) (reserved names),
   [§20.5](../../specs/20-protocols.md), [§20.10](../../specs/20-protocols.md) item 2
 
@@ -65,10 +65,15 @@ types it cannot compile (0024, "Equality is rejected").
 
 ### Phase 1: decision
 
-- [ ] Record a decision for `Equatable`. It must settle the open questions below and state how each
-  rejected option fails (operator functions, implicit structural equality for every type).
-- [ ] Run the language-designer and type-system reviewers on it; record the outcome in the decision.
-- [ ] Amend §5.2, §12.4, §20.2, §20.5, §20.10 and Appendix C. Add a §20 subsection for `Equatable`
+- [x] Record a decision for `Equatable`. It must settle the open questions below and state how each
+  rejected option fails (operator functions, implicit structural equality for every type). Evidence:
+  [0029](../decisions/0029-equatable.md), status proposed; the user chose four of the answers (2026-11-21).
+- [x] Run the language-designer and type-system reviewers on it; record the outcome in the decision.
+  Evidence: 0029 "Review": one critical, three high and the medium and low findings, all addressed in the
+  revision.
+- [ ] The user accepts 0029 as revised (status `accepted`).
+- [ ] Amend the sections 0029 lists (§2.1.2, §2.4, §2.5, §2.6, §5.2, §12.4, §20.2, §20.3, §20.4.2,
+  §20.5, §20.6, §20.8, §20.10, §20.12.2, §20.12.5, Appendix C) and 0024. Add §20.13 for `Equatable`
   with its diagnostics.
 
 ### Phase 2: builtin types and the operator
@@ -123,7 +128,11 @@ types it cannot compile (0024, "Equality is rejected").
 
 ## Open questions
 
-All are settled in the Phase 1 decision.
+All are answered in [0029](../decisions/0029-equatable.md), pending its acceptance: the requirement is
+`equals(other: Self)`; conformance is opt-in and derivable; conditional conformance is structural and
+limited to derived `Equatable`; `x == nil` is a presence test; `Float` and `Double` conform with IEEE
+equality; `Dict` does not conform until a `Hashable` decision; noncopyable types may conform and linear
+types may not; conformances stay in the type's module.
 
 - **Requirement shape.**
   - `func equals(other: Self): Bool` with a borrowed receiver and argument, or a different name?
@@ -156,6 +165,11 @@ All are settled in the Phase 1 decision.
 
 ## Progress log
 
+- 2026-11-21: Phase 1 started. Drafted 0029 with the user's four choices (opt-in, `equals(other:)`,
+  `== nil` presence test, noncopyable but not linear); ran the language-designer and type-system
+  reviewers and revised for every finding (derived witnesses are not members, conditional conformance
+  is a recorded predicate, `==` on non-builtin conformers borrows like a call). Added the acceptance
+  item; the spec waits for it.
 - 2026-11-21: Current state and the phase 2 builtin-conformance item updated for 0028 stage 3:
   `String` equality is now an inlined prelude call, and `compare` takes only scalars. No item changed.
 - 2026-11-14: Created after 0024 rejected `==` on `Optional`/`Result`. All items are open.
