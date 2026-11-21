@@ -1483,6 +1483,30 @@ false
 true
 "
             0 1 2 3)
+    # Equality through `Equatable` (decision 0029, plan 0012 phase 2): builtin conformers, hand-written witnesses
+    # and generic `==`, one expected output at every level.
+    add_joyeer_native_regression(
+            E2EEquatableBuiltins equatable_builtins
+            "true
+true
+true
+false
+false
+true
+true
+false
+true
+false
+true
+false
+true
+true
+true
+false
+true
+true
+"
+            0 1 2 3)
     # String operations through the collections prelude's String roles (decision 0028 stage 3), one expected
     # output at every level.
     add_joyeer_native_regression(
@@ -1889,6 +1913,12 @@ set_tests_properties(TypeOptionalEqualityRejected TypeResultEqualityRejected Typ
         LABELS "type-checking;regression;library-containers")
 add_joyeer_rejected_regression(TypeNilPatternNotOptionalRejected type-checking
         nil_pattern_not_optional type-checking.type-mismatch)
+add_joyeer_rejected_regression(TypeGenericEqualityUnconstrained type-checking
+        generic_equality_unconstrained type-checking.invalid-operator-operands)
+add_joyeer_rejected_regression(TypeEquatableLinear type-checking
+        equatable_linear type-checking.invalid-conformance)
+set_tests_properties(TypeGenericEqualityUnconstrained TypeEquatableLinear PROPERTIES
+        LABELS "type-checking;regression;equatable")
 add_joyeer_rejected_regression(TypeRegressionConditionalExclusivity type-checking
         regression_type_conditional_exclusivity type-checking.overlapping-access)
 add_joyeer_rejected_regression(TypeRegressionReceiverExclusivity type-checking

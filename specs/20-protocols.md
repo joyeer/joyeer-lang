@@ -774,8 +774,9 @@ and `a == reopen(t: consume a)` uses `a` after it is moved, while `a == a` is tw
 1. **Builtin conformers.** Every integer type, `Bool`, `UInt8`, `Float`, `Double`, `String` and `Void`
    conform by the compiler, and `Char` conforms when it is implemented. Integer, `Bool` and `String`
    equality compare values. `Float` and `Double` use IEEE 754 equality: a NaN is not equal to itself, and
-   `-0.0 == 0.0`. All `Void` values are equal. A user conformance of a builtin type is
-   `type-checking.orphan-conformance` (§20.3).
+   `-0.0 == 0.0`. All `Void` values are equal. A user extension of a builtin type is
+   `name-resolution.invalid-extension-target` while such extensions are not implemented (§3.5), and would
+   be `type-checking.orphan-conformance` after that (§20.3).
 2. **User structs and enums** conform only by an `extension X: Equatable { ... }` in their own module
    (§20.3). If the type or one of its extensions declares a member named `equals`, the conformance is
    **hand-written**: that member is the witness, checked as any witness (`witness-mismatch` when its

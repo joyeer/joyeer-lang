@@ -1,0 +1,10 @@
+// A linear type cannot conform to `Equatable` (spec 20.13.3).
+linear struct Token {
+    var id: Int
+}
+
+extension Token: Equatable {
+    func equals(other: Token): Bool {
+        return self.id == other.id
+    }
+}

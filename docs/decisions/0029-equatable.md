@@ -96,7 +96,7 @@ rules depend on the conformer:
 
 1. **Builtin conformers** conform by the compiler: every integer type, `Bool`, `UInt8`, `Float`, `Double`, `String`,
    and `Void`, whose values are all equal (it is needed so that `Void?` and `Result<Void, E>` conform). `Char`
-   conforms when it is implemented. A user conformance of a builtin type is `orphan-conformance`, as today (§20.3).
+   conforms when it is implemented. A user extension of a builtin type is rejected (`invalid-extension-target`, §3.5).
    Their lowering is unchanged: the scalar `compare` opcode and the inlined `string_equal` prelude call (0028 stage 3).
 2. **`Float` and `Double` keep IEEE equality**: `NaN != NaN` and `-0.0 == 0.0`. `Equatable` states no law that the
    compiler checks. Derived equality and `array_equal` compare floating-point fields one by one and never take an

@@ -2804,4 +2804,55 @@ TEST_F(NewOpcodeVerifierTest, FunctionTypesNeedOneValidEffectPerParameter) {
     integer->effects.push_back(joyeer::syntax::AccessEffect::inout);
     EXPECT_FALSE(joyeer::ir::Verifier().verify(strayEffects).succeeded());
 }
+
+// Equality through `Equatable` (decision 0029, spec 20.13.6), plan 0012 phase 2: a builtin conformer compiles as it
+// did before, with no call; a hand-written conformance calls its witness with both operands borrowed; `!=` negates
+// with `compare eq` against false; and each generic instance calls its own type's equality.
+TEST_F(IRLoweringTest, LowersEqualityToTheBuiltinOperationOrTheWitness) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"JOYEER(struct Money {
+    var cents: Int
+}
+extension Money: Equatable {
+    func equals(other: Money): Bool { return self.cents == other.cents }
+}
+struct Handle {
+    var fd: Int
+    deinit() {}
+}
+extension Handle: Equatable {
+    func equals(other: Handle): Bool { return self.fd == other.fd }
+}
+func same(a: Money, b: Money): Bool { return a == b }
+func differ(a: Money, b: Money): Bool { return a != b }
+func handles(a: Handle, b: Handle): Bool { return a == b }
+func unit(): Bool { return () == () }
+func generic<T: Equatable>(a: T, b: T): Bool { return a == b }
+func viaRequirement<T: Equatable>(a: T, b: T): Bool { return a.equals(other: b) }
+func main() {
+    let i = generic(a: 1, b: 2)
+    let m = generic(a: Money(cents: 1), b: Money(cents: 2))
+    let s = generic(a: "a", b: "b")
+    let r = viaRequirement(a: 1, b: 2)
+}
+)JOYEER"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+
+    EXPECT_EQ(callsNamed(function("same"), "Money.equals"), 1u);
+    EXPECT_EQ(opcodeCount(function("same"), joyeer::ir::Opcode::compare), 0u);
+    EXPECT_EQ(callsNamed(function("differ"), "Money.equals"), 1u);
+    EXPECT_EQ(compareCount(function("differ"), joyeer::ir::ComparePredicate::equal), 1u);
+    EXPECT_EQ(callsNamed(function("handles"), "Handle.equals"), 1u);
+    EXPECT_EQ(opcodeCount(function("handles"), joyeer::ir::Opcode::copyValue), 0u);
+    EXPECT_EQ(opcodeCount(function("unit"), joyeer::ir::Opcode::call), 0u);
+    EXPECT_EQ(opcodeCount(function("unit"), joyeer::ir::Opcode::compare), 0u);
+
+    EXPECT_EQ(opcodeCount(function("generic<Int>"), joyeer::ir::Opcode::call), 0u);
+    EXPECT_EQ(compareCount(function("generic<Int>"), joyeer::ir::ComparePredicate::equal), 1u);
+    EXPECT_EQ(callsNamed(function("generic<Money>"), "Money.equals"), 1u);
+    EXPECT_EQ(callsNamed(function("generic<String>"), "equals"), 1u);
+    EXPECT_EQ(opcodeCount(function("viaRequirement<Int>"), joyeer::ir::Opcode::call), 0u);
+    EXPECT_EQ(compareCount(function("viaRequirement<Int>"), joyeer::ir::ComparePredicate::equal), 1u);
+}
 } // namespace
