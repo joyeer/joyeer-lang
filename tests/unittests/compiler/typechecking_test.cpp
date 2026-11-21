@@ -4657,3 +4657,73 @@ TEST_F(TypeCheckingTest, NonBuiltinEqualityHoldsItsLeftOperandAcrossTheRight) {
           "func f(): Bool {\n    var n = 1\n    return n == bump(count: &n)\n}\n");
     EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
 }
+
+// Review findings on plan 0012 phase 2 (decision 0029): help text that names only what the compiler accepts, the
+// remaining reserved-name and exclusivity cases, and requirement members on builtin conformers.
+TEST_F(TypeCheckingTest, EqualityHelpNeverSuggestsAConformanceTheCompilerRejects) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("linear struct Token {\n    var id: Int\n}\nfunc f(a: Token, b: Token): Bool { return a == b }\n");
+    EXPECT_TRUE(diagnosticHelpContains(checking, Id::invalidOperatorOperands, "linear"))
+            << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_FALSE(diagnosticHelpContains(checking, Id::invalidOperatorOperands, "extension Token"))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("struct Box<T> {\n    var n: Int\n}\nfunc f(a: Box<Int>, b: Box<Int>): Bool { return a == b }\n");
+    EXPECT_TRUE(diagnosticHelpContains(checking, Id::invalidOperatorOperands, "extension Box<T>: Equatable"))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func square(value: Int): Int { return value }\nfunc f(): Bool { return square == square }\n");
+    EXPECT_TRUE(diagnosticHelpContains(checking, Id::invalidOperatorOperands, "never"))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func f(a: [Int], b: [Int]): Bool { return a == b }\n");
+    EXPECT_TRUE(diagnosticHelpContains(checking, Id::invalidOperatorOperands, "element"))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AnExtensionHeaderParameterCannotBeNamedEquatable) {
+    check("struct Box<T> {\n    var n: Int\n}\nextension Box<Equatable> {\n    func get(): Int { return self.n }\n}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, joyeer::typing::TypeCheckingDiagnosticId::reservedProtocolName))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, NonBuiltinEqualityRejectsAMoveOfTheLeftOperandInsideTheRight) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    const std::string handle =
+            "struct Handle {\n    var fd: Int\n    deinit() {}\n}\n"
+            "extension Handle: Equatable {\n"
+            "    func equals(other: Handle): Bool { return self.fd == other.fd }\n"
+            "}\n";
+    check(handle + "func f(): Bool {\n    let h = Handle(fd: 1)\n"
+                   "    return h == if true {\n        let t = consume h\n        t\n    } else {\n"
+                   "        Handle(fd: 3)\n    }\n}\n");
+    EXPECT_FALSE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check(handle + "func reopen(handle: consuming Handle): Handle { return Handle(fd: 2) }\n"
+                   "func f(): Bool {\n    let h = Handle(fd: 1)\n    return h == reopen(handle: consume h)\n}\n");
+    EXPECT_FALSE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check(std::string(equatableMoney) +
+          "func bump(money: inout Money): Money {\n    &money = Money(cents: 2)\n    return Money(cents: 3)\n}\n"
+          "func f(): Bool {\n    var p = Money(cents: 1)\n    return p != bump(money: &p)\n}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::overlappingAccess)) << joyeer::typing::dump(checking.diagnostics);
+    check("func bump<T>(value: inout T) {}\n"
+          "func f<T: Equatable & Copyable>(value: T): Bool {\n    var t = value\n"
+          "    return t == if true {\n        bump(value: &t)\n        t\n    } else {\n        value\n    }\n}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::overlappingAccess)) << joyeer::typing::dump(checking.diagnostics);
+}
+
+// Spec 20.13.3: only a hand-written witness is a member, so name resolution rejects `equals` on a builtin conformer.
+TEST_F(TypeCheckingTest, BuiltinConformersHaveNoEqualsMember) {
+    source = std::make_shared<SourceFile>("func f(a: Int, b: Int): Bool { return a.equals(other: b) }\n");
+    LexParser(&lexerDiagnostics).parse(source);
+    parseResult = joyeer::parser::Parser(source->tokens).parse();
+    ASSERT_TRUE(parseResult.succeeded()) << joyeer::parser::dump(parseResult.diagnostics);
+    resolution = joyeer::semantic::NameResolver().resolve(parseResult.root);
+    EXPECT_TRUE(std::any_of(resolution.diagnostics.begin(), resolution.diagnostics.end(), [](const auto& diagnostic) {
+        return diagnostic.id == joyeer::semantic::NameResolutionDiagnosticId::unknownMember;
+    })) << joyeer::semantic::dump(resolution.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, EqualityOnAConformanceWithAMissingWitnessReportsOnlyTheConformance) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("struct Point {\n    var x: Int\n}\nextension Point: Equatable {}\n"
+          "func f(a: Point, b: Point): Bool { return a == b }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::missingWitness)) << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_FALSE(hasTypeDiagnostic(checking, Id::invalidOperatorOperands)) << joyeer::typing::dump(checking.diagnostics);
+}

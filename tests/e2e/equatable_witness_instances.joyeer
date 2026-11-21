@@ -1,0 +1,55 @@
+// `==` on a generic type with a hand-written `equals` reaches that witness's instance (decision 0029), from concrete
+// code, from a generic function, from a method of the type, and through a nested instance. An owned temporary operand
+// is destroyed once, after the comparison, and `Void` operands are evaluated left to right.
+struct Box<T: Equatable> {
+    var value: T
+}
+
+extension Box<T>: Equatable {
+    func equals(other: Box<T>): Bool {
+        return self.value == other.value
+    }
+}
+
+extension Box<T> {
+    func matches(other: Box<T>): Bool {
+        return self == other
+    }
+}
+
+struct Ticket {
+    var id: Int
+    deinit() {
+        print(value: self.id)
+    }
+}
+
+extension Ticket: Equatable {
+    func equals(other: Ticket): Bool {
+        return self.id == other.id
+    }
+}
+
+func same<T: Equatable>(a: T, b: T): Bool {
+    return a == b
+}
+
+func left() {
+    print(value: "left")
+}
+
+func right() {
+    print(value: "right")
+}
+
+func main() {
+    print(value: Box(value: 1) == Box(value: 1))
+    print(value: same(a: Box(value: "a"), b: Box(value: "b")))
+    let box = Box(value: 3)
+    print(value: box.matches(other: Box(value: 3)))
+    print(value: Box(value: Box(value: 4)) != Box(value: Box(value: 4)))
+    let ticket = Ticket(id: 1)
+    let outcome = ticket == Ticket(id: 2)
+    print(value: outcome)
+    print(value: left() == right())
+}

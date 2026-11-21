@@ -1507,6 +1507,21 @@ true
 true
 "
             0 1 2 3)
+    # Witness instances of generic conformances, temporary operands and Void operands (decision 0029).
+    add_joyeer_native_regression(
+            E2EEquatableWitnessInstances equatable_witness_instances
+            "true
+false
+true
+false
+2
+false
+left
+right
+true
+1
+"
+            0 1 2 3)
     # String operations through the collections prelude's String roles (decision 0028 stage 3), one expected
     # output at every level.
     add_joyeer_native_regression(

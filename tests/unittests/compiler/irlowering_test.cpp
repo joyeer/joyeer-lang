@@ -2855,4 +2855,52 @@ func main() {
     EXPECT_EQ(opcodeCount(function("viaRequirement<Int>"), joyeer::ir::Opcode::call), 0u);
     EXPECT_EQ(compareCount(function("viaRequirement<Int>"), joyeer::ir::ComparePredicate::equal), 1u);
 }
+
+// `==` on a generic type whose `equals` is hand-written needs that witness's instance even when no call names it
+// (decision 0029): from concrete code, from a generic function and from a method of the type. An owned temporary
+// operand is destroyed once, after the witness call, and the borrowed place is neither copied nor destroyed.
+TEST_F(IRLoweringTest, EqualityReachesGenericWitnessInstancesAndDestroysTemporariesAfterTheCall) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"JOYEER(struct Box<T: Equatable> {
+    var value: T
+}
+extension Box<T>: Equatable {
+    func equals(other: Box<T>): Bool { return self.value == other.value }
+}
+extension Box<T> {
+    func matches(other: Box<T>): Bool { return self == other }
+}
+struct Ticket {
+    var id: Int
+    deinit() {}
+}
+extension Ticket: Equatable {
+    func equals(other: Ticket): Bool { return self.id == other.id }
+}
+func same<T: Equatable>(a: T, b: T): Bool { return a == b }
+func compare(ticket: Ticket): Bool { return ticket == Ticket(id: 2) }
+func main() {
+    let a = Box(value: 1) == Box(value: 1)
+    let b = same(a: Box(value: "a"), b: Box(value: "b"))
+    let c = Box(value: 3).matches(other: Box(value: 3))
+}
+)JOYEER"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    EXPECT_EQ(callsTo(function("main"), "equals"), 1u);
+    EXPECT_EQ(callsTo(function("same<Box<String>>"), "equals"), 1u);
+
+    const auto& compare = function("compare");
+    EXPECT_EQ(opcodeCount(compare, joyeer::ir::Opcode::copyValue), 0u);
+    EXPECT_EQ(opcodeCount(compare, joyeer::ir::Opcode::destroy), 1u);
+    bool called = false;
+    bool destroyedAfterCall = false;
+    for (const auto& block : compare.blocks) {
+        for (const auto& instruction : block.instructions) {
+            if (instruction.opcode == joyeer::ir::Opcode::call) called = true;
+            if (instruction.opcode == joyeer::ir::Opcode::destroy) destroyedAfterCall = called;
+        }
+    }
+    EXPECT_TRUE(destroyedAfterCall);
+}
 } // namespace
