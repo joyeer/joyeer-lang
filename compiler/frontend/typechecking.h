@@ -430,6 +430,8 @@ public:
     [[nodiscard]] std::optional<semantic::SymbolId> arrayRoleMethod(TypeId type, semantic::LibraryRole role) const;
     // The method of `role` of the role-bound collection `type` is an instance of, if any.
     [[nodiscard]] std::optional<semantic::SymbolId> collectionRoleMethod(TypeId type, semantic::LibraryRole role) const;
+    // The collections prelude's function for a String role (decision 0028 stage 3), once validated.
+    [[nodiscard]] std::optional<semantic::SymbolId> stringRoleFunction(semantic::LibraryRole role) const;
     // Whether `type` is an instance of a validated role-bound collection (an array or a dictionary role).
     [[nodiscard]] bool isCollectionRoleType(TypeId type) const;
     // Whether `type` is an instance of the validated `dict_type` struct (decision 0027).
@@ -506,6 +508,8 @@ private:
     // Each concrete dictionary role instance's interned entry instance.
     std::unordered_map<TypeId, TypeId> dictEntryTypes;
     std::optional<std::array<semantic::SymbolId, 2>> dictEntryFieldSymbols;
+    // The validated String role functions of the collections prelude (decision 0028 stage 3), by role.
+    std::unordered_map<semantic::LibraryRole, semantic::SymbolId> stringRoles;
     std::vector<Conformance> conformanceList;
     std::vector<Instance> instanceList;
     std::map<std::pair<semantic::SymbolId, std::vector<TypeId>>, size_t> instanceIndices;

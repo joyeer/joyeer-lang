@@ -148,6 +148,7 @@ joyeer_discover_tests(CompilerSemanticAnalysisTests
 
 add_executable(IRModelTests
         ir_test.cpp
+        opcode_test.cpp
 )
 
 target_link_libraries(IRModelTests
@@ -1438,6 +1439,64 @@ none
 true
 6
 -1
+"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EFloatingComparisons floating_comparisons
+            "false
+true
+false
+false
+false
+false
+false
+true
+false
+false
+false
+false
+false
+true
+true
+true
+false
+false
+true
+false
+false
+true
+false
+true
+"
+            0 1 2 3)
+    # String operations through the collections prelude's String roles (decision 0028 stage 3), one expected
+    # output at every level.
+    add_joyeer_native_regression(
+            E2EStringOperations string_operations
+            "joyful
+6
+0
+joy
+joy
+aa
+true
+false
+true
+true
+true
+true
+false
+true
+true
+false
+106
+121
+108
+6
+102
+0
+false
+false
 "
             0 1 2 3)
     add_joyeer_native_regression(

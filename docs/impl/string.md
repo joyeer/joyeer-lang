@@ -64,7 +64,12 @@ grapheme indexing. Display-column handling in diagnostics is also byte based.
 ## ABI
 
 Runtime calls decompose string handles into pointer/count fields or use output
-pointers for owned aggregate results. C structs are not passed by value across
+pointers for owned aggregate results. Generated code reaches them through the
+collections prelude ([0028](../decisions/0028-ir-opcode-set.md)): private,
+always-inlined functions read a String's halves with the runtime-only
+`joyeer_intrinsic_string_data` and `joyeer_intrinsic_string_count` intrinsics,
+check byte indexes inline, and call the runtime's comparison, concatenation and
+owned-array functions. C structs are not passed by value across
 the generated-module/runtime boundary, avoiding target-specific aggregate ABI
 drift.
 

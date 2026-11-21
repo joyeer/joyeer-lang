@@ -135,8 +135,10 @@ private:
     llvm::Value* convert(const ir::Instruction& instruction);
     llvm::Value* conversionOutOfRange(llvm::Value* value, typing::TypeKind sourceKind,
             ir::TypeId targetId, llvm::Value*& converted);
-    llvm::Value* comparison(ir::Opcode opcode, llvm::Value* left, llvm::Value* right,
+    llvm::Value* comparison(ir::ComparePredicate predicate, llvm::Value* left, llvm::Value* right,
             typing::TypeKind kind = typing::TypeKind::integer);
+    // A String literal pattern's test: the runtime's equality on the two `{ data, count }` halves.
+    llvm::Value* stringsEqual(llvm::Value* left, llvm::Value* right);
     llvm::Value* constructEnum(ir::TypeId id, size_t tag, llvm::ArrayRef<llvm::Value*> values);
     llvm::Value* extractPayload(ir::TypeId id, llvm::Value* value,
             semantic::SymbolId symbol, size_t index);

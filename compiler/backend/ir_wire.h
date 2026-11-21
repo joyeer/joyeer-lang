@@ -9,9 +9,11 @@
 
 namespace joyeer::llvmbackend::wire {
 
-// 26: the never-emitted `logicalAnd` slot (opcode 23) is removed. 25 removed the builtin dictionary slots
-// (opcodes 39-41, `subscript_addr` 50, type kind 11; decision 0027).
-inline constexpr uint32_t version = 26;
+// 29: the String opcodes `string_utf8`, `count` and `subscript` are removed; String operations are calls to the
+// collections prelude (decision 0028, stage 3). 28 numbered the opcodes densely, in descriptor-table order (stage
+// 4); 27 merged the constant, comparison, conversion, return and type-helper families and added the instruction
+// modifier (stage 2).
+inline constexpr uint32_t version = 29;
 
 // This private wire format carries Joyeer IR, not LLVM assembly. Both sides
 // allocate their own C++ objects; only borrowed bytes cross the backend C ABI.
@@ -47,7 +49,7 @@ template<class Archive> void fields(Archive& archive, ir::DebugVariableBinding& 
 template<class Archive> void fields(Archive& archive, ir::Instruction& value) {
     archive(value.opcode, value.result, value.operands, value.targets, value.callee,
             value.symbol, value.integerValue, value.text, value.span, value.switchCases,
-            value.debugLocation, value.debugVariableBindings);
+            value.debugLocation, value.debugVariableBindings, value.modifier);
 }
 template<class Archive> void fields(Archive& archive, ir::BasicBlock& value) {
     archive(value.id, value.name, value.instructions);

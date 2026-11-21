@@ -1,6 +1,7 @@
 #include "compiler/codegen/llvm.h"
 #include "compiler/codegen/linker.h"
 #include "compiler/backend/backend.h"
+#include "compiler/backend/ir_wire.h"
 #include "compiler/ir/irlowering.h"
 #include "compiler/frontend/lexparser.h"
 #include "compiler/frontend/nameresolution.h"
@@ -201,12 +202,12 @@ TEST(LLVMModuleConstructionTest, DoesNotRequireBasicBlocksInDefinitionOrder) {
     function.entry = 0;
     joyeer::ir::BasicBlock entry {0, "entry"};
     entry.instructions = {
-        {joyeer::ir::Opcode::integerConstant,
+        {joyeer::ir::Opcode::literal,
          joyeer::ir::Value{0, 0, joyeer::ir::ValueCategory::value}, {}, {}, {}, {}, 42},
         {joyeer::ir::Opcode::branch, {}, {}, {1}},
     };
     joyeer::ir::BasicBlock exit {1, "exit"};
-    exit.instructions = {{joyeer::ir::Opcode::returnValue, {}, {0}}};
+    exit.instructions = {{joyeer::ir::Opcode::ret, {}, {0}}};
     function.blocks = {exit, entry};
     module.functions.push_back(std::move(function));
     ASSERT_TRUE(joyeer::ir::Verifier().verify(module).succeeded());
@@ -895,12 +896,12 @@ TEST(LLVMArithmeticBackendTest, GuardsDivisionAndRemainderAtEveryOptimizationLev
             if (values.constants) {
                 block.instructions = {
                     {
-                        joyeer::ir::Opcode::integerConstant,
+                        joyeer::ir::Opcode::literal,
                         joyeer::ir::Value { 0, 0, joyeer::ir::ValueCategory::value },
                         {}, {}, std::nullopt, std::nullopt, values.left,
                     },
                     {
-                        joyeer::ir::Opcode::integerConstant,
+                        joyeer::ir::Opcode::literal,
                         joyeer::ir::Value { 1, 0, joyeer::ir::ValueCategory::value },
                         {}, {}, std::nullopt, std::nullopt, values.right,
                     },
@@ -917,7 +918,7 @@ TEST(LLVMArithmeticBackendTest, GuardsDivisionAndRemainderAtEveryOptimizationLev
                 { 0, 1 },
             });
             block.instructions.push_back({
-                joyeer::ir::Opcode::returnValue, std::nullopt, { 2 },
+                joyeer::ir::Opcode::ret, std::nullopt, { 2 },
             });
             function.blocks.push_back(std::move(block));
             module.functions.push_back(std::move(function));
@@ -1090,8 +1091,9 @@ print(value: "left" + "right")
     EXPECT_NE(
             result.text.find("declare void @joyeer_print_string_abi(ptr, i64)"),
             std::string::npos);
+    // The collections prelude's declaration (decision 0028 stage 3): the runtime export's Int words.
     EXPECT_NE(
-            result.text.find("declare void @joyeer_string_concat_abi(ptr, ptr, i64, ptr, i64)"),
+            result.text.find("declare void @joyeer_string_concat_abi(i64, i64, i64, i64, i64)"),
             std::string::npos);
     EXPECT_NE(result.text.find("private unnamed_addr constant [5 x i8] c\"hello\""),
               std::string::npos);
@@ -1178,6 +1180,36 @@ func access(ints: inout [Int], bytes: inout [UInt8], flags: inout [Bool],
     EXPECT_NE(result.text.find("call void @joyeer_destroy_type_"), std::string::npos);
 }
 
+// A String byte read calls the collections prelude's `string_byte` role (decision 0028 stage 3), which the backend
+// marks `alwaysinline`, from the read's own source location: once inlined, its `string index out of bounds` panic is
+// reported in the prelude, inlined at the read. Its projections lower to no call.
+TEST_F(LLVMBackendTest, StringByteReadsCallTheInlinedPreludeFromTheirLocation) {
+    ASSERT_NO_FATAL_FAILURE(emit("func last(text: String): UInt8 {\n"
+                                 "    return text[text.count - 1]\n"
+                                 "}\n",
+                                 true, { true, joyeer::DebugInfoFormat::dwarf, joyeer::OptimizationLevel::O0, true }));
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_EQ(result.text.find("joyeer_intrinsic_string"), std::string::npos) << result.text;
+    std::smatch read;
+    ASSERT_TRUE(std::regex_search(result.text, read,
+            std::regex(R"(call i8 @(joyeer_fn_[0-9]+)\(%joyeer\.string %[A-Za-z0-9_.]+, i64 %[A-Za-z0-9_.]+\).*!dbg (![0-9]+))")))
+            << result.text;
+    const auto callee = read[1].str();
+    std::smatch location;
+    ASSERT_TRUE(std::regex_search(result.text, location,
+            std::regex("\n" + read[2].str() + R"( = !DILocation\(line: ([0-9]+), column: ([0-9]+))")))
+            << result.text;
+    EXPECT_EQ(location[1].str(), "2");
+    EXPECT_EQ(location[2].str(), "12");
+    std::smatch definition;
+    ASSERT_TRUE(std::regex_search(result.text, definition,
+            std::regex("define internal i8 @" + callee + R"(\([^)]*\) (#[0-9]+))")))
+            << result.text;
+    EXPECT_NE(result.text.find("attributes " + definition[1].str() + " = { alwaysinline }"), std::string::npos)
+            << result.text;
+    EXPECT_NE(result.text.find("c\"string index out of bounds\\00\""), std::string::npos) << result.text;
+}
+
 TEST_F(LLVMBackendTest, EmitsStringUtf8AsOwnedByteArray) {
     emit(R"JOYEER(func bytes(text: String): [UInt8] {
 return text.utf8()
@@ -1189,10 +1221,13 @@ return text.utf8()
             result.text.find(
                     "declare void @joyeer_array_create_owned_abi(i64, i64, i64, i64, i64, i64)"),
             std::string::npos);
-    EXPECT_NE(result.text.find("extractvalue %joyeer.string"), std::string::npos);
-    EXPECT_NE(
-            result.text.find("i64 1, i64 0, i64 0)"),
-            std::string::npos);
+    // The library array's `string_utf8` method on an inert zero `[UInt8]` (decision 0028 stage 3) passes the
+    // String's data address and byte count, and one byte per element.
+    EXPECT_TRUE(std::regex_search(result.text, std::regex(
+            R"(call %joyeer\.struct\.[0-9]+ @joyeer_fn_[0-9]+\(%joyeer\.struct\.[0-9]+ %v[0-9]+, %joyeer\.string %v[0-9]+\))")))
+            << result.text;
+    EXPECT_NE(result.text.find("ptrtoint (ptr getelementptr (i8, ptr null, i32 1) to i64), i64 %"), std::string::npos)
+            << result.text;
 }
 
 TEST_F(LLVMBackendTest, EmitsMutatingArrayAppendRuntimeAbi) {
@@ -1503,7 +1538,7 @@ TEST(LLVMOwnershipBackendTest, EmitsRecursiveOwnershipHelpersAndOperations) {
                     std::nullopt,
                     { 4 },
                 },
-                joyeer::ir::Instruction { joyeer::ir::Opcode::returnVoid },
+                joyeer::ir::Instruction { joyeer::ir::Opcode::ret },
             },
         },
     };
@@ -1558,5 +1593,85 @@ TEST_F(LLVMBackendTest, GenericInstanceNamesAndConcreteDebugTypesSurviveTheBacke
         EXPECT_NE(result.text.find("name: \"value\""), std::string::npos);
         EXPECT_NE(result.text.find("name: \"String\""), std::string::npos);
     }
+}
+
+// Floating `compare` is ordered for every predicate except `ne`, which is true for NaN (decision 0028).
+TEST(LLVMCompareTest, FloatingPredicatesAreOrderedExceptNotEqual) {
+    const std::vector<std::pair<joyeer::ir::ComparePredicate, std::string>> predicates = {
+        { joyeer::ir::ComparePredicate::less, "fcmp olt double %v0, %v1" },
+        { joyeer::ir::ComparePredicate::lessEqual, "fcmp ole double %v0, %v1" },
+        { joyeer::ir::ComparePredicate::greater, "fcmp ogt double %v0, %v1" },
+        { joyeer::ir::ComparePredicate::greaterEqual, "fcmp oge double %v0, %v1" },
+        { joyeer::ir::ComparePredicate::equal, "fcmp oeq double %v0, %v1" },
+        { joyeer::ir::ComparePredicate::notEqual, "fcmp une double %v0, %v1" },
+    };
+    for (const auto& [predicate, expected] : predicates) {
+        SCOPED_TRACE(expected);
+        joyeer::ir::Module module;
+        module.sourceName = "floating-compare.joyeer";
+        module.types = {
+            { 0, "Float64", joyeer::typing::TypeKind::float64 },
+            { 1, "Bool", joyeer::typing::TypeKind::boolean },
+        };
+        joyeer::ir::Function function;
+        function.id = 0;
+        function.name = "compare";
+        function.resultType = 1;
+        function.returnsValue = true;
+        function.entry = 0;
+        function.parameters = {
+            { { 0, 0, joyeer::ir::ValueCategory::value }, std::nullopt, "left" },
+            { { 1, 0, joyeer::ir::ValueCategory::value }, std::nullopt, "right" },
+        };
+        joyeer::ir::BasicBlock block { 0, "entry" };
+        joyeer::ir::Instruction compare { joyeer::ir::Opcode::compare,
+                                          joyeer::ir::Value { 2, 1, joyeer::ir::ValueCategory::value }, { 0, 1 } };
+        compare.modifier = static_cast<uint8_t>(predicate);
+        block.instructions.push_back(compare);
+        block.instructions.push_back({ joyeer::ir::Opcode::ret, std::nullopt, { 2 } });
+        function.blocks.push_back(std::move(block));
+        module.functions.push_back(std::move(function));
+        joyeer::llvmbackend::EmitOptions options;
+        options.optimizationLevel = joyeer::OptimizationLevel::O0;
+        const auto result = joyeer::llvmbackend::Emitter().emit(module, options);
+        ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+        EXPECT_NE(result.text.find(expected), std::string::npos) << result.text;
+    }
+}
+
+// Opcode values are dense (decision 0028, stage 4): a wire payload naming a value past the table reaches the
+// backend's own verifier, which rejects the module before any code is generated.
+TEST(LLVMBackendABITest, RejectsAnOpcodeOutsideTheTable) {
+    joyeer::ir::Module module;
+    module.sourceName = "unknown-opcode.joyeer";
+    module.types = { { 0, "Void", joyeer::typing::TypeKind::voidType } };
+    joyeer::ir::Function function;
+    function.id = 0;
+    function.name = "run";
+    function.resultType = 0;
+    function.entry = 0;
+    joyeer::ir::BasicBlock block { 0, "entry" };
+    block.instructions.push_back(
+            { static_cast<joyeer::ir::Opcode>(static_cast<int>(joyeer::ir::Opcode::stackBlock) + 1) });
+    block.instructions.push_back({ joyeer::ir::Opcode::ret });
+    function.blocks.push_back(std::move(block));
+    module.functions.push_back(std::move(function));
+
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(module);
+    const JoyeerBackendModuleOptions options {
+        JOYEER_BACKEND_ABI_VERSION, sizeof(JoyeerBackendModuleOptions), joyeer::llvmbackend::wire::version,
+        writer.bytes.data(), writer.bytes.size(), JOYEER_BACKEND_O0, 0, 0, 0,
+    };
+    std::string messages;
+    const auto collect = [](void* context, const JoyeerBackendIRDiagnostic* diagnostic) noexcept {
+        static_cast<std::string*>(context)->append(diagnostic->message, diagnostic->messageSize).append("\n");
+    };
+    JoyeerBackendModule* nativeModule = nullptr;
+    const auto status = joyeer_backend_build_module(&options, &nativeModule, collect, &messages);
+    EXPECT_EQ(status, JOYEER_BACKEND_INVALID_IR);
+    EXPECT_EQ(nativeModule, nullptr);
+    if (nativeModule != nullptr) joyeer_backend_destroy_module(nativeModule);
+    EXPECT_NE(messages.find("unknown opcode"), std::string::npos) << messages;
 }
 } // namespace

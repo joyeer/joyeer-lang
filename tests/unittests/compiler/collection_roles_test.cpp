@@ -155,6 +155,115 @@ protected:
 
 // ---- Roles: shape validation ----
 
+// The String roles of the collections prelude (decision 0028 stage 3): five private, non-generic functions with
+// closed signatures, labels and borrowed parameters, each with a body, and an optional `string_utf8` method of the
+// array role. The test prelude here has none unless a test adds them.
+constexpr auto stringRoles = R"(
+@c_extern(symbol: "joyeer_intrinsic_string_count")
+private func stringCount(text: String): Int
+@compiler_role(string_count)
+private func byteCount(text: String): Int { return stringCount(text: text) }
+@compiler_role(string_byte)
+private func byteAt(text: String, index: Int): UInt8 { return 0 }
+@compiler_role(string_concat)
+private func concatenate(left: String, right: String): String { return left }
+@compiler_role(string_equal)
+private func equals(left: String, right: String): Bool { return false }
+@compiler_role(string_order)
+private func order(left: String, right: String): Int { return 0 }
+)";
+constexpr auto bufferUtf8 = R"(
+    @compiler_role(string_utf8)
+    private consuming func utf8(text: String): Buffer<T> {
+        return joyeer_intrinsic_move_out<Buffer<T>>(address: 0)
+    }
+)";
+
+TEST_F(CollectionRoleTest, WellShapedStringRolesAreAccepted) {
+    load("func main() {}\n", buffer() + stringRoles);
+    EXPECT_TRUE(checks()) << diagnostics();
+    load("func main() {}\n", buffer(bufferHead, bufferElement, bufferCopy, bufferEnd,
+                                    std::string(bufferUtf8) + bufferTail));
+    EXPECT_TRUE(checks()) << diagnostics();
+}
+
+TEST_F(CollectionRoleTest, MalformedStringRolesAreRejected) {
+    const std::string valid = buffer();
+    const auto role = [](const std::string& declaration) {
+        return std::string("@compiler_role(string_count)\n") + declaration + "\n";
+    };
+    for (const auto& declaration : std::vector<std::string> {
+            "public func byteCount(text: String): Int { return 0 }",
+            "private func byteCount<T>(text: String): Int { return 0 }",
+            "private func byteCount(text: consuming String): Int { return 0 }",
+            "private func byteCount(text: inout String): Int { return 0 }",
+            "private func byteCount(t: String): Int { return 0 }",
+            "private func byteCount(text: String): Int32 { return 0 }",
+            "private func byteCount(text: String, extra: Int): Int { return 0 }",
+            "@c_extern(symbol: \"joyeer_intrinsic_string_count\")\nprivate func byteCount(text: String): Int" }) {
+        SCOPED_TRACE(declaration);
+        EXPECT_TRUE(rejectedAsInvalidPrelude(valid + role(declaration), "the string_count role requires"))
+                << diagnostics();
+    }
+    EXPECT_TRUE(rejectedAsInvalidPrelude(valid + "@compiler_role(string_order)\n"
+                                         "private func order(left: String, right: String): Bool { return false }\n",
+                                         "the string_order role requires"))
+            << diagnostics();
+    EXPECT_TRUE(rejectedAsInvalidPrelude(valid + "@compiler_role(string_byte)\n"
+                                         "private func byteAt(text: String, index: Int32): UInt8 { return 0 }\n",
+                                         "the string_byte role requires"))
+            << diagnostics();
+    EXPECT_TRUE(rejectedAsInvalidPrelude(valid + stringRoles + role("private func again(text: String): Int { return 0 }"),
+                                         "declares a second function for the string_count role"))
+            << diagnostics();
+    // The utf8 method: consuming, private, `text: String`, returning the declaring type, at most once.
+    for (const auto& method : std::vector<std::string> {
+            "    @compiler_role(string_utf8)\n    private borrowing func utf8(text: String): Buffer<T> {\n"
+            "        return joyeer_intrinsic_move_out<Buffer<T>>(address: 0)\n    }\n",
+            "    @compiler_role(string_utf8)\n    public consuming func utf8(text: String): Buffer<T> {\n"
+            "        return joyeer_intrinsic_move_out<Buffer<T>>(address: 0)\n    }\n",
+            "    @compiler_role(string_utf8)\n    private consuming func utf8(bytes: String): Buffer<T> {\n"
+            "        return joyeer_intrinsic_move_out<Buffer<T>>(address: 0)\n    }\n",
+            "    @compiler_role(string_utf8)\n    private consuming func utf8(text: String): Buffer<Int> {\n"
+            "        return joyeer_intrinsic_move_out<Buffer<Int>>(address: 0)\n    }\n" }) {
+        SCOPED_TRACE(method);
+        EXPECT_TRUE(rejectedAsInvalidPrelude(
+                buffer(bufferHead, bufferElement, bufferCopy, bufferEnd, method + bufferTail),
+                "the string_utf8 role requires"))
+                << diagnostics();
+    }
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            buffer(bufferHead, bufferElement, bufferCopy, bufferEnd,
+                   std::string(bufferUtf8) + R"(
+    @compiler_role(string_utf8)
+    private consuming func bytes(text: String): Buffer<T> {
+        return joyeer_intrinsic_move_out<Buffer<T>>(address: 0)
+    }
+)" + bufferTail),
+            "allows at most one method with the role string_utf8"))
+            << diagnostics();
+}
+
+// A prelude without the String roles still checks; only lowering a String operation reports the missing function.
+TEST_F(CollectionRoleTest, AStringOperationWithoutItsRoleIsALoweringDiagnostic) {
+    for (const auto* body : { "return left + right", "return left == right", "return left.count",
+                              "return left[0]", "return left.utf8()" }) {
+        SCOPED_TRACE(body);
+        const std::string type = std::string(body).find("+") != std::string::npos ? "String"
+                : std::string(body).find("==") != std::string::npos ? "Bool"
+                : std::string(body).find("count") != std::string::npos ? "Int"
+                : std::string(body).find("utf8") != std::string::npos ? "[UInt8]" : "UInt8";
+        load("func use(left: String, right: String): " + type + " { " + body + " }\n");
+        ASSERT_TRUE(checks()) << diagnostics();
+        analysis = joyeer::analysis::Analyzer().analyze(checking.model);
+        ASSERT_TRUE(analysis.succeeded()) << joyeer::analysis::dump(analysis.diagnostics);
+        const auto result = joyeer::lowering::Lowerer().lower(checking.model, "fixture.joyeer");
+        EXPECT_FALSE(result.succeeded());
+        const auto text = joyeer::lowering::dump(result.diagnostics);
+        EXPECT_NE(text.find("ir-lowering.missing-symbol"), std::string::npos) << text;
+    }
+}
+
 TEST_F(CollectionRoleTest, AWellShapedArrayRoleIsAccepted) {
     load("func main() {}\n");
     ASSERT_TRUE(resolution.succeeded()) << diagnostics();
@@ -203,13 +312,10 @@ TEST_F(CollectionRoleTest, ALiteralMovesIntoOneStackBlockAndCallsTheRoleMethod) 
     ASSERT_NE(module, nullptr);
     size_t blocks = 0;
     size_t literals = 0;
-    size_t constructions = 0;
     for (const auto& function : module->functions) {
         for (const auto& block : function.blocks) {
             for (const auto& instruction : block.instructions) {
                 blocks += instruction.opcode == joyeer::ir::Opcode::stackBlock;
-                const auto wireSlot = static_cast<unsigned>(instruction.opcode);
-                constructions += wireSlot >= 35 && wireSlot <= 38;
                 if (instruction.opcode == joyeer::ir::Opcode::call && instruction.callee.has_value()) {
                     literals += module->functions[*instruction.callee].name.find(".literal") != std::string::npos;
                 }
@@ -218,7 +324,6 @@ TEST_F(CollectionRoleTest, ALiteralMovesIntoOneStackBlockAndCallsTheRoleMethod) 
     }
     EXPECT_EQ(blocks, 1u);
     EXPECT_EQ(literals, 1u);
-    EXPECT_EQ(constructions, 0u);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
 }
 
@@ -482,7 +587,7 @@ TEST_F(CollectionRoleTest, TheRoleStructKeepsTheThreeWordLayoutWithoutALiveFlag)
 }
 
 TEST_F(CollectionRoleTest, TheWireCarriesTheCollectionRolesAndAdvancesItsVersion) {
-    EXPECT_EQ(joyeer::llvmbackend::wire::version, 26u);
+    EXPECT_EQ(joyeer::llvmbackend::wire::version, 29u);
     load("func first(items: Buffer<Int>): Int { return items[0] }\n");
     const auto module = lower();
     ASSERT_NE(module, nullptr);
@@ -533,7 +638,7 @@ bool insertAfterIntConstant(joyeer::ir::Function& function, joyeer::ir::Instruct
                             bool yieldsInt) {
     for (auto& block : function.blocks) {
         for (auto it = block.instructions.begin(); it != block.instructions.end(); ++it) {
-            if (it->opcode != joyeer::ir::Opcode::integerConstant || !it->result.has_value()) continue;
+            if (it->opcode != joyeer::ir::Opcode::literal || !it->result.has_value()) continue;
             const auto constant = *it->result;
             if (added.integerValue == 0) added.integerValue = static_cast<int64_t>(constant.type);
             for (unsigned index = 0; index < operands; ++index) added.operands.push_back(constant.id);
@@ -565,7 +670,7 @@ TEST_F(CollectionRoleTest, TheVerifierAcceptsTheLoweredModuleAndRejectsEachMalfo
         auto& function = named(*copy, "first");
         auto* address = find(function, Opcode::integerAddress);
         ASSERT_NE(address, nullptr);
-        auto* constant = find(function, Opcode::integerConstant);
+        auto* constant = find(function, Opcode::literal);
         ASSERT_NE(constant, nullptr);
         address->operands = { constant->result->id };
         EXPECT_NE(verifierMessages(*copy).find("runtime authorization"), std::string::npos)
@@ -601,18 +706,32 @@ TEST_F(CollectionRoleTest, TheVerifierAcceptsTheLoweredModuleAndRejectsEachMalfo
         EXPECT_NE(verifierMessages(*copy).find("needs a deinit"), std::string::npos) << verifierMessages(*copy);
     }
     // Each new opcode is runtime-only: a user function that carries one is rejected.
-    for (const auto opcode : { Opcode::destroyRange, Opcode::cloneAt, Opcode::linearRangeGuard,
-                               Opcode::cloneCallback, Opcode::destroyCallback, Opcode::slotAddress }) {
+    struct Capability {
+        Opcode opcode;
+        uint8_t modifier;
+        unsigned operands;
+        const char* message;
+    };
+    const auto clone = static_cast<uint8_t>(joyeer::ir::TypeHelperKind::clone);
+    const auto destroy = static_cast<uint8_t>(joyeer::ir::TypeHelperKind::destroy);
+    for (const auto& capability : {
+                 Capability { Opcode::destroyRange, 0, 2, "a collection capability requires runtime authorization" },
+                 Capability { Opcode::cloneAt, 0, 2, "a collection capability requires runtime authorization" },
+                 Capability { Opcode::trapIf, 0, 1, "a trap requires runtime authorization" },
+                 Capability { Opcode::typeHelper, clone, 0, "a collection capability requires runtime authorization" },
+                 Capability { Opcode::typeHelper, destroy, 0,
+                              "a collection capability requires runtime authorization" },
+                 Capability { Opcode::slotAddress, 0, 2, "a collection capability requires runtime authorization" },
+         }) {
         auto copy = std::make_shared<joyeer::ir::Module>(*module);
         auto& function = named(*copy, "first");
-        joyeer::ir::Instruction added { opcode };
-        const auto count = opcode == Opcode::cloneCallback || opcode == Opcode::destroyCallback ? 0u
-                         : opcode == Opcode::linearRangeGuard ? 1u : 2u;
-        const bool yieldsInt = opcode == Opcode::cloneCallback || opcode == Opcode::destroyCallback ||
-                               opcode == Opcode::slotAddress;
-        ASSERT_TRUE(insertAfterIntConstant(function, added, count, yieldsInt));
-        EXPECT_NE(verifierMessages(*copy).find("a collection capability requires runtime authorization"),
-                  std::string::npos) << static_cast<int>(opcode) << "\n" << verifierMessages(*copy);
+        joyeer::ir::Instruction added { capability.opcode };
+        added.modifier = capability.modifier;
+        added.text = "message";
+        const bool yieldsInt = capability.opcode == Opcode::typeHelper || capability.opcode == Opcode::slotAddress;
+        ASSERT_TRUE(insertAfterIntConstant(function, added, capability.operands, yieldsInt));
+        EXPECT_NE(verifierMessages(*copy).find(capability.message), std::string::npos)
+                << static_cast<int>(capability.opcode) << "\n" << verifierMessages(*copy);
     }
 }
 
@@ -688,8 +807,8 @@ TEST_F(CollectionRoleTest, TheFourIntrinsicsLowerPerConcreteTypeInTheLibraryBodi
     const auto dumped = joyeer::ir::dump(*module);
     EXPECT_NE(dumped.find("destroy_range"), std::string::npos) << dumped;
     EXPECT_NE(dumped.find("clone_at"), std::string::npos) << dumped;
-    EXPECT_NE(dumped.find("clone_callback"), std::string::npos) << dumped;
-    EXPECT_NE(dumped.find("destroy_callback"), std::string::npos) << dumped;
+    EXPECT_NE(dumped.find("type_helper clone"), std::string::npos) << dumped;
+    EXPECT_NE(dumped.find("type_helper destroy"), std::string::npos) << dumped;
     EXPECT_EQ(verifierMessages(*module).find("ir."), std::string::npos) << verifierMessages(*module);
 }
 
@@ -708,10 +827,10 @@ TEST_F(CollectionRoleTest, ALinearOwnedTypeDropsTheRangeDestroyForAGuardAndHasNo
     const auto module = lower();
     ASSERT_NE(module, nullptr);
     const auto dumped = joyeer::ir::dump(*module);
-    EXPECT_NE(dumped.find("linear_range_guard"), std::string::npos) << dumped;
+    EXPECT_NE(dumped.find("trap_if"), std::string::npos) << dumped;
+    EXPECT_NE(dumped.find("\"linear container dropped while not empty\""), std::string::npos) << dumped;
     EXPECT_EQ(dumped.find("destroy_range"), std::string::npos) << dumped;
-    EXPECT_EQ(dumped.find("clone_callback"), std::string::npos) << dumped;
-    EXPECT_EQ(dumped.find("destroy_callback"), std::string::npos) << dumped;
+    EXPECT_EQ(dumped.find("type_helper"), std::string::npos) << dumped;
     EXPECT_EQ(verifierMessages(*module).find("ir."), std::string::npos) << verifierMessages(*module);
 }
 
@@ -728,7 +847,8 @@ TEST_F(CollectionRoleTest, TheBackendEmitsTheRoleStructWithoutALiveFlagAndTheCap
     }
 }
 )");
-    load("func text(items: Buffer<String>): Int { return items.callbacks() + items[1].count }\n"
+    // The replacement prelude has no String roles (decision 0028 stage 3), so the String element is only read.
+    load("func text(items: Buffer<String>): Int { let value = items[1]\n return items.callbacks() }\n"
          "func number(items: Buffer<Int>): Int { return items.callbacks() + items[0] }\n"
          "func twice(items: Buffer<Int>): Buffer<Int> { let again = items\n return again }\n"
          "func main() {}\n", library);
@@ -820,7 +940,7 @@ TEST_F(CollectionRoleTest, TheEscapeRuleRejectsEachWayAnElementAddressCouldOutli
         auto& function = named(*copy, "first");
         const auto address = place(function)->result->id;
         auto& last = function.blocks.back().instructions.back();
-        ASSERT_EQ(last.opcode, Opcode::returnValue);
+        ASSERT_EQ(last.opcode, Opcode::ret);
         last.operands = { address };
         EXPECT_NE(verifierMessages(*copy).find("element address may not be used by ret"), std::string::npos)
                 << verifierMessages(*copy);
@@ -847,7 +967,7 @@ TEST_F(CollectionRoleTest, TheEscapeRuleRejectsEachWayAnElementAddressCouldOutli
         joyeer::ir::Instruction load { Opcode::load };
         load.operands = { address };
         load.result = joyeer::ir::Value { 9001, loaded, ValueCategory::value };
-        joyeer::ir::Instruction done { Opcode::returnValue };
+        joyeer::ir::Instruction done { Opcode::ret };
         done.operands = { 9001 };
         stray.instructions = { load, done };
         function.blocks.push_back(stray);
@@ -1076,7 +1196,7 @@ TEST_F(CollectionRoleTest, SlotAddressIsAnAuthorizedUncheckedElementAddress) {
     }
 )", bufferCopy, bufferEnd, bufferTail);
     load("func first(items: Buffer<Int>): Int { return items[1] }\n"
-         "func text(items: Buffer<String>): Int { return items[0].count }\n"
+         "func text(items: Buffer<String>) { let value = items[0] }\n"
          "func unit(items: Buffer<Void>) { let value = items[2] }\n", library);
     const auto module = lower();
     ASSERT_NE(module, nullptr);
@@ -1368,7 +1488,7 @@ TEST_F(CollectionRoleTest, StackBlockMalformedFormsAreRejectedByTheVerifier) {
         for (auto& block : function.blocks) {
             for (auto& instruction : block.instructions) {
                 if (instruction.opcode == Opcode::stackBlock) {
-                    // The addressor's own parameter is not an integerConstant definition.
+                    // The addressor's own parameter is not an integer literal definition.
                     instruction.operands = { function.parameters.empty() ? 0 : function.parameters.back().value.id };
                     changed = true;
                 }
@@ -1883,7 +2003,7 @@ TEST_F(CollectionRoleTest, ALiteralElementMustBeEvaluatedInABlockThatDominatesTh
         instruction.targets = { target };
         return instruction;
     };
-    joyeer::ir::Instruction condition { Opcode::booleanConstant };
+    joyeer::ir::Instruction condition { Opcode::literal };
     condition.integerValue = 1;
     condition.result = joyeer::ir::Value { 9100, checking.model->types().boolType(), joyeer::ir::ValueCategory::value };
     joyeer::ir::Instruction choose { Opcode::conditionalBranch };
@@ -1962,7 +2082,7 @@ TEST_F(CollectionRoleTest, AFactoryFunctionValueWithoutLiteralStorageIsRejected)
     call.callee.reset();
     call.operands = { 9000, receiver, count, count };
     instructions.push_back(call);
-    instructions.push_back({ joyeer::ir::Opcode::returnValue, std::nullopt, { call.result->id } });
+    instructions.push_back({ joyeer::ir::Opcode::ret, std::nullopt, { call.result->id } });
     const auto verification = joyeer::ir::Verifier().verify(copy);
     EXPECT_FALSE(verification.succeeded());
     EXPECT_NE(joyeer::ir::dump(verification).find("literal factories cannot be formed as function values"),

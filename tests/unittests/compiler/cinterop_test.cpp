@@ -525,6 +525,50 @@ TEST_F(CInteropTest, RejectsFloatingPointBitPatternsOfTheWrongType) {
     }
 }
 
+// The String projections of the collections prelude (decision 0028 stage 3): a borrowed String, an Int result.
+TEST_F(CInteropTest, ChecksTheStringProjectionIntrinsics) {
+    check(R"(
+@c_extern(symbol: "joyeer_intrinsic_string_data")
+func data(text: String): Int
+@c_extern(symbol: "joyeer_intrinsic_string_count")
+func count(text: String): Int
+func use(text: String): Int { return data(text: text) + count(text: text) }
+)");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    for (const auto& declaration : std::vector<std::string> {
+            "@c_extern(symbol: \"joyeer_intrinsic_string_count\")\nfunc f(text: initializing String): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_string_count\")\nfunc f(text: inout String): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_string_count\")\nfunc f(text: String): Int32\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_string_data\")\nfunc f(text: String, extra: Int): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_string_data\")\nfunc f(text: [UInt8]): Int\n" }) {
+        check(declaration);
+        EXPECT_FALSE(checking.succeeded()) << declaration;
+    }
+    // Not in an ordinary unit.
+    check("@c_extern(symbol: \"joyeer_intrinsic_string_count\")\nfunc f(text: String): Int\n", false);
+    EXPECT_FALSE(checking.succeeded());
+}
+
+// The verifier, the trust boundary for IR from the wire, rejects an intrinsic whose String parameter is an
+// initializing output: the backend would pass one output address, not the String's data and count.
+TEST_F(CInteropTest, TheVerifierRejectsAnInitializingIntrinsicParameter) {
+    ASSERT_NO_FATAL_FAILURE(lower("@c_extern(symbol: \"joyeer_intrinsic_string_count\")\n"
+                                  "func count(text: String): Int\n"));
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    auto mutated = *module;
+    const auto found = std::find_if(mutated.functions.begin(), mutated.functions.end(), [](const auto& function) {
+        return function.nativeBinding.has_value() && function.nativeBinding->symbol == "joyeer_intrinsic_string_count";
+    });
+    ASSERT_NE(found, mutated.functions.end());
+    auto& parameter = found->parameters.at(0);
+    parameter.value.category = joyeer::ir::ValueCategory::address;
+    parameter.isMutable = true;
+    parameter.isInitializing = true;
+    const auto verification = joyeer::ir::Verifier().verify(mutated);
+    EXPECT_NE(joyeer::ir::dump(verification).find("invalid or unauthorized C binding"), std::string::npos)
+            << joyeer::ir::dump(verification);
+}
+
 TEST_F(CInteropTest, ChecksTheSystemCallAndArchitectureIntrinsics) {
     check(R"(
 @c_extern(symbol: "joyeer_intrinsic_syscall")
@@ -1957,7 +2001,7 @@ TEST_F(CInteropTest, VerifierChecksEachPointerConversionRule) {
         parameter.value = {0, 0, ValueCategory::value};
         parameter.isConsuming = true;
         entry.parameters.push_back(parameter);
-        entry.blocks = {{0, "entry", {{Opcode::returnVoid}}}};
+        entry.blocks = {{0, "entry", {{Opcode::ret}}}};
         joyeer::ir::Function caller;
         caller.id = 1;
         caller.name = "caller";
@@ -1970,7 +2014,7 @@ TEST_F(CInteropTest, VerifierChecksEachPointerConversionRule) {
         joyeer::ir::Instruction conversion {Opcode::pointerToInteger};
         conversion.result = joyeer::ir::Value {1, 0, ValueCategory::value};
         conversion.operands = {0};
-        caller.blocks = {{0, "entry", {address, conversion, {Opcode::returnVoid}}}};
+        caller.blocks = {{0, "entry", {address, conversion, {Opcode::ret}}}};
         value.functions = {entry, caller};
         mutate(value);
         return value;
@@ -2067,7 +2111,7 @@ TEST_F(CInteropTest, VerifierChecksTheCallbackContractAfterAddressErasure) {
         parameter.value = {0, 2, ValueCategory::value};
         parameter.isConsuming = true;
         entry.parameters.push_back(parameter);
-        entry.blocks = {{0, "entry", {{Opcode::returnVoid}}}};
+        entry.blocks = {{0, "entry", {{Opcode::ret}}}};
         if (native) entry.nativeBinding = joyeer::NativeBinding {joyeer::NativeBindingKind::cExport, "native_entry"};
         joyeer::ir::Function caller;
         caller.id = 1;
@@ -2081,7 +2125,7 @@ TEST_F(CInteropTest, VerifierChecksTheCallbackContractAfterAddressErasure) {
         joyeer::ir::Instruction conversion {Opcode::pointerToInteger};
         conversion.result = joyeer::ir::Value {1, 0, ValueCategory::value};
         conversion.operands = {0};
-        caller.blocks = {{0, "entry", {address, conversion, {Opcode::returnVoid}}}};
+        caller.blocks = {{0, "entry", {address, conversion, {Opcode::ret}}}};
         value.functions = {entry, caller};
         const auto rejectsCallback = [](const auto& module) {
             const auto verification = joyeer::ir::Verifier().verify(module);
@@ -2102,11 +2146,11 @@ TEST_F(CInteropTest, VerifierChecksTheCallbackContractAfterAddressErasure) {
         body[0].result->id = 1;
         body[1].operands = {1};
         body[1].result->id = 2;
-        joyeer::ir::Instruction unit {Opcode::unitConstant};
+        joyeer::ir::Instruction unit {Opcode::literal};
         unit.result = joyeer::ir::Value {0, 1, ValueCategory::value};
         body.insert(body.begin(), unit);
         duplicateBlocks.functions[1].blocks.insert(
-                duplicateBlocks.functions[1].blocks.begin(), {0, "duplicate", {{Opcode::returnVoid}}});
+                duplicateBlocks.functions[1].blocks.begin(), {0, "duplicate", {{Opcode::ret}}});
         EXPECT_TRUE(rejectsCallback(duplicateBlocks));
         joyeer::llvmbackend::wire::Writer duplicates;
         duplicates(duplicateBlocks);

@@ -282,94 +282,29 @@ std::string dump(const Module& module) {
                     out << typeName(types, instruction.result->type) << " = ";
                 }
                 out << opcodeName(instruction.opcode);
+                const auto* descriptor = findOpcodeDescriptor(instruction.opcode);
+                const auto immediate = descriptor == nullptr ? OpcodeImmediate::none : descriptor->immediate;
+                if (descriptor != nullptr && descriptor->modifier != OpcodeModifier::none) {
+                    const auto* modifier = modifierName(descriptor->modifier, instruction.modifier);
+                    if (modifier != nullptr) {
+                        out << ' ' << modifier;
+                    } else {
+                        out << " modifier#" << static_cast<unsigned>(instruction.modifier);
+                    }
+                } else if (instruction.modifier != 0) {
+                    // A stray modifier the verifier rejects; shown so the dump explains the rejection.
+                    out << " modifier#" << static_cast<unsigned>(instruction.modifier);
+                }
+                const auto printOperands = [&] {
+                    for (size_t index = 0; index < instruction.operands.size(); ++index) {
+                        out << (index == 0 ? " " : ", ") << valueName(instruction.operands[index]);
+                    }
+                };
                 switch (instruction.opcode) {
-                    case Opcode::integerConstant:
-                        if (instruction.result.has_value() && types.contains(instruction.result->type) &&
-                                typing::isUnsignedInteger(types.at(instruction.result->type)->kind)) {
-                            out << ' ' << static_cast<uint64_t>(instruction.integerValue);
-                        } else {
-                            out << ' ' << instruction.integerValue;
-                        }
-                        break;
-                    case Opcode::booleanConstant:
-                    case Opcode::byteConstant:
-                        out << ' ' << instruction.integerValue;
-                        break;
-                    case Opcode::floatingConstant:
-                        out << ' ' << instruction.text;
-                        break;
-                    case Opcode::constantValue:
-                        out << " #" << instruction.integerValue;
-                        break;
+                    // Opcodes with a callee, a block target, cases, or a type after the operand.
                     case Opcode::integerFits:
-                        out << ' ' << valueName(instruction.operands[0]) << " in type "
-                            << instruction.integerValue;
-                        break;
-                    case Opcode::typeSize:
-                    case Opcode::typeAlignment:
-                    case Opcode::cloneCallback:
-                    case Opcode::destroyCallback:
-                        out << " of type " << instruction.integerValue;
-                        break;
-                    case Opcode::destroyRange:
-                    case Opcode::cloneAt:
-                    case Opcode::slotAddress:
-                    case Opcode::stackBlock:
-                        out << " of type " << instruction.integerValue;
-                        for (size_t index = 0; index < instruction.operands.size(); ++index) {
-                            out << (index == 0 ? " " : ", ") << valueName(instruction.operands[index]);
-                        }
-                        break;
-                    case Opcode::linearRangeGuard:
-                        for (size_t index = 0; index < instruction.operands.size(); ++index) {
-                            out << (index == 0 ? " " : ", ") << valueName(instruction.operands[index]);
-                        }
-                        break;
-                    case Opcode::integerAddress:
-                    case Opcode::pointerToInteger:
-                        out << ' ' << valueName(instruction.operands[0]);
-                        break;
-                    case Opcode::stringConstant:
-                        out << " \"" << escape(instruction.text) << "\"";
-                        break;
-                    case Opcode::stackAllocate:
-                    case Opcode::returnVoid:
-                    case Opcode::unitConstant:
-                    case Opcode::unreachable:
-                        break;
-                    case Opcode::zeroInitialize:
-                    case Opcode::load:
-                    case Opcode::copyValue:
-                    case Opcode::take:
-                    case Opcode::destroy:
-                    case Opcode::convertChecked:
-                    case Opcode::convertWrapping:
-                    case Opcode::returnValue:
-                        if (!instruction.operands.empty()) {
-                            out << ' ' << valueName(instruction.operands[0]);
-                        }
-                        break;
-                    case Opcode::store:
-                    case Opcode::add:
-                    case Opcode::subtract:
-                    case Opcode::multiply:
-                    case Opcode::divide:
-                    case Opcode::remainder:
-                    case Opcode::less:
-                    case Opcode::lessEqual:
-                    case Opcode::greater:
-                    case Opcode::greaterEqual:
-                    case Opcode::equal:
-                    case Opcode::notEqual:
-                    case Opcode::bitAnd:
-                    case Opcode::bitOr:
-                    case Opcode::bitXor:
-                    case Opcode::shiftLeft:
-                    case Opcode::shiftRight:
-                        for (size_t index = 0; index < instruction.operands.size(); ++index) {
-                            out << (index == 0 ? " " : ", ")
-                                << valueName(instruction.operands[index]);
-                        }
+                        printOperands();
+                        out << " in type " << instruction.integerValue;
                         break;
                     case Opcode::functionAddress:
                         out << " @" << instruction.callee.value_or(invalidFunctionId);
@@ -397,27 +332,6 @@ std::string dump(const Module& module) {
                         }
                         out << ')';
                         break;
-                    case Opcode::fieldAddress:
-                    case Opcode::extractField:
-                    case Opcode::stringUtf8:
-                    case Opcode::count:
-                        if (!instruction.operands.empty()) {
-                            out << ' ' << valueName(instruction.operands[0]);
-                        }
-                        break;
-                    case Opcode::payloadAddress:
-                    case Opcode::extractPayload:
-                        if (!instruction.operands.empty()) {
-                            out << ' ' << valueName(instruction.operands[0]);
-                        }
-                        out << ", " << instruction.integerValue;
-                        break;
-                    case Opcode::subscript:
-                        for (size_t index = 0; index < instruction.operands.size(); ++index) {
-                            out << (index == 0 ? " " : ", ")
-                                << valueName(instruction.operands[index]);
-                        }
-                        break;
                     case Opcode::branch:
                         if (!instruction.targets.empty()) out << " ^" << instruction.targets[0];
                         break;
@@ -438,6 +352,41 @@ std::string dump(const Module& module) {
                                 << " -> ^" << instruction.switchCases[index].target;
                         }
                         out << ']';
+                        break;
+                    // Every other opcode: its immediate by kind, then its operands, then a payload index.
+                    default:
+                        switch (immediate) {
+                            case OpcodeImmediate::integerLiteral:
+                                if (instruction.result.has_value() && types.contains(instruction.result->type) &&
+                                        typing::isUnsignedInteger(types.at(instruction.result->type)->kind)) {
+                                    out << ' ' << static_cast<uint64_t>(instruction.integerValue);
+                                } else {
+                                    out << ' ' << instruction.integerValue;
+                                }
+                                break;
+                            case OpcodeImmediate::floatingLiteral:
+                                out << ' ' << instruction.text;
+                                break;
+                            case OpcodeImmediate::stringLiteral:
+                                out << " \"" << escape(instruction.text) << "\"";
+                                break;
+                            case OpcodeImmediate::constantIndex:
+                                out << " #" << instruction.integerValue;
+                                break;
+                            case OpcodeImmediate::type:
+                                out << " of type " << instruction.integerValue;
+                                break;
+                            case OpcodeImmediate::none:
+                            case OpcodeImmediate::payloadIndex:
+                            case OpcodeImmediate::message:
+                                break;
+                        }
+                        printOperands();
+                        if (immediate == OpcodeImmediate::payloadIndex) {
+                            out << ", " << instruction.integerValue;
+                        } else if (immediate == OpcodeImmediate::message) {
+                            out << ", \"" << escape(instruction.text) << '"';
+                        }
                         break;
                 }
                 if (instruction.symbol.has_value()) out << " symbol#" << *instruction.symbol;

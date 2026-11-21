@@ -40,6 +40,11 @@ be compared against a baseline on the same machine and configuration.
   `array-addressor-probe` with the prelude appended to `lib/Runtime/collections.joyeer`, and measures the pair. Its
   result is a go or no-go verdict only; the gates of 0027 bind at the switch.
 
+- `string_*.joyeer` and `benchmark_strings.py` (decision 0028, stage 3): a `text.count`/`text[i]` byte loop,
+  concatenation, equality and ordering, and `utf8()`. The same `build` and `measure` commands as
+  `benchmark_arrays.py`; each program prints one checksum computed independently in Python. The baseline is a
+  compiler from before stage 3, whose String operations were IR opcodes.
+
 Record the numbers in the decision or the pull request that changes the runtime, with the machine,
 the operating system and the build configuration.
 

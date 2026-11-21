@@ -1,0 +1,12 @@
+// `text.utf8()` (decision 0028 stage 3): an owned `[UInt8]` copy of a String's bytes, then a count and a read.
+func main() {
+    let text = "the quick brown fox jumps over"
+    var total = 0
+    var round = 0
+    while round < 1000000 {
+        let bytes = text.utf8()
+        total = total + bytes.count + byteToInt(value: bytes[3])
+        round = round + 1
+    }
+    print(value: total)
+}

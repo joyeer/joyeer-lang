@@ -1,6 +1,9 @@
 # 0028: A smaller, described IR opcode set
 
-- Status: proposed (2026-11-19). Stage 0 (remove `logicalAnd`, wire 26) is implemented; stages 1-4 need acceptance.
+- Status: accepted (2026-11-20, by the user). Stages 0 (wire 26), 1, 2 (wire 27), 4 (wire 28) and 3 (wire 29) are
+  implemented; stage 4 ran before stage 3, because with dense numbering stage 3 removes opcodes by deleting rows.
+  Stage 3's mechanism, a String projection plus a bundled prelude, was chosen by the user on 2026-11-20. Progress is
+  tracked in [plan 0013](../plan/0013-ir-opcode-set.md).
 - Spec: none. The IR is not part of the language; [IR](../impl/ir.md) changes with each stage.
 - Builds on [0025](0025-library-collection-capabilities.md), [0026](0026-library-array.md) and
   [0027](0027-library-dict.md), which moved Array and Dict out of the instruction set.
@@ -69,30 +72,45 @@ the backend), the backend should not need to know about library types, and unopt
 
 ## Decision
 
-Option 2, in stages. Each stage bumps `wire::version`, and each needs an `ir-backend-reviewer` pass before it lands.
+Option 2, in stages. Each stage that changes the wire format bumps `wire::version`, and each stage needs an
+`ir-backend-reviewer` pass before it lands.
 
 - **Stage 0, done (wire 26).** Remove `logicalAnd`. The verifier rejects slot 23 like the other removed slots.
-- **Stage 1: one descriptor table.** Each opcode gets one row in `opcode.cpp` with its spelling, operand count
-  (fixed or variadic), result rule (none, always, or set by the callee), immediate kind (none, literal, type, constant
-  index, payload index, or text), whether it is a terminator, and whether it is runtime-only. `producesValue`,
-  `isTerminator` and `opcodeName` read the table. The verifier checks the shape from the table before running the
-  opcode's own check. The dumper prints the immediate by its kind. No opcode changes meaning in this stage.
+- **Stage 1: one descriptor table (no wire change).** Each opcode gets one row in `opcode.cpp` with its spelling,
+  operand count (fixed or variadic), target count, result rule (none, always, or set by the direct callee or the
+  function type), immediate kind (none, integer literal, floating or String literal text, type, constant index, or
+  payload index), whether it is a terminator, and whether it is runtime-only. `producesValue`, `isTerminator` and
+  `opcodeName` read the table. The verifier rejects a slot with no row, checks the shape and result rule from the
+  table before running the opcode's own check, and takes runtime authorization from the row. The dumper prints the
+  immediate by its kind. No opcode changes meaning in this stage.
 - **Stage 2: merge families.** Each merge folds a parameter into one opcode:
 
   | Today | Becomes |
   |---|---|
-  | `integerConstant`, `byteConstant`, `booleanConstant`, `unitConstant` | `constant` (literal immediate, typed by the result) |
+  | `integerConstant`, `byteConstant`, `booleanConstant`, `unitConstant` | `literal` (integer immediate, typed by the result) |
   | `less`, `lessEqual`, `greater`, `greaterEqual`, `equal`, `notEqual` | `compare` with a predicate |
   | `convertChecked`, `convertWrapping` | `convert` with a mode |
-  | `returnValue`, `returnVoid` | `return` with 0 or 1 operands |
+  | `returnValue`, `returnVoid` | `ret` with 0 or 1 operands |
   | `cloneCallback`, `destroyCallback` | `typeHelper` with a kind |
   | `linearRangeGuard` | `trapIf` with a message |
 
-  The predicate, mode and kind take a dedicated `Instruction` field, not `integerValue`. Details each merge must
-  keep:
+  The predicate, mode and kind take a dedicated `Instruction` field, not `integerValue`: one `modifier` byte whose
+  meaning the opcode's descriptor row names (`OpcodeModifier`), read through typed enums (`ComparePredicate`,
+  `ConversionMode`, `TypeHelperKind`). The verifier checks its range from the row, and it must be 0 for an
+  opcode without one. Details each merge must keep:
+  - The merged constant is spelled `literal`, not `constant`, because `constant #N` already spells a reference to a
+    module constant (`constantValue`). A `literal` of `Void` is the unit value and holds 0; the result type decides
+    Int, byte and Boolean ranges exactly as the three old opcodes did.
   - `compare` keeps today's floating-point semantics: `!=` is unordered (true for NaN) and the other predicates
     are ordered.
-  - `trapIf` stays runtime-only, as `linearRangeGuard` is today. Its message becomes IR and wire data.
+  - The return is spelled `ret` (`return` is a C++ keyword). Its own check takes one operand in a value-returning
+    function and none otherwise.
+  - `trapIf` stays runtime-only, as `linearRangeGuard` is today. It traps when its Bool operand is true; its
+    message is IR and wire data in `text` and must not be empty. Lowering emits the old guard as
+    `compare ne count, 0` followed by `trapIf`, which is the comparison the backend emitted itself before.
+  - Each merged opcode keeps the wire slot of the first opcode it replaces; the others become removed slots until
+    stage 4 renumbers. Proofs that looked for an `integerConstant` count (literal storage, `stackBlock`) look for a
+    `literal` of an integer type.
 
   `stackBlock` is not merged. It yields 0 for `Void` or a zero count, allows an empty literal of a `Never`
   element, and is allowed outside runtime functions as proven literal storage, which anchors the protocol in
@@ -103,12 +121,41 @@ Option 2, in stages. Each stage bumps `wire::version`, and each needs an `ir-bac
   comparison opcodes accept only scalars, never allocate, and never produce owned values, and lowering's
   `add && requiresDestroy` ownership special case goes away.
 
-  The mechanism is open, because the obvious one does not work. The runtime's String functions are `@c_export`
-  functions in a separate archive; a user module sees only their declarations. The verifier rejects
-  `alwaysInline` on external functions, and there is no LTO. Inlinable wrappers must therefore live in a bundled
-  source prelude, as Array's do (`collections.joyeer`), and the prelude needs a String's data address and byte
-  count. That takes either one String projection opcode or intrinsic, which then stays, or making String a library
-  struct, which is a much larger change and would need its own decision. Stage 3 starts by choosing between them.
+  The obvious mechanism does not work. The runtime's String functions are `@c_export` functions in a separate
+  archive; a user module sees only their declarations. The verifier rejects `alwaysInline` on external functions,
+  and there is no LTO. Inlinable wrappers must therefore live in a bundled source prelude, as Array's do
+  (`collections.joyeer`), and the prelude needs a String's data address and byte count. That takes either a String
+  projection, which then stays, or making String a library struct, which is a much larger change and would need its
+  own decision.
+
+  **Chosen (the user, 2026-11-20): a projection plus the bundled prelude.**
+  - The projection is two reserved C-binding intrinsics, `joyeer_intrinsic_string_data(text: String): Int` and
+    `joyeer_intrinsic_string_count(text: String): Int`, not a new opcode. A native call already passes a String as
+    its data pointer and byte count, so the backend lowers each to one of those two halves, with no call and no new
+    IR. Like every reserved symbol they are runtime-only, and an import must match the table's signature.
+  - `collections.joyeer` holds five private, non-generic functions with closed roles, which lowering calls:
+    `string_count` (`s.count`), `string_byte` (`s[i]`), `string_concat` (`+` and `+=`), `string_equal` (`==`, and
+    `!=` as `compare eq` with `false`) and `string_order` (the four orderings, as `compare` of its -1, 0 or 1 result
+    with 0, which is what the backend emitted before). Each takes its Strings by borrowing and is always inlined.
+    They call the runtime functions by their existing Int signatures, so no declaration conflicts with the runtime's
+    exports. `string_byte` keeps the message `string index out of bounds` and addresses the byte with
+    `slot_address`, which has no overflow check, as the backend's GEP did not.
+  - A non-generic prelude function would be lowered into every module, including runtime core units, which must not
+    use String at all. So lowering collects each String role function only when a String operation first calls one,
+    and lowers those functions after every other function.
+  - Their parameters are read as their own values, with no stack slot and no debug variable. With slots, the -O0
+    byte loop of the cost gate measured 1.40 against the opcode baseline: -O0 runs the always-inliner but not SROA, so
+    each inlined call kept a 16-byte String store and its reloads. Without them it measured 1.12.
+  - At -O2 the same byte loop measured 1.023 [1.007, 1.052]: within the 1.03 median, but with the lower bound above
+    1. After `opt -O2` both compilers' inner loops are the same instructions, so the difference is attributed to code
+    placement, as in 0027. The user accepted this row on 2026-11-21.
+  - `s.utf8()` is the library array's private `string_utf8` method, called on an inert zero `[UInt8]` like the
+    literal method. A free function returning `[UInt8]` would intern that type in every module and so instantiate
+    the array's methods everywhere; the method is instantiated for `[UInt8]` only. A prelude without the method can
+    still lower everything except `utf8()`.
+  - `stringUtf8`, `count` and `subscript` are removed (48 opcodes, wire 29), and `add`, `sub`, `mul` and `compare`
+    take only scalars. Literal String patterns keep calling the runtime's equality inside the backend, with the
+    prelude's Int signature.
 
   The wrappers take their String parameters by borrowing, so -O0 gains no copies. Acceptance:
   - The unoptimized cost gate of 0026 and 0027, including a `count`/`subscript` byte loop at -O0. The -O0 pipeline
@@ -121,12 +168,12 @@ Option 2, in stages. Each stage bumps `wire::version`, and each needs an `ir-bac
     inlining.
 
   Literal patterns on String values in `switchPattern` keep using the runtime equality function inside the backend.
-- **Stage 4: dense numbering.** Drop "never renumber". Number the opcodes densely in table order, remove the
-  removed-slot checks from the verifier, and bump the wire version. From then on, removing an opcode means deleting
-  its row and bumping the version. The same stage must also:
+- **Stage 4: dense numbering.** Drop "never renumber". Number the opcodes densely in table order, so the table has
+  no gaps, and bump the wire version. Since stage 1 the verifier finds removed slots and the upper bound through
+  the table, so stage 4 only removes the table's gap handling (`rowBySlot`). From then on, removing an opcode means
+  deleting its row and bumping the version. The same stage must also:
   - rewrite the raw-slot tests (`ir_test.cpp`, `collection_roles_test.cpp`, `dict_roles_test.cpp`), which would
     otherwise match live opcodes instead of removed ones;
-  - replace the verifier's `> Opcode::stackBlock` upper bound with the table size;
   - update the literal version in `backend_abi_test.c` and the version stated in `backend.md` and `c-interop.md`.
 
 Kept as they are, because each says something that no other opcode can: `stackAllocate`, `zeroInitialize`, `load`,
@@ -142,8 +189,8 @@ calls, control flow, and runtime-only memory operations.
 
 ## Consequences
 
-- A new opcode is one table row plus its own verifier check and backend arm. Arity, result and immediate mistakes
-  are caught generically.
+- A new opcode is one table row plus its own verifier check and backend arm. Fixed-arity and result mistakes are
+  caught generically; the immediate kind drives the dumper, and each opcode's check still verifies its immediate.
 - The backend no longer needs to know String's layout for arithmetic or comparison. That is the last
   library-type knowledge left in the scalar opcodes.
 - IR dumps change spelling in stages 2 and 3. Tests that match dump text must be regenerated with the project's
@@ -153,14 +200,28 @@ calls, control flow, and runtime-only memory operations.
 - Stage 3 is the only stage that can change generated code. Its acceptance is the cost measurement, not just the
   tests.
 
-## Open questions
+## Resolved questions
 
-1. `destroyRange` can be written in library code as a loop over `destroy_at` guarded by `needs_destroy`. Keep it
-   for code size, or remove it?
-2. `extractPayload` can be expressed as a spill, `payloadAddress` and `load`, which the backend already does
-   internally. It is kept so every aggregate has construct, extract and address; is that rule worth one opcode?
-3. Should `trapIf` also replace the implicit traps in arithmetic, shifts and conversions? That would make each
-   trap visible in the IR, at the cost of larger IR.
+The user accepted these answers on 2026-11-21; each keeps the opcode set as stage 4 left it.
+
+1. **Keep `destroyRange`.** Library code cannot express it. For a linear element type it must trap with `linear
+   container dropped while not empty`, but `destroy_at` and `needs_destroy` never accept a linear type (spec
+   §20), and the callback queries return 0 for linear and trivial types alike. Removing the opcode would need a new
+   linearity intrinsic, which moves the opcode rather than removing it. Its one caller is the library array's
+   `deinit`, which every `Array<T>` instance runs. At -O0 the backend's loop is a bare decrement and call, where a
+   library loop would add an overflow check for each element.
+2. **Keep `extractPayload`.** Lowering uses it for both arms of `?` on `Optional` and `Result` and for payload
+   bindings in `match`. Each use would become four instructions (a stack slot, a store, `payloadAddress` and a load)
+   that generate the same LLVM the backend already emits, so nothing runs faster. Removing it would also break the
+   construct, extract and address rule that `extractField` keeps for structs, and give the loaded value new
+   ownership handling.
+3. **Keep the implicit traps.** The backend has seven: signed add, subtract and multiply overflow, division and
+   remainder by zero, the minimum value divided by -1, conversion out of range, and shift count out of range. The
+   three overflow traps read LLVM's overflow flag, which no IR opcode produces, so making them explicit needs new
+   opcodes. A checked opcode also cannot lose its check; with separate guards, a lowering bug that dropped one would
+   silently wrap and the verifier could not detect it. Every signed arithmetic operation would also take two or
+   three instructions instead of one. `trapIf` remains for checks that lowering and library code write themselves,
+   such as the linear-container check.
 
 ## Evidence
 

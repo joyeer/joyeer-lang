@@ -450,15 +450,6 @@ TEST_F(DictRoleTest, EveryDictionaryOperationLowersThroughTheRoles) {
     ASSERT_NE(module, nullptr);
     const auto verification = joyeer::ir::Verifier().verify(*module);
     EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
-    // No removed builtin dictionary slot (the extern names in the dump would match a text search).
-    for (const auto& function : module->functions) {
-        for (const auto& block : function.blocks) {
-            for (const auto& instruction : block.instructions) {
-                const auto slot = static_cast<unsigned>(instruction.opcode);
-                EXPECT_TRUE((slot < 39 || slot > 41) && slot != 50) << function.name;
-            }
-        }
-    }
     // A literal packs into one block per literal and calls the literal method.
     size_t blocks = 0;
     for (const auto& function : module->functions) {
@@ -603,10 +594,11 @@ TEST_F(DictRoleTest, ANoncopyableValueHasNoCopier) {
     EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
 }
 
-// Wire 24 added the dictionary roles; wire 25 removed the builtin dictionary's slots, and wire 26 the
-// `logicalAnd` slot.
+// Wire 24 added the dictionary roles; wire 25 removed the builtin dictionary's slots, wire 26 the
+// `logicalAnd` slot, wire 27 merged opcode families, wire 28 numbered opcodes densely, and wire 29 removed the
+// String opcodes (decision 0028).
 TEST_F(DictRoleTest, TheWireCarriesTheDictionaryRoles) {
-    EXPECT_EQ(joyeer::llvmbackend::wire::version, 26u);
+    EXPECT_EQ(joyeer::llvmbackend::wire::version, 29u);
     load("func size(table: Table<String, [Int]>): Int { return table.count }\n");
     const auto module = lower();
     ASSERT_NE(module, nullptr);
@@ -738,16 +730,16 @@ PackedLiteral packLiteral(joyeer::ir::Module& module, const std::string& name, i
     std::vector<ValueId> keys;
     std::vector<ValueId> values;
     for (int64_t index = 0; index < entries; ++index) {
-        keys.push_back(emit(Opcode::integerConstant, value(integer), {}, index + 1));
-        if (!unitValue) values.push_back(emit(Opcode::booleanConstant, value(valueType), {}, index % 2));
+        keys.push_back(emit(Opcode::literal, value(integer), {}, index + 1));
+        if (!unitValue) values.push_back(emit(Opcode::literal, value(valueType), {}, index % 2));
     }
-    const auto count = emit(Opcode::integerConstant, value(integer), {}, entries);
+    const auto count = emit(Opcode::literal, value(integer), {}, entries);
     const auto place = emit(Opcode::stackAllocate, address(literal.table), {});
     emit(Opcode::zeroInitialize, std::nullopt, { place });
     const auto receiver = emit(Opcode::load, value(literal.table), { place });
     const auto block = emit(Opcode::stackBlock, value(integer), { count }, static_cast<int64_t>(literal.entry));
     for (int64_t index = 0; index < entries; ++index) {
-        const auto offset = emit(Opcode::integerConstant, value(integer), {}, index);
+        const auto offset = emit(Opcode::literal, value(integer), {}, index);
         const auto slot = emit(Opcode::slotAddress, value(integer), { block, offset },
                                static_cast<int64_t>(literal.entry));
         const auto at = emit(Opcode::integerAddress, address(literal.entry), { slot });
@@ -758,7 +750,7 @@ PackedLiteral packLiteral(joyeer::ir::Module& module, const std::string& name, i
         emit(Opcode::store, std::nullopt, { values[static_cast<size_t>(index)], stored });
     }
     const auto result = emit(Opcode::call, value(literal.table), { receiver, block, count });
-    emit(Opcode::returnValue, std::nullopt, { result });
+    emit(Opcode::ret, std::nullopt, { result });
     function.blocks.resize(1);
     function.blocks[0].instructions = std::move(body);
     return literal;
@@ -828,7 +820,7 @@ TEST_F(DictRoleTest, TheVerifierRejectsEachMalformedPackingAndNamesTheRule) {
           } },
         { "a value stored as the key", "rule 4", [&](auto&, auto& body) {
               body[nth(body, Opcode::fieldAddress, 0, key) + 1].operands[0] =
-                      body[nth(body, Opcode::booleanConstant)].result->id;
+                      body[nth(body, Opcode::literal, 1)].result->id;
           } },
         { "swapped fields", "rule 4", [&](auto&, auto& body) {
               auto& first = body[nth(body, Opcode::fieldAddress, 0, key)];
@@ -910,7 +902,7 @@ TEST_F(DictRoleTest, TheVerifierRejectsEachMalformedPackingAndNamesTheRule) {
         })->fields[1].symbol;
         unitValue.result->id = 9000;
         unitValue.result->type = typeOf(copy, functionExactly(copy, "makeUnit").resultType)->arguments[1];
-        joyeer::ir::Instruction unit { Opcode::unitConstant };
+        joyeer::ir::Instruction unit { Opcode::literal };
         unit.result = joyeer::ir::Value { 9001, unitValue.result->type, joyeer::ir::ValueCategory::value };
         joyeer::ir::Instruction store { Opcode::store };
         store.operands = { 9001, 9000 };
@@ -1011,7 +1003,7 @@ TEST_F(DictRoleTest, MorePackingFormsAreRejectedByTheirRule) {
           } },
         { "an empty literal with a stray slot", "makeEmpty", "rule 3", [&](auto& body) {
               const auto block = nth(body, Opcode::stackBlock);
-              joyeer::ir::Instruction offset { Opcode::integerConstant };
+              joyeer::ir::Instruction offset { Opcode::literal };
               offset.result = joyeer::ir::Value { 9000, body[block].result->type, joyeer::ir::ValueCategory::value };
               joyeer::ir::Instruction slot { Opcode::slotAddress };
               slot.operands = { body[block].result->id, 9000 };
@@ -1064,7 +1056,7 @@ TEST_F(DictRoleTest, AStoredValueUsedOnAPathThroughThePackingIsRejected) {
         return instruction;
     };
     const auto condition = [&]() {
-        joyeer::ir::Instruction instruction { Opcode::booleanConstant };
+        joyeer::ir::Instruction instruction { Opcode::literal };
         instruction.integerValue = 1;
         instruction.result = joyeer::ir::Value { 9100, boolean, joyeer::ir::ValueCategory::value };
         return instruction;
@@ -1174,7 +1166,7 @@ TEST_F(DictRoleTest, AnEntryIsNeverAValue) {
           } },
         { "an entry's clone callback", [&](auto& module) {
               auto& body = bodyOf(module, "make");
-              joyeer::ir::Instruction callback { Opcode::cloneCallback };
+              joyeer::ir::Instruction callback { Opcode::typeHelper };
               callback.integerValue = static_cast<int64_t>(literal.entry);
               callback.result = joyeer::ir::Value { 9000, integer, joyeer::ir::ValueCategory::value };
               body.insert(body.begin(), callback);

@@ -36,6 +36,11 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
         }
         return nullptr;
     }
+    if (descriptor.operation == Operation::stringData) {
+        // A String argument arrives as its data pointer and byte count (see `emitCall`).
+        return builder.CreatePtrToInt(arguments[0], builder.getInt64Ty(), temporary());
+    }
+    if (descriptor.operation == Operation::stringCount) return arguments[1];
     if (descriptor.operation == Operation::doubleBits || descriptor.operation == Operation::floatBits) {
         return builder.CreateBitCast(arguments[0],
                 descriptor.operation == Operation::doubleBits ? builder.getInt64Ty() : builder.getInt32Ty(), temporary());
@@ -190,6 +195,8 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
         case Operation::floatBits:
         case Operation::systemCall:
         case Operation::targetArchitecture:
+        case Operation::stringData:
+        case Operation::stringCount:
             break;
     }
     return nullptr;

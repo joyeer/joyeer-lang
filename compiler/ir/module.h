@@ -57,7 +57,20 @@ struct Instruction {
     std::vector<SwitchCase> switchCases;
     std::optional<DebugLocation> debugLocation;
     std::vector<DebugVariableBinding> debugVariableBindings;
+    // The opcode's modifier (`OpcodeDescriptor::modifier`): a `ComparePredicate`, `ConversionMode` or
+    // `TypeHelperKind`, or 0 for an opcode without one (decision 0028).
+    uint8_t modifier = 0;
 };
+
+[[nodiscard]] inline ComparePredicate comparePredicate(const Instruction& instruction) {
+    return static_cast<ComparePredicate>(instruction.modifier);
+}
+[[nodiscard]] inline ConversionMode conversionMode(const Instruction& instruction) {
+    return static_cast<ConversionMode>(instruction.modifier);
+}
+[[nodiscard]] inline TypeHelperKind typeHelperKind(const Instruction& instruction) {
+    return static_cast<TypeHelperKind>(instruction.modifier);
+}
 
 struct BasicBlock {
     BlockId id = invalidBlockId;

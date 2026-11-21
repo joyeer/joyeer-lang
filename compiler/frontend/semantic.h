@@ -88,6 +88,15 @@ enum class LibraryRole {
     dictCopy,
     dictLiteral,
     dictEntry,
+    // The String operations of the collections prelude (decision 0028 stage 3): private functions that lowering
+    // calls for `s.count`, `s[i]`, `+`, `==` and `!=`, and the orderings; and the library array's method that
+    // `s.utf8()` calls on an inert zero `[UInt8]`, which is instantiated only for that type.
+    stringCount,
+    stringByte,
+    stringConcat,
+    stringEqual,
+    stringOrder,
+    stringUtf8,
 };
 
 enum class CallableKind {

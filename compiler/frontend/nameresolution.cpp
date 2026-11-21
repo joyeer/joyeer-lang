@@ -690,6 +690,12 @@ private:
                         else if (name == "dict_copy") value.libraryRole = LibraryRole::dictCopy;
                         else if (name == "dict_literal") value.libraryRole = LibraryRole::dictLiteral;
                         else if (name == "dict_entry") value.libraryRole = LibraryRole::dictEntry;
+                        else if (name == "string_count") value.libraryRole = LibraryRole::stringCount;
+                        else if (name == "string_byte") value.libraryRole = LibraryRole::stringByte;
+                        else if (name == "string_concat") value.libraryRole = LibraryRole::stringConcat;
+                        else if (name == "string_equal") value.libraryRole = LibraryRole::stringEqual;
+                        else if (name == "string_order") value.libraryRole = LibraryRole::stringOrder;
+                        else if (name == "string_utf8") value.libraryRole = LibraryRole::stringUtf8;
                         else report(NameResolutionDiagnosticId::invalidPrelude, attribute.span,
                                     "unknown compiler prelude role '" + name + "'");
                     }

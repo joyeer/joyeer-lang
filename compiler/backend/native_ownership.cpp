@@ -30,8 +30,7 @@ void Builder::emitOwnership() {
                     if (instruction.result.has_value()) pending.push_back(instruction.result->type);
                     // The element type a collection capability names is used even when nothing else mentions it.
                     if (instruction.opcode == ir::Opcode::destroyRange || instruction.opcode == ir::Opcode::cloneAt ||
-                        instruction.opcode == ir::Opcode::cloneCallback ||
-                        instruction.opcode == ir::Opcode::destroyCallback) {
+                        instruction.opcode == ir::Opcode::typeHelper) {
                         pending.push_back(static_cast<ir::TypeId>(instruction.integerValue));
                     }
                 }

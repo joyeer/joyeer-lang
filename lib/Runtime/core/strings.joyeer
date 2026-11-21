@@ -1,8 +1,9 @@
 // String equality and ordering (`joyeer_string_equal_abi`,
 // `joyeer_string_compare_abi`). A String crosses this ABI as a borrowed data
 // address and a byte count; nothing here allocates. Byte access
-// (`text[index]`) has no runtime function: the backend emits the bounds check
-// and the load inline.
+// (`text[index]`) has no runtime function: the collections prelude's
+// always-inlined `string_byte` role checks the index and loads the byte
+// (decision 0028).
 //
 // This is a runtime core unit: scalars and addresses held as `Int` only. It
 // must not use String, arrays, dictionaries or print, which lower to runtime

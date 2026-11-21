@@ -116,6 +116,10 @@ The current prelude declares:
   the `dict_type` struct and its entry, and marks `count` readable as for the array. `lib/Runtime/collections.joyeer`
   declares the real `Dict<K, V>`; `[K: V]` and dictionary literals bind to the role, and a prelude without it is
   reported (`invalid-prelude`, once) only when a program mentions a dictionary;
+- the String roles `string_count`, `string_byte`, `string_concat`, `string_equal` and `string_order` on private
+  functions, and `string_utf8` on a private method of the `array_type` struct
+  ([0028](../decisions/0028-ir-opcode-set.md), stage 3), accepted only in a bundled prelude. Lowering calls them for
+  the String operations; a prelude without them reports only when a program uses that operation;
 - the builtin `IOError`, `FileSystemError`, `FileKind`, `ProcessStatus`, and
   `ProcessError` cases;
 - builtin functions: `print(value:)`, `byteToInt(value:)`, and

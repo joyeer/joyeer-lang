@@ -1,0 +1,52 @@
+// The String operations that lower to the collections prelude's String roles (decision 0028 stage 3), run at -O0
+// to -O3 with the same expected output: concatenation (with empty sides and a compound assignment), equality and
+// ordering on equal, different and different-length Strings, byte reads at 0 and count - 1, and `utf8()`. The
+// out-of-range reads at -1 and count are the `checked_string_*` trap fixtures.
+
+// Folded at compile time; `main` compares the same bytes at run time. Both order bytes as unsigned, so "é" (0xC3 0xA9)
+// sorts after "z" (0x7A).
+let foldedOrder: Bool = "é" < "z"
+
+func show(flag: Bool) {
+    print(value: flag)
+}
+
+func main() {
+    let empty = ""
+    let joy = "joy"
+    let joyful = joy + "ful"
+    print(value: joyful)
+    print(value: joyful.count)
+    print(value: (empty + empty).count)
+    print(value: empty + joy)
+    print(value: joy + empty)
+
+    var built = empty
+    built += "a"
+    built += built
+    print(value: built)
+
+    show(flag: joy == "joy")
+    show(flag: joy == joyful)
+    show(flag: joy != joyful)
+    show(flag: empty == "")
+    show(flag: (joy + "ful") == joyful)
+    show(flag: joy < joyful)
+    show(flag: joyful < joy)
+    show(flag: joy <= "joy")
+    show(flag: "b" > "abc")
+    show(flag: "abc" >= "abd")
+
+    print(value: joy[0])
+    print(value: joy[joy.count - 1])
+    print(value: joyful[joyful.count - 1])
+
+    let bytes = joyful.utf8()
+    print(value: bytes.count)
+    print(value: byteToInt(value: bytes[3]))
+    print(value: empty.utf8().count)
+
+    let accent = "é"
+    show(flag: foldedOrder)
+    show(flag: accent < "z")
+}

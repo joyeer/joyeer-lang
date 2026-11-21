@@ -27,17 +27,17 @@ bool validFloatingLiteral(typing::TypeKind kind, std::string_view text) {
 
 } // namespace
 
-// The checks every instruction shares: a live opcode, nothing after the terminator, no dictionary
-// entry value, a result exactly when the opcode defines one, and known operands and targets. Then
-// the opcode's own check.
+// The checks every instruction shares: a known opcode, nothing after the terminator, no dictionary
+// entry value, a result exactly when the opcode defines one, known operands and targets, and the
+// opcode's fixed operand and target counts. Then the opcode's own check. The opcode's descriptor
+// (opcode.h) states its counts, result rule and runtime authorization.
 void FunctionVerifier::verifyInstruction(const BasicBlock& block, size_t index, bool& foundTerminator) {
     const auto& instruction = block.instructions[index];
     const auto location = std::optional<size_t>(index);
-    const auto opcodeSlot = static_cast<uint64_t>(instruction.opcode);
-    if (opcodeSlot == 23 || (opcodeSlot >= 35 && opcodeSlot <= 41) || opcodeSlot == 50 ||
-        opcodeSlot > static_cast<uint64_t>(Opcode::stackBlock)) {
+    const auto* descriptor = findOpcodeDescriptor(instruction.opcode);
+    if (descriptor == nullptr) {
         report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
-               "instruction has an unknown or removed opcode");
+               "instruction has an unknown opcode");
     }
     if (foundTerminator) {
         report(
@@ -65,9 +65,7 @@ void FunctionVerifier::verifyInstruction(const BasicBlock& block, size_t index, 
         switch (instruction.opcode) {
             case Opcode::destroyRange:
             case Opcode::cloneAt:
-            case Opcode::cloneCallback:
-            case Opcode::destroyCallback:
-            case Opcode::linearRangeGuard:
+            case Opcode::typeHelper:
                 misuse = misuse || namesEntry;
                 break;
             case Opcode::stackBlock:
@@ -90,12 +88,13 @@ void FunctionVerifier::verifyInstruction(const BasicBlock& block, size_t index, 
 
     const auto knownCallee = instruction.callee.has_value() &&
             functions.contains(*instruction.callee);
-    const auto expectsResult = instruction.opcode == Opcode::call
+    const auto resultRule = descriptor == nullptr ? OpcodeResult::none : descriptor->result;
+    const auto expectsResult = resultRule == OpcodeResult::directCallee
             ? knownCallee && functions.at(*instruction.callee)->returnsValue
-            : instruction.opcode == Opcode::callIndirect
+            : resultRule == OpcodeResult::functionType
             // Depends on the callee's function type, checked with the instruction.
             ? instruction.result.has_value()
-            : producesValue(instruction.opcode);
+            : resultRule == OpcodeResult::always;
     if (expectsResult != instruction.result.has_value()) {
         report(
                 VerificationErrorId::invalidInstruction,
@@ -149,15 +148,40 @@ void FunctionVerifier::verifyInstruction(const BasicBlock& block, size_t index, 
         }
     }
 
-    const InstructionSite site { block, index, instruction, location, std::move(operands), knownCallee };
+    // A variadic opcode's own check matches its operands against the callee, function type or definition.
+    bool shapeMatches = true;
+    if (descriptor != nullptr && descriptor->operands != variadicOperands) {
+        shapeMatches = instruction.operands.size() == static_cast<size_t>(descriptor->operands) &&
+                instruction.targets.size() == static_cast<size_t>(descriptor->targets);
+        if (!shapeMatches) {
+            report(
+                    VerificationErrorId::invalidInstruction,
+                    functionId,
+                    block.id,
+                    location,
+                    std::string(descriptor->name) +
+                            " expects " + std::to_string(descriptor->operands) +
+                            " operand(s) and " + std::to_string(descriptor->targets) +
+                            " target(s)");
+        }
+    }
+    if (descriptor != nullptr) {
+        const auto count = modifierCount(descriptor->modifier);
+        if (count == 0 ? instruction.modifier != 0 : instruction.modifier >= count) {
+            report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
+                   std::string(descriptor->name) + " has an invalid modifier " +
+                           std::to_string(instruction.modifier));
+        }
+    }
+    const bool unauthorized = descriptor != nullptr && descriptor->runtimeOnly && !function.runtimeContext;
+
+    const InstructionSite site { block, index, instruction, location, std::move(operands), knownCallee,
+                                 shapeMatches, unauthorized };
     switch (instruction.opcode) {
         // Constants (this file).
-        case Opcode::unitConstant: verifyUnitConstant(site); break;
-        case Opcode::integerConstant:
+        case Opcode::literal: verifyLiteral(site); break;
         case Opcode::floatingConstant:
-        case Opcode::booleanConstant:
-        case Opcode::stringConstant:
-        case Opcode::byteConstant: verifyScalarConstant(site); break;
+        case Opcode::stringConstant: verifyScalarConstant(site); break;
         case Opcode::constantValue: verifyConstantValue(site); break;
 
         // Storage and ownership (this file).
@@ -173,12 +197,7 @@ void FunctionVerifier::verifyInstruction(const BasicBlock& block, size_t index, 
         case Opcode::add:
         case Opcode::subtract:
         case Opcode::multiply:
-        case Opcode::less:
-        case Opcode::lessEqual:
-        case Opcode::greater:
-        case Opcode::greaterEqual:
-        case Opcode::equal:
-        case Opcode::notEqual: verifyBinaryOperator(site); break;
+        case Opcode::compare: verifyBinaryOperator(site); break;
         case Opcode::divide:
         case Opcode::remainder: verifyDivision(site); break;
         case Opcode::bitAnd:
@@ -186,8 +205,7 @@ void FunctionVerifier::verifyInstruction(const BasicBlock& block, size_t index, 
         case Opcode::bitXor:
         case Opcode::shiftLeft:
         case Opcode::shiftRight: verifyBitwiseOperator(site); break;
-        case Opcode::convertChecked:
-        case Opcode::convertWrapping: verifyConversion(site); break;
+        case Opcode::convert: verifyConversion(site); break;
         case Opcode::integerFits: verifyIntegerFits(site); break;
 
         // Calls and function values (calls.cpp).
@@ -195,88 +213,70 @@ void FunctionVerifier::verifyInstruction(const BasicBlock& block, size_t index, 
         case Opcode::functionAddress: verifyFunctionAddress(site); break;
         case Opcode::callIndirect: verifyIndirectCall(site); break;
 
-        // Structs, enums and Strings (aggregates.cpp).
+        // Structs and enums (aggregates.cpp).
         case Opcode::constructStruct: verifyConstructStruct(site); break;
         case Opcode::fieldAddress:
         case Opcode::extractField: verifyFieldProjection(site); break;
         case Opcode::constructEnum: verifyConstructEnum(site); break;
         case Opcode::extractPayload: verifyExtractPayload(site); break;
         case Opcode::payloadAddress: verifyPayloadAddress(site); break;
-        case Opcode::stringUtf8: verifyStringUtf8(site); break;
-        case Opcode::count: verifyStringCount(site); break;
-        case Opcode::subscript: verifyStringSubscript(site); break;
 
         // Runtime-only layout queries, collection capabilities and raw addresses (capabilities.cpp).
         case Opcode::typeSize:
         case Opcode::typeAlignment: verifyLayoutQuery(site); break;
         case Opcode::destroyRange:
         case Opcode::cloneAt:
-        case Opcode::linearRangeGuard:
         case Opcode::slotAddress:
         case Opcode::stackBlock:
-        case Opcode::cloneCallback:
-        case Opcode::destroyCallback: verifyCollectionCapability(site); break;
+        case Opcode::typeHelper: verifyCollectionCapability(site); break;
+        case Opcode::trapIf: verifyTrapIf(site); break;
         case Opcode::integerAddress: verifyIntegerAddress(site); break;
         case Opcode::pointerToInteger: verifyPointerToInteger(site); break;
 
         // Terminators (this file).
-        case Opcode::branch: requireShape(site, 0, 1); break;
+        // The table's shape check is the whole check of `branch` and `unreachable`.
+        case Opcode::branch: break;
         case Opcode::conditionalBranch: verifyConditionalBranch(site); break;
         case Opcode::switchPattern: verifySwitchPattern(site); break;
-        case Opcode::returnValue: verifyReturnValue(site); break;
-        case Opcode::returnVoid: verifyReturnVoid(site); break;
-        case Opcode::unreachable: requireShape(site, 0, 0); break;
+        case Opcode::ret: verifyReturn(site); break;
+        case Opcode::unreachable: break;
     }
-}
-
-// Whether the instruction has exactly `operandCount` operands and `targetCount` targets; reports
-// when it does not.
-bool FunctionVerifier::requireShape(const InstructionSite& site, size_t operandCount, size_t targetCount) {
-    const auto& instruction = site.instruction;
-    if (instruction.operands.size() == operandCount &&
-        instruction.targets.size() == targetCount) {
-        return true;
-    }
-    report(
-            VerificationErrorId::invalidInstruction,
-            functionId,
-            site.block.id,
-            site.location,
-            std::string(opcodeName(instruction.opcode)) +
-                    " expects " + std::to_string(operandCount) +
-                    " operand(s) and " + std::to_string(targetCount) +
-                    " target(s)");
-    return false;
 }
 
 // Constants.
 
-void FunctionVerifier::verifyUnitConstant(const InstructionSite& site) {
-    const auto& block = site.block;
+// An integer, byte or Boolean value that fits its result type, or the unit value 0 of `Void`.
+void FunctionVerifier::verifyLiteral(const InstructionSite& site) {
     const auto& instruction = site.instruction;
-    const auto location = site.location;
-    requireShape(site, 0, 0);
-    const auto* unitType = instruction.result.has_value() &&
-            types.contains(instruction.result->type)
-            ? types.at(instruction.result->type) : nullptr;
-    if (unitType == nullptr ||
-        unitType->kind != typing::TypeKind::voidType ||
-        instruction.result->category != ValueCategory::value) {
-        report(
-                VerificationErrorId::typeMismatch,
-                functionId,
-                block.id,
-                location,
-                "unit constant must produce a Void value");
+    // A missing result is the result rule's report; an unknown type is the type table's.
+    if (!instruction.result.has_value() || !types.contains(instruction.result->type)) return;
+    const auto* type = types.at(instruction.result->type);
+    bool valid = instruction.result->category == ValueCategory::value;
+    if (valid) {
+        const auto kind = type->kind;
+        const auto value = instruction.integerValue;
+        if (typing::isInteger(kind)) {
+            const auto bits = typing::scalarBitWidth(kind);
+            valid = bits == 64 || (typing::isSignedInteger(kind)
+                    ? value >= -(int64_t{1} << (bits - 1)) && value < (int64_t{1} << (bits - 1))
+                    : static_cast<uint64_t>(value) < (uint64_t{1} << bits));
+        } else if (kind == typing::TypeKind::boolean) {
+            valid = value == 0 || value == 1;
+        } else {
+            valid = kind == typing::TypeKind::voidType && value == 0;
+        }
+    }
+    if (!valid) {
+        report(VerificationErrorId::typeMismatch, functionId, site.block.id, site.location,
+               "literal kind or value does not match its result type");
     }
 }
 
-// An integer, floating, Boolean, String or byte constant fits its result type.
+// A floating or String constant fits its result type.
 void FunctionVerifier::verifyScalarConstant(const InstructionSite& site) {
     const auto& block = site.block;
     const auto& instruction = site.instruction;
     const auto location = site.location;
-    requireShape(site, 0, 0);
     if (instruction.result.has_value() &&
         instruction.result->category != ValueCategory::value) {
         report(
@@ -290,25 +290,8 @@ void FunctionVerifier::verifyScalarConstant(const InstructionSite& site) {
         const auto kind = types.at(instruction.result->type)->kind;
         bool valid = false;
         switch (instruction.opcode) {
-            case Opcode::integerConstant:
-                if (typing::isInteger(kind)) {
-                    const auto bits = typing::scalarBitWidth(kind);
-                    valid = bits == 64 || (typing::isSignedInteger(kind)
-                            ? instruction.integerValue >= -(int64_t{1} << (bits - 1)) &&
-                              instruction.integerValue < (int64_t{1} << (bits - 1))
-                            : static_cast<uint64_t>(instruction.integerValue) < (uint64_t{1} << bits));
-                }
-                break;
             case Opcode::floatingConstant:
                 valid = validFloatingLiteral(kind, instruction.text);
-                break;
-            case Opcode::booleanConstant:
-                valid = kind == typing::TypeKind::boolean &&
-                        (instruction.integerValue == 0 || instruction.integerValue == 1);
-                break;
-            case Opcode::byteConstant:
-                valid = kind == typing::TypeKind::uint8 &&
-                        instruction.integerValue >= 0 && instruction.integerValue <= 255;
                 break;
             case Opcode::stringConstant: valid = kind == typing::TypeKind::string; break;
             default: break;
@@ -325,7 +308,6 @@ void FunctionVerifier::verifyConstantValue(const InstructionSite& site) {
     const auto& block = site.block;
     const auto& instruction = site.instruction;
     const auto location = site.location;
-    requireShape(site, 0, 0);
     const auto index = static_cast<uint64_t>(instruction.integerValue);
     if (!instruction.result.has_value() ||
         instruction.result->category != ValueCategory::value ||
@@ -345,7 +327,6 @@ void FunctionVerifier::verifyStackAllocate(const InstructionSite& site) {
     const auto& block = site.block;
     const auto& instruction = site.instruction;
     const auto location = site.location;
-    requireShape(site, 0, 0);
     if (instruction.result.has_value() &&
         instruction.result->category != ValueCategory::address) {
         report(
@@ -361,7 +342,7 @@ void FunctionVerifier::verifyZeroInitialize(const InstructionSite& site) {
     const auto& block = site.block;
     const auto location = site.location;
     const auto& operands = site.operands;
-    if (requireShape(site, 1, 0) && operands[0] != nullptr &&
+    if (site.shapeMatches && operands[0] != nullptr &&
         operands[0]->category != ValueCategory::address) {
         report(
                 VerificationErrorId::typeMismatch,
@@ -377,7 +358,7 @@ void FunctionVerifier::verifyLoad(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    if (requireShape(site, 1, 0) && operands[0] != nullptr &&
+    if (site.shapeMatches && operands[0] != nullptr &&
         instruction.result.has_value() &&
         (operands[0]->category != ValueCategory::address ||
          instruction.result->category != ValueCategory::value ||
@@ -395,7 +376,7 @@ void FunctionVerifier::verifyStore(const InstructionSite& site) {
     const auto& block = site.block;
     const auto location = site.location;
     const auto& operands = site.operands;
-    if (requireShape(site, 2, 0) && operands[0] != nullptr &&
+    if (site.shapeMatches && operands[0] != nullptr &&
         operands[1] != nullptr &&
         (operands[0]->category != ValueCategory::value ||
          operands[1]->category != ValueCategory::address ||
@@ -415,7 +396,7 @@ void FunctionVerifier::verifyCopy(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    if (requireShape(site, 1, 0) && operands[0] != nullptr &&
+    if (site.shapeMatches && operands[0] != nullptr &&
         instruction.result.has_value() &&
         (operands[0]->category != ValueCategory::value ||
          instruction.result->category != ValueCategory::value ||
@@ -440,7 +421,7 @@ void FunctionVerifier::verifyTake(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    if (requireShape(site, 1, 0) && operands[0] != nullptr &&
+    if (site.shapeMatches && operands[0] != nullptr &&
         instruction.result.has_value() &&
         (operands[0]->category != ValueCategory::address ||
          instruction.result->category != ValueCategory::value ||
@@ -459,7 +440,7 @@ void FunctionVerifier::verifyDestroy(const InstructionSite& site) {
     const auto& block = site.block;
     const auto location = site.location;
     const auto& operands = site.operands;
-    if (requireShape(site, 1, 0) && operands[0] != nullptr &&
+    if (site.shapeMatches && operands[0] != nullptr &&
         (operands[0]->category != ValueCategory::address ||
          !destruction.requiresDestruction(operands[0]->type))) {
         report(
@@ -478,7 +459,7 @@ void FunctionVerifier::verifyDivision(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    if (requireShape(site, 2, 0) && operands[0] != nullptr &&
+    if (site.shapeMatches && operands[0] != nullptr &&
         operands[1] != nullptr && instruction.result.has_value()) {
         const auto* type = types.contains(operands[0]->type)
                 ? types.at(operands[0]->type) : nullptr;
@@ -502,7 +483,7 @@ void FunctionVerifier::verifyBitwiseOperator(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    if (requireShape(site, 2, 0) && operands[0] != nullptr &&
+    if (site.shapeMatches && operands[0] != nullptr &&
         operands[1] != nullptr && instruction.result.has_value()) {
         const auto* type = types.contains(operands[0]->type)
                 ? types.at(operands[0]->type) : nullptr;
@@ -530,7 +511,7 @@ void FunctionVerifier::verifyConversion(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    if (requireShape(site, 1, 0) && operands[0] != nullptr &&
+    if (site.shapeMatches && operands[0] != nullptr &&
         instruction.result.has_value()) {
         const auto* source = types.contains(operands[0]->type)
                 ? types.at(operands[0]->type) : nullptr;
@@ -553,7 +534,7 @@ void FunctionVerifier::verifyIntegerFits(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    if (requireShape(site, 1, 0) && operands[0] != nullptr &&
+    if (site.shapeMatches && operands[0] != nullptr &&
         instruction.result.has_value()) {
         const auto* source = types.contains(operands[0]->type)
                 ? types.at(operands[0]->type) : nullptr;
@@ -580,7 +561,7 @@ void FunctionVerifier::verifyBinaryOperator(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    if (requireShape(site, 2, 0) && operands[0] != nullptr &&
+    if (site.shapeMatches && operands[0] != nullptr &&
         operands[1] != nullptr && instruction.result.has_value()) {
         const auto categoriesAreValues =
                 operands[0]->category == ValueCategory::value &&
@@ -600,6 +581,25 @@ void FunctionVerifier::verifyBinaryOperator(const InstructionSite& site) {
                     location,
                     "operator operand/result categories or types do not match");
         }
+        // Only scalars (decision 0028 stage 3): String concatenation and comparison are prelude calls, so these
+        // opcodes never allocate or produce an owned value.
+        const auto* operand = types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
+        if (isArithmetic && categoriesAreValues && operandTypesMatch &&
+            (operand == nullptr || (!typing::isInteger(operand->kind) && !typing::isFloating(operand->kind)))) {
+            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                   std::string(opcodeName(instruction.opcode)) + " takes integer or floating operands");
+        }
+        if (instruction.opcode == Opcode::compare && categoriesAreValues && operandTypesMatch) {
+            const auto* result = types.contains(instruction.result->type)
+                    ? types.at(instruction.result->type) : nullptr;
+            const bool comparable = operand != nullptr &&
+                    (typing::isInteger(operand->kind) || typing::isFloating(operand->kind) ||
+                     operand->kind == typing::TypeKind::boolean);
+            if (!comparable || result == nullptr || result->kind != typing::TypeKind::boolean) {
+                report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                       "compare takes scalar operands and yields a Bool");
+            }
+        }
     }
 }
 
@@ -609,7 +609,7 @@ void FunctionVerifier::verifyConditionalBranch(const InstructionSite& site) {
     const auto& block = site.block;
     const auto location = site.location;
     const auto& operands = site.operands;
-    if (requireShape(site, 1, 2) && operands[0] != nullptr &&
+    if (site.shapeMatches && operands[0] != nullptr &&
         operands[0]->category != ValueCategory::value) {
         report(
                 VerificationErrorId::typeMismatch,
@@ -626,7 +626,7 @@ void FunctionVerifier::verifySwitchPattern(const InstructionSite& site) {
     const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    const auto shapeMatches = requireShape(site, 1, 0);
+    const auto shapeMatches = site.shapeMatches;
     bool matches = shapeMatches && operands[0] != nullptr &&
             operands[0]->category == ValueCategory::value &&
             !instruction.switchCases.empty();
@@ -672,34 +672,25 @@ void FunctionVerifier::verifySwitchPattern(const InstructionSite& site) {
     }
 }
 
-void FunctionVerifier::verifyReturnValue(const InstructionSite& site) {
+// One operand of the function's result type in a value-returning function, none otherwise.
+void FunctionVerifier::verifyReturn(const InstructionSite& site) {
     const auto& block = site.block;
+    const auto& instruction = site.instruction;
     const auto location = site.location;
     const auto& operands = site.operands;
-    if (requireShape(site, 1, 0) && operands[0] != nullptr &&
-        (!function.returnsValue ||
-         operands[0]->category != ValueCategory::value ||
-         operands[0]->type != function.resultType)) {
-        report(
-                VerificationErrorId::typeMismatch,
-                functionId,
-                block.id,
-                location,
-                "return value does not match function result type");
-    }
-}
-
-void FunctionVerifier::verifyReturnVoid(const InstructionSite& site) {
-    const auto& block = site.block;
-    const auto location = site.location;
-    requireShape(site, 0, 0);
-    if (function.returnsValue) {
-        report(
-                VerificationErrorId::typeMismatch,
-                functionId,
-                block.id,
-                location,
-                "value-returning function cannot return void");
+    if (operands.size() > 1 || !instruction.targets.empty()) {
+        report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
+               "ret takes one operand in a value-returning function and none otherwise");
+    } else if (operands.empty()) {
+        if (function.returnsValue) {
+            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                   "value-returning function cannot return void");
+        }
+    } else if (operands[0] != nullptr &&
+               (!function.returnsValue || operands[0]->category != ValueCategory::value ||
+                operands[0]->type != function.resultType)) {
+        report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+               "return value does not match function result type");
     }
 }
 

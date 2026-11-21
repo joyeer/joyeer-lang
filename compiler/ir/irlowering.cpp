@@ -17,6 +17,19 @@ namespace joyeer::lowering {
 
 namespace {
 
+// An opcode and its modifier (decision 0028): what one instruction does. Converts from an opcode, a comparison
+// predicate or a conversion mode.
+struct Operation {
+    ir::Opcode opcode;
+    uint8_t modifier = 0;
+
+    Operation(ir::Opcode opcode) : opcode(opcode) {}
+    Operation(ir::ComparePredicate predicate)
+        : opcode(ir::Opcode::compare), modifier(static_cast<uint8_t>(predicate)) {}
+    Operation(ir::ConversionMode mode)
+        : opcode(ir::Opcode::convert), modifier(static_cast<uint8_t>(mode)) {}
+};
+
 class DebugScopeGuard {
 public:
     DebugScopeGuard(
@@ -121,6 +134,9 @@ private:
     std::optional<ir::DestructionAnalysis> destruction;
     std::vector<Diagnostic> diagnostics;
     std::unordered_map<semantic::SymbolId, ir::FunctionId> functions;
+    // The String role functions of the collections prelude, collected on first use (decision 0028 stage 3).
+    std::unordered_map<semantic::SymbolId, syntax::FunctionDeclSyntax::Ptr> stringRoleDeclarations;
+    std::vector<std::pair<syntax::FunctionDeclSyntax::Ptr, ir::FunctionId>> pendingStringRoles;
     // Top-level `let` constants, evaluated at compile time. Scalars and strings
     // fold into each use; arrays become shared module constants.
     std::unordered_map<semantic::SymbolId, syntax::BindingDeclSyntax::Ptr> constantDeclarations;
@@ -142,6 +158,9 @@ private:
     // (see prepareOwned).
     std::unordered_map<semantic::SymbolId, std::unordered_set<uint64_t>> genericNoncopyableSpans;
     std::unordered_map<semantic::SymbolId, ir::Value> slots;
+    // Parameters read as their own values, with no slot: those of the String role functions (decision 0028 stage
+    // 3), which are borrowed, never addressed or assigned, and always inlined, so -O0 keeps no spill of them.
+    std::unordered_map<semantic::SymbolId, ir::Value> boundParameters;
     std::unordered_map<ir::ValueId, ValueOwnership> ownership;
     std::unordered_set<ir::ValueId> liveOwnedTemporaries;
     std::vector<ScopeFrame> scopes;
@@ -742,6 +761,10 @@ private:
                 // A generic function has no code of its own; each instance is collected below.
                 const auto symbol = semanticModel.declaredSymbol(declaration);
                 if (symbol.has_value() && model->genericParameters(*symbol) != nullptr) continue;
+                if (symbol.has_value() && isStringRoleFunction(*symbol)) {
+                    stringRoleDeclarations.emplace(*symbol, declaration);
+                    continue;
+                }
                 collectFunction(declaration);
             } else if (item->kind == syntax::Kind::bindingDecl) {
                 collectConstant(std::static_pointer_cast<syntax::BindingDeclSyntax>(item));
@@ -757,6 +780,39 @@ private:
         collectInstances(*root);
         linkDeinitializers(*root);
         evaluateConstants();
+        // A String role is collected while another function is being lowered; the room reserved here keeps
+        // references to the functions valid.
+        module->functions.reserve(module->functions.size() + stringRoleDeclarations.size());
+    }
+
+    // The collections prelude's String role functions (decision 0028 stage 3) are collected when a String operation
+    // first calls one and lowered after every other function, so a module without String operations, such as a
+    // runtime core unit, has none of them. Only lowering calls them: prelude code must not call one by name.
+    bool isStringRoleFunction(semantic::SymbolId symbol) const {
+        const auto* semanticSymbol = model->semanticModel()->symbol(symbol);
+        return semanticSymbol != nullptr && model->stringRoleFunction(semanticSymbol->libraryRole) == symbol;
+    }
+
+    std::optional<ir::FunctionId> stringRoleFunction(semantic::LibraryRole role) {
+        const auto symbol = model->stringRoleFunction(role);
+        if (!symbol.has_value()) return std::nullopt;
+        if (const auto found = functions.find(*symbol); found != functions.end()) return found->second;
+        const auto declaration = stringRoleDeclarations.find(*symbol);
+        if (declaration == stringRoleDeclarations.end()) return std::nullopt;
+        // A non-generic function: collected outside the instance being lowered, if any.
+        const auto* instance = currentInstance;
+        const auto instanceIndex = currentInstanceIndex;
+        currentInstance = nullptr;
+        currentInstanceIndex.reset();
+        const auto before = module->functions.size();
+        // Callers up the stack hold references into the functions: the room reserved after collection must remain.
+        assert(module->functions.size() < module->functions.capacity());
+        collectFunction(declaration->second);
+        currentInstance = instance;
+        currentInstanceIndex = instanceIndex;
+        if (module->functions.size() == before) return std::nullopt;
+        pendingStringRoles.emplace_back(declaration->second, static_cast<ir::FunctionId>(before));
+        return static_cast<ir::FunctionId>(before);
     }
 
     // One IR function per instance of a generic function (decision 0021), named for its type
@@ -968,8 +1024,7 @@ private:
         if (!value.has_value()) return std::nullopt;
 
         const auto kind = model->types().type(*type)->kind;
-        ir::Opcode opcode = ir::Opcode::integerConstant;
-        auto instruction = makeInstruction(opcode, span);
+        auto instruction = makeInstruction(ir::Opcode::literal, span);
         if (model->isArrayRoleType(*type)) {
             auto found = constantIds.find(symbol);
             if (found == constantIds.end()) {
@@ -999,7 +1054,7 @@ private:
                     value->floating);
             instruction.text = text;
         } else if (kind == typing::TypeKind::boolean) {
-            instruction.opcode = ir::Opcode::booleanConstant;
+            instruction.opcode = ir::Opcode::literal;
             instruction.integerValue = static_cast<int64_t>(value->integer);
         } else {
             const auto width = typing::scalarBitWidth(kind);
@@ -1007,7 +1062,7 @@ private:
             if (typing::isSignedInteger(kind) && width < 64 && ((bits >> (width - 1)) & 1) != 0) {
                 bits |= ~((uint64_t{1} << width) - 1);
             }
-            instruction.opcode = ir::Opcode::integerConstant;
+            instruction.opcode = ir::Opcode::literal;
             instruction.integerValue = std::bit_cast<int64_t>(bits);
         }
         instruction.result = makeValue(*type, ir::ValueCategory::value);
@@ -1128,7 +1183,8 @@ private:
         // The closed role wrappers (0026 A4, extended to the dictionary by role in 0027); `dict_set` is an owned
         // argument context below, and an addressor is always inlined by the backend.
         function.alwaysInline = function.literalFactory || role == semantic::LibraryRole::arrayCopy ||
-                role == semantic::LibraryRole::dictCopy || role == semantic::LibraryRole::dictGet;
+                role == semantic::LibraryRole::dictCopy || role == semantic::LibraryRole::dictGet ||
+                role == semantic::LibraryRole::stringUtf8 || model->stringRoleFunction(role) == *symbol;
         const auto* owner = semanticSymbol->containingSymbol.has_value()
                 ? semanticModel.symbol(*semanticSymbol->containingSymbol) : nullptr;
         if (owner != nullptr && (owner->libraryRole == semantic::LibraryRole::arrayType ||
@@ -1183,7 +1239,11 @@ private:
                 parameterEffect == syntax::AccessEffect::initializing,
                 parameter->label == nullptr ? std::string() : parameter->label->rawValue,
             });
-            const auto debugVariable = function.isExternal ? std::nullopt : ensureDebugVariable(
+            // A String role's parameters are bound to their values, with no storage to describe (see
+            // `boundParameters`).
+            const bool boundParameter = !isAddressProjection && parameterEffect != syntax::AccessEffect::consuming &&
+                    isStringRoleFunction(*symbol);
+            const auto debugVariable = function.isExternal || boundParameter ? std::nullopt : ensureDebugVariable(
                     *parameterSymbol,
                     function.id,
                     static_cast<uint32_t>(index + 1));
@@ -1207,7 +1267,8 @@ private:
             if (item->kind != syntax::Kind::functionDecl) continue;
             const auto declaration = std::static_pointer_cast<syntax::FunctionDeclSyntax>(item);
             const auto symbol = semanticModel.declaredSymbol(declaration);
-            if (!symbol.has_value()) continue;
+            // A String role collected by now is lowered with the others below.
+            if (!symbol.has_value() || stringRoleDeclarations.contains(*symbol)) continue;
             const auto found = functions.find(*symbol);
             if (found != functions.end() && !module->functions[found->second].isExternal) {
                 lowerFunction(declaration, found->second);
@@ -1227,6 +1288,10 @@ private:
             lowerFunction(declaration, instanceFunctions[index]);
             leaveInstance();
         }
+        for (size_t index = 0; index < pendingStringRoles.size(); ++index) {
+            const auto [declaration, id] = pendingStringRoles[index];
+            lowerFunction(declaration, id);
+        }
     }
 
     void lowerFunction(
@@ -1245,10 +1310,16 @@ private:
         nextValue = static_cast<ir::ValueId>(function.parameters.size());
         const auto diagnosticStart = diagnostics.size();
 
+        boundParameters.clear();
+        const bool bindsParameters = function.symbol.has_value() && isStringRoleFunction(*function.symbol);
         for (const auto& parameter : function.parameters) {
             recordValue(parameter.value, ValueOwnership::borrowed);
             if (parameter.isMutable) {
                 if (parameter.symbol.has_value()) slots[*parameter.symbol] = parameter.value;
+                continue;
+            }
+            if (bindsParameters && parameter.symbol.has_value() && !parameter.isConsuming) {
+                boundParameters[*parameter.symbol] = parameter.value;
                 continue;
             }
             const auto address = emitValue(
@@ -1293,7 +1364,7 @@ private:
             if (bodyValue.has_value()) {
                 cleanupAndPopScope(declaration->body->span);
                 auto instruction = makeInstruction(
-                        ir::Opcode::returnValue,
+                        ir::Opcode::ret,
                         trailingSpan);
                 instruction.operands = { bodyValue->id };
                 emit(std::move(instruction));
@@ -1313,7 +1384,7 @@ private:
             emit(makeInstruction(ir::Opcode::unreachable, declaration->span, true));
         } else {
             emit(makeInstruction(
-                    ir::Opcode::returnVoid,
+                    ir::Opcode::ret,
                     declaration->body == nullptr ? declaration->span : declaration->body->span,
                     true));
         }
@@ -1511,12 +1582,12 @@ private:
         switch (expression->literal->kind) {
             case decimalLiteral:
                 opcode = typing::isFloating(model->types().type(*type)->kind)
-                        ? ir::Opcode::floatingConstant : ir::Opcode::integerConstant;
+                        ? ir::Opcode::floatingConstant : ir::Opcode::literal;
                 break;
             case floatLiteral: opcode = ir::Opcode::floatingConstant; break;
-            case booleanLiteral: opcode = ir::Opcode::booleanConstant; break;
+            case booleanLiteral: opcode = ir::Opcode::literal; break;
             case stringLiteral: opcode = ir::Opcode::stringConstant; break;
-            case byteLiteral: opcode = ir::Opcode::byteConstant; break;
+            case byteLiteral: opcode = ir::Opcode::literal; break;
             case nilLiteral: {
                 const auto none = findRoleCase(*type, ir::EnumerationRole::optional, true);
                 if (!none.has_value()) {
@@ -1589,6 +1660,9 @@ private:
             if (!constantDeclarations.contains(*symbol)) return std::nullopt;
             return lowerConstant(*symbol, expression->span);
         }
+        if (symbol.has_value()) {
+            if (const auto bound = boundParameters.find(*symbol); bound != boundParameters.end()) return bound->second;
+        }
         if (!symbol.has_value() || !slots.contains(*symbol)) {
             report(
                     DiagnosticId::missingSymbol,
@@ -1613,7 +1687,7 @@ private:
                 expression->operand->kind == syntax::Kind::literalExpr) {
             const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(expression->operand);
             if (literal->literal->kind == decimalLiteral) {
-                auto constant = makeInstruction(ir::Opcode::integerConstant, expression->span);
+                auto constant = makeInstruction(ir::Opcode::literal, expression->span);
                 constant.result = makeValue(*type, ir::ValueCategory::value);
                 constant.integerValue = std::bit_cast<int64_t>(
                         uint64_t{0} - static_cast<uint64_t>(literal->literal->intValue));
@@ -1633,20 +1707,20 @@ private:
             if (operand->type == *type) return operand;
             return emitValue(
                     expression->op->rawValue == "&as"
-                            ? ir::Opcode::convertWrapping : ir::Opcode::convertChecked,
+                            ? ir::ConversionMode::wrapping : ir::ConversionMode::checked,
                     *type,
                     ir::ValueCategory::value,
                     { operand->id },
                     expression->span);
         }
         if (expression->op != nullptr && expression->op->kind == bang) {
-            auto constant = makeInstruction(ir::Opcode::booleanConstant, expression->op->span);
+            auto constant = makeInstruction(ir::Opcode::literal, expression->op->span);
             constant.integerValue = 0;
             constant.result = makeValue(*type, ir::ValueCategory::value);
             const auto falseValue = *constant.result;
             emit(std::move(constant));
             return emitValue(
-                    ir::Opcode::equal,
+                    ir::ComparePredicate::equal,
                     *type,
                     ir::ValueCategory::value,
                     { operand->id, falseValue.id },
@@ -1654,7 +1728,7 @@ private:
         }
         if (expression->op != nullptr && expression->op->kind == tilde) {
             // ~x is x ^ all-ones; the constant is truncated to the operand width.
-            auto ones = makeInstruction(ir::Opcode::integerConstant, expression->op->span);
+            auto ones = makeInstruction(ir::Opcode::literal, expression->op->span);
             const auto kind = model->types().type(*type)->kind;
             const auto bits = typing::scalarBitWidth(kind);
             ones.integerValue = typing::isSignedInteger(kind) || bits == 64
@@ -1678,7 +1752,7 @@ private:
         }
 
         const bool floating = typing::isFloating(model->types().type(*type)->kind);
-        auto zero = makeInstruction(floating ? ir::Opcode::floatingConstant : ir::Opcode::integerConstant,
+        auto zero = makeInstruction(floating ? ir::Opcode::floatingConstant : ir::Opcode::literal,
                 expression->op->span);
         if (floating) zero.text = "-0.0";
         zero.result = makeValue(*type, ir::ValueCategory::value);
@@ -1707,6 +1781,9 @@ private:
             expression->op == nullptr) {
             return std::nullopt;
         }
+        if (isString(left->type)) {
+            return emitStringOperator(expression->op->kind, *left, *right, *type, expression->span);
+        }
         const auto opcode = binaryOpcode(expression->op->kind);
         if (!opcode.has_value()) {
             report(
@@ -1721,6 +1798,57 @@ private:
                 ir::ValueCategory::value,
                 { left->id, right->id },
                 expression->span);
+    }
+
+    bool isString(typing::TypeId type) const {
+        const auto* record = model->types().type(type);
+        return record != nullptr && record->kind == typing::TypeKind::string;
+    }
+
+    // A call to the collections prelude's function for a String role (decision 0028 stage 3). The operands are
+    // borrowed; a String or array result is owned.
+    std::optional<ir::Value> emitStringRole(
+            semantic::LibraryRole role, const std::vector<ir::Value>& operands, typing::TypeId type,
+            SourceSpan span) {
+        const auto callee = stringRoleFunction(role);
+        if (!callee.has_value()) {
+            report(DiagnosticId::missingSymbol, span, "the String operation has no collections prelude function");
+            return std::nullopt;
+        }
+        auto call = makeInstruction(ir::Opcode::call, span);
+        call.callee = *callee;
+        for (const auto& operand : operands) call.operands.push_back(operand.id);
+        call.result = makeValue(type, ir::ValueCategory::value);
+        const auto result = *call.result;
+        emit(std::move(call));
+        recordValue(result, requiresDestroy(type) ? ValueOwnership::owned : ValueOwnership::trivial);
+        return result;
+    }
+
+    // `+`, `==`, `!=` and the orderings on Strings: `+` concatenates, `!=` is `compare eq` of the equality with
+    // false, and each ordering compares the -1, 0 or 1 order with 0.
+    std::optional<ir::Value> emitStringOperator(
+            TokenKind token, ir::Value left, ir::Value right, typing::TypeId type, SourceSpan span) {
+        if (token == plus) return emitStringRole(semantic::LibraryRole::stringConcat, { left, right }, type, span);
+        const auto predicate = binaryOpcode(token);
+        if (!predicate.has_value() || predicate->opcode != ir::Opcode::compare) {
+            report(DiagnosticId::unsupportedSyntax, span, "operator is not supported on String values");
+            return std::nullopt;
+        }
+        const auto relation = static_cast<ir::ComparePredicate>(predicate->modifier);
+        const bool equality = relation == ir::ComparePredicate::equal || relation == ir::ComparePredicate::notEqual;
+        const auto resultType = equality ? model->types().boolType() : model->types().intType();
+        const auto computed = emitStringRole(
+                equality ? semantic::LibraryRole::stringEqual : semantic::LibraryRole::stringOrder,
+                { left, right }, resultType, span);
+        if (!computed.has_value() || relation == ir::ComparePredicate::equal) return computed;
+        auto constant = makeInstruction(ir::Opcode::literal, span);
+        constant.integerValue = 0;
+        constant.result = makeValue(resultType, ir::ValueCategory::value);
+        const auto zero = *constant.result;
+        emit(std::move(constant));
+        return emitValue(equality ? ir::ComparePredicate::equal : relation, type, ir::ValueCategory::value,
+                         { computed->id, zero.id }, span);
     }
 
     // `x as? T`: .Ok(converted) when the value fits in T, else .Err(.OutOfRange).
@@ -1764,7 +1892,7 @@ private:
 
         switchToBlock(okBlock);
         const auto converted = emitValue(
-                ir::Opcode::convertWrapping, target, ir::ValueCategory::value,
+                ir::ConversionMode::wrapping, target, ir::ValueCategory::value,
                 { operand.id }, expression->span);
         const auto ok = emitEnumConstruction(resultType, *okCase, { converted }, expression->span);
         if (!ok.has_value()) return std::nullopt;
@@ -1841,7 +1969,7 @@ private:
                 expression->span);
     }
 
-    std::optional<ir::Opcode> binaryOpcode(TokenKind token) const {
+    std::optional<Operation> binaryOpcode(TokenKind token) const {
         switch (token) {
             case plus: return ir::Opcode::add;
             case minus: return ir::Opcode::subtract;
@@ -1853,12 +1981,12 @@ private:
             case caret: return ir::Opcode::bitXor;
             case shiftLeft: return ir::Opcode::shiftLeft;
             case shiftRight: return ir::Opcode::shiftRight;
-            case less: return ir::Opcode::less;
-            case lessEqual: return ir::Opcode::lessEqual;
-            case greater: return ir::Opcode::greater;
-            case greaterEqual: return ir::Opcode::greaterEqual;
-            case equalEqual: return ir::Opcode::equal;
-            case notEqual: return ir::Opcode::notEqual;
+            case less: return ir::ComparePredicate::less;
+            case lessEqual: return ir::ComparePredicate::lessEqual;
+            case greater: return ir::ComparePredicate::greater;
+            case greaterEqual: return ir::ComparePredicate::greaterEqual;
+            case equalEqual: return ir::ComparePredicate::equal;
+            case notEqual: return ir::ComparePredicate::notEqual;
             default: return std::nullopt;
         }
     }
@@ -1921,18 +2049,19 @@ private:
                 ir::ValueCategory::value,
                 { address->id },
                 expression->target->span);
-        const auto opcode = binaryOpcode(compoundBaseOperator(expression->op->kind));
-        if (!opcode.has_value()) {
+        std::optional<ir::Value> combined;
+        if (isString(address->type)) {
+            combined = emitStringOperator(compoundBaseOperator(expression->op->kind), old, *right, address->type,
+                                          expression->span);
+        } else if (const auto opcode = binaryOpcode(compoundBaseOperator(expression->op->kind))) {
+            combined = emitValue(*opcode, address->type, ir::ValueCategory::value, { old.id, right->id },
+                                 expression->span);
+        } else {
             report(DiagnosticId::unsupportedSyntax, expression->span,
                     "compound assignment operator is not supported by primitive IR lowering");
-            return std::nullopt;
         }
-        auto result = emitValue(
-                *opcode,
-                address->type,
-                ir::ValueCategory::value,
-                { old.id, right->id },
-                expression->span);
+        if (!combined.has_value()) return std::nullopt;
+        auto result = *combined;
         if (requiresDestroy(address->type)) {
             const auto owned = acquireOwned(result, expression->value->span);
             if (!owned.has_value()) return std::nullopt;
@@ -2232,13 +2361,7 @@ private:
             semanticSymbol->name == "count") {
             const auto base = lowerExpression(expression->base);
             if (!base.has_value()) return std::nullopt;
-            return emitValue(
-                    ir::Opcode::count,
-                    *type,
-                    ir::ValueCategory::value,
-                    { base->id },
-                    expression->span,
-                    symbol);
+            return emitStringRole(semantic::LibraryRole::stringCount, { *base }, *type, expression->span);
         }
 
         if (semanticSymbol->kind == semantic::SymbolKind::enumCase ||
@@ -2350,12 +2473,7 @@ private:
         if (!base.has_value() || !index.has_value() || !type.has_value()) {
             return std::nullopt;
         }
-        return emitValue(
-                ir::Opcode::subscript,
-                *type,
-                ir::ValueCategory::value,
-                { base->id, index->id },
-                expression->span);
+        return emitStringRole(semantic::LibraryRole::stringByte, { *base, *index }, *type, expression->span);
     }
 
     std::optional<ir::Value> lowerArray(const syntax::ArrayExprSyntax::Ptr& expression) {
@@ -2385,7 +2503,7 @@ private:
         }
         if (currentBlockTerminated()) return std::nullopt;
         const auto integer = [&](int64_t number, SourceSpan span) {
-            auto constant = makeInstruction(ir::Opcode::integerConstant, span);
+            auto constant = makeInstruction(ir::Opcode::literal, span);
             constant.integerValue = number;
             constant.result = makeValue(model->types().intType(), ir::ValueCategory::value);
             const auto value = *constant.result;
@@ -2473,7 +2591,7 @@ private:
         }
         if (currentBlockTerminated()) return std::nullopt;
         const auto integer = [&](int64_t number, SourceSpan span) {
-            auto constant = makeInstruction(ir::Opcode::integerConstant, span);
+            auto constant = makeInstruction(ir::Opcode::literal, span);
             constant.integerValue = number;
             constant.result = makeValue(model->types().intType(), ir::ValueCategory::value);
             const auto value = *constant.result;
@@ -3633,7 +3751,7 @@ private:
         const auto type = concrete == model->types().neverType() ? model->types().voidType() : concrete;
         if (name == "joyeer_intrinsic_stack_slot") {
             if (type == model->types().voidType()) {
-                return emitValue(ir::Opcode::integerConstant, model->types().intType(),
+                return emitValue(ir::Opcode::literal, model->types().intType(),
                                  ir::ValueCategory::value, {}, expression->span);
             }
             const auto slot = emitValue(ir::Opcode::stackAllocate, type, ir::ValueCategory::address,
@@ -3642,7 +3760,7 @@ private:
                              { slot.id }, expression->span);
         }
         if (name == "joyeer_intrinsic_needs_destroy") {
-            auto instruction = makeInstruction(ir::Opcode::booleanConstant, expression->span);
+            auto instruction = makeInstruction(ir::Opcode::literal, expression->span);
             instruction.integerValue = requiresDestroy(type) ? 1 : 0;
             instruction.result = makeValue(model->types().boolType(), ir::ValueCategory::value);
             const auto result = *instruction.result;
@@ -3654,11 +3772,11 @@ private:
             // A callback only exists for a type that needs one; otherwise the answer is 0 (decision 0025).
             const bool clone = name == "joyeer_intrinsic_clone_callback";
             if (clone ? !model->isCopyable(type) : model->isLinear(type)) {
-                return emitValue(ir::Opcode::integerConstant, model->types().intType(), ir::ValueCategory::value,
+                return emitValue(ir::Opcode::literal, model->types().intType(), ir::ValueCategory::value,
                                  {}, expression->span);
             }
-            auto instruction = makeInstruction(
-                    clone ? ir::Opcode::cloneCallback : ir::Opcode::destroyCallback, expression->span);
+            auto instruction = makeInstruction(ir::Opcode::typeHelper, expression->span);
+            instruction.modifier = static_cast<uint8_t>(clone ? ir::TypeHelperKind::clone : ir::TypeHelperKind::destroy);
             instruction.integerValue = static_cast<int64_t>(type);
             instruction.result = makeValue(model->types().intType(), ir::ValueCategory::value);
             const auto result = *instruction.result;
@@ -3683,7 +3801,7 @@ private:
                                "' is not one");
                 return std::nullopt;
             }
-            auto constant = makeInstruction(ir::Opcode::integerConstant, expression->span);
+            auto constant = makeInstruction(ir::Opcode::literal, expression->span);
             constant.result = makeValue(model->types().intType(), ir::ValueCategory::value);
             constant.integerValue = kind;
             const auto result = *constant.result;
@@ -3754,8 +3872,13 @@ private:
             }
             if (name == "joyeer_intrinsic_destroy_range" && model->isLinear(type)) {
                 // A linear element is never destroyed: a nonempty range is a defect (decision 0025).
-                auto guard = makeInstruction(ir::Opcode::linearRangeGuard, expression->span);
-                guard.operands = { operands[1] };
+                const auto zero = emitValue(ir::Opcode::literal, model->types().intType(), ir::ValueCategory::value,
+                                            {}, expression->span);
+                const auto nonempty = emitValue(ir::ComparePredicate::notEqual, model->types().boolType(),
+                                                ir::ValueCategory::value, { operands[1], zero.id }, expression->span);
+                auto guard = makeInstruction(ir::Opcode::trapIf, expression->span);
+                guard.operands = { nonempty.id };
+                guard.text = "linear container dropped while not empty";
                 emit(std::move(guard));
                 return emitUnit(expression->span);
             }
@@ -3839,11 +3962,33 @@ private:
         const auto type = typeOf(expression);
         if (!string.has_value() || !type.has_value()) return std::nullopt;
 
-        auto instruction = makeInstruction(ir::Opcode::stringUtf8, expression->span);
-        instruction.result = makeValue(*type, ir::ValueCategory::value);
-        instruction.operands = { string->id };
-        const auto result = *instruction.result;
-        emit(std::move(instruction));
+        // The library array's `string_utf8` method, called on an inert zero `[UInt8]` like a literal method
+        // (decision 0028 stage 3); the String is borrowed.
+        const auto method = model->arrayRoleMethod(*type, semantic::LibraryRole::stringUtf8);
+        const auto* record = model->types().type(*type);
+        const auto instance = method.has_value() && record != nullptr
+                ? model->instanceIndex(*method, record->arguments) : std::nullopt;
+        if (!instance.has_value() || *instance >= instanceFunctions.size() ||
+            instanceFunctions[*instance] == ir::invalidFunctionId) {
+            report(DiagnosticId::missingSymbol, expression->span, "String.utf8 has no lowered array method");
+            return std::nullopt;
+        }
+        const auto receiverStorage = emitValue(ir::Opcode::stackAllocate, *type, ir::ValueCategory::address,
+                                              {}, expression->span);
+        auto zero = makeInstruction(ir::Opcode::zeroInitialize, expression->span);
+        zero.operands = { receiverStorage.id };
+        emit(std::move(zero));
+        const auto receiver = emitValue(ir::Opcode::load, *type, ir::ValueCategory::value,
+                                       { receiverStorage.id }, expression->span);
+        recordValue(receiver, ValueOwnership::owned);
+        const auto ownedReceiver = acquireOwned(receiver, expression->span);
+        if (!ownedReceiver.has_value()) return std::nullopt;
+        auto call = makeInstruction(ir::Opcode::call, expression->span);
+        call.callee = instanceFunctions[*instance];
+        call.operands = { ownedReceiver->id, string->id };
+        call.result = makeValue(*type, ir::ValueCategory::value);
+        const auto result = *call.result;
+        emit(std::move(call));
         recordValue(result, ValueOwnership::owned);
         return result;
     }
@@ -3896,7 +4041,7 @@ private:
         for (size_t index = 0; index < fieldValues.size(); ++index) {
             if (fieldValues[index].has_value()) continue;
             if (structure->fields[index].name == ir::liveFieldName) {
-                auto live = makeInstruction(ir::Opcode::booleanConstant, expression->span, true);
+                auto live = makeInstruction(ir::Opcode::literal, expression->span, true);
                 live.integerValue = 1;
                 live.result = makeValue(structure->fields[index].type, ir::ValueCategory::value);
                 fieldValues[index] = *live.result;
@@ -3949,7 +4094,7 @@ private:
     void lowerReturn(const syntax::ReturnExprSyntax::Ptr& expression) {
         if (expression->value == nullptr) {
             emitAllScopeCleanupForReturn(expression->span);
-            emit(makeInstruction(ir::Opcode::returnVoid, expression->span));
+            emit(makeInstruction(ir::Opcode::ret, expression->span));
             return;
         }
         auto value = lowerReturnedValue(expression->value);
@@ -3984,17 +4129,17 @@ private:
         }
         emitAllScopeCleanupForReturn(span);
         if (currentFunction().resultType == model->types().voidType()) {
-            emit(makeInstruction(ir::Opcode::returnVoid, span));
+            emit(makeInstruction(ir::Opcode::ret, span));
             return;
         }
-        auto instruction = makeInstruction(ir::Opcode::returnValue, span);
+        auto instruction = makeInstruction(ir::Opcode::ret, span);
         instruction.operands = { value.id };
         emit(std::move(instruction));
     }
 
     ir::Value emitUnit(SourceSpan span) {
         return emitValue(
-                ir::Opcode::unitConstant,
+                ir::Opcode::literal,
                 model->types().voidType(),
                 ir::ValueCategory::value,
                 {},
@@ -4002,7 +4147,7 @@ private:
     }
 
     ir::Value emitValue(
-            ir::Opcode opcode,
+            Operation operation,
             typing::TypeId type,
             ir::ValueCategory category,
             std::vector<ir::ValueId> operands,
@@ -4010,7 +4155,8 @@ private:
             std::optional<semantic::SymbolId> symbol = std::nullopt,
             bool implicitCode = false,
             std::optional<ir::DebugVariableId> debugVariable = std::nullopt) {
-        auto instruction = makeInstruction(opcode, span, implicitCode);
+        const auto opcode = operation.opcode;
+        auto instruction = makeInstruction(operation, span, implicitCode);
         instruction.result = makeValue(type, category);
         instruction.operands = std::move(operands);
         instruction.symbol = symbol;
@@ -4024,8 +4170,7 @@ private:
         emit(std::move(instruction));
         if (category == ir::ValueCategory::value) {
             auto valueOwnership = ValueOwnership::borrowed;
-            if (opcode == ir::Opcode::copyValue || opcode == ir::Opcode::take ||
-                (opcode == ir::Opcode::add && requiresDestroy(type))) {
+            if (opcode == ir::Opcode::copyValue || opcode == ir::Opcode::take) {
                 valueOwnership = ValueOwnership::owned;
             }
             recordValue(result, valueOwnership);
@@ -4100,10 +4245,11 @@ private:
     }
 
     ir::Instruction makeInstruction(
-            ir::Opcode opcode,
+            Operation operation,
             SourceSpan span,
             bool implicitCode = false) const {
-        auto instruction = ir::Instruction { opcode };
+        auto instruction = ir::Instruction { operation.opcode };
+        instruction.modifier = operation.modifier;
         instruction.span = span;
         if (module->sourceFile(0) != nullptr) {
             instruction.debugLocation = ir::DebugLocation {

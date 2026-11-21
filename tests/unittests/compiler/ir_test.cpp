@@ -49,7 +49,7 @@ Module validAddModule() {
                     SourceSpan { 10, 3 },
                 },
                 Instruction {
-                    Opcode::returnValue,
+                    Opcode::ret,
                     std::nullopt,
                     { 2 },
                     {},
@@ -136,7 +136,8 @@ TEST(IRModelTest, VerifiesAndDumpsAWellFormedFunctionDeterministically) {
 )IR");
 }
 
-TEST(IRModelTest, VerifiesUnitConstantShapeAndType) {
+// The unit value is a `literal` of `Void` holding 0 (decision 0028).
+TEST(IRModelTest, VerifiesUnitLiteralShapeAndType) {
     Module module;
     module.types = {
         TypeName { 0, "Void", joyeer::typing::TypeKind::voidType },
@@ -148,18 +149,18 @@ TEST(IRModelTest, VerifiesUnitConstantShapeAndType) {
     function.resultType = 0;
     function.entry = 0;
     function.blocks = { BasicBlock { 0, "entry", {
-        Instruction { Opcode::unitConstant, Value { 0, 0, ValueCategory::value } },
-        Instruction { Opcode::returnVoid },
+        Instruction { Opcode::literal, Value { 0, 0, ValueCategory::value } },
+        Instruction { Opcode::ret },
     } } };
     module.functions.push_back(std::move(function));
     EXPECT_TRUE(Verifier().verify(module).succeeded());
-    EXPECT_NE(dump(module).find("unit"), std::string::npos);
+    EXPECT_NE(dump(module).find("%0: Void = literal 0"), std::string::npos) << dump(module);
     EXPECT_FALSE(requiresDestruction(module, 0));
 
     auto& unit = module.functions[0].blocks[0].instructions[0];
-    unit.result->type = 1;
+    unit.integerValue = 1;
     EXPECT_TRUE(hasError(Verifier().verify(module), VerificationErrorId::typeMismatch));
-    unit.result->type = 0;
+    unit.integerValue = 0;
     unit.result->category = ValueCategory::address;
     EXPECT_TRUE(hasError(Verifier().verify(module), VerificationErrorId::typeMismatch));
     unit.result->category = ValueCategory::value;
@@ -367,7 +368,7 @@ TEST(IRModelTest, AcceptsStackSlotsLoadsAndStores) {
             {},
         },
         Instruction {
-            Opcode::integerConstant,
+            Opcode::literal,
             Value { 1, 1, ValueCategory::value },
             {},
             {},
@@ -399,7 +400,7 @@ TEST(IRModelTest, AcceptsStackSlotsLoadsAndStores) {
             {},
             {},
         },
-        Instruction { Opcode::returnVoid },
+        Instruction { Opcode::ret },
     };
 
     const auto verification = Verifier().verify(module);
@@ -419,7 +420,7 @@ TEST(IRModelTest, VerifiesAndDumpsZeroInitializedStorage) {
             Value { 0, 1, ValueCategory::address },
         },
         Instruction { Opcode::zeroInitialize, std::nullopt, { 0 } },
-        Instruction { Opcode::returnVoid },
+        Instruction { Opcode::ret },
     };
 
     const auto verification = Verifier().verify(module);
@@ -438,54 +439,30 @@ TEST(IRModelTest, RejectsZeroInitializationOfNonAddressValues) {
     EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch));
 }
 
-TEST(IRModelTest, RemovedArrayWireSlotsAreRejectedAndNeverReused) {
-    EXPECT_EQ(static_cast<unsigned>(Opcode::fieldAddress), 42u);
-    EXPECT_EQ(static_cast<unsigned>(Opcode::branch), 51u);
+// The builtin array (wire 10) and dictionary (wire 11) type kinds were removed when the library `Array` and `Dict`
+// replaced them (decisions 0026, 0027); their slots stay rejected and are never reused.
+TEST(IRModelTest, RemovedTypeKindSlotsAreRejectedAndNeverReused) {
     EXPECT_EQ(static_cast<unsigned>(joyeer::typing::TypeKind::int8), 12u);
-    for (unsigned slot = 35; slot <= 38; ++slot) {
+    for (const int kind : { 10, 11 }) {
         auto module = validAddModule();
-        module.functions[0].blocks[0].instructions[0].opcode = static_cast<Opcode>(slot);
+        module.types.push_back(TypeName {
+            3, "removed kind", static_cast<joyeer::typing::TypeKind>(kind), joyeer::semantic::invalidSymbolId, { 1, 2 },
+        });
         const auto verification = Verifier().verify(module);
-        EXPECT_FALSE(verification.succeeded());
-        EXPECT_NE(dump(verification).find("unknown or removed opcode"), std::string::npos);
+        EXPECT_FALSE(verification.succeeded()) << kind;
+        EXPECT_NE(dump(verification).find("unknown or removed type kind"), std::string::npos) << kind;
     }
-    auto module = validAddModule();
-    module.types.push_back(TypeName { 3, "removed array kind", static_cast<joyeer::typing::TypeKind>(10) });
-    const auto verification = Verifier().verify(module);
-    EXPECT_FALSE(verification.succeeded());
-    EXPECT_NE(dump(verification).find("unknown or removed type kind"), std::string::npos);
 }
 
-// The builtin dictionary's operations (39-41), `subscript_addr` (50) and its type kind (11) were removed when the
-// library `Dict` replaced it (decision 0027, wire 25); their slots stay rejected and are never reused.
-TEST(IRModelTest, RemovedDictionaryWireSlotsAreRejectedAndNeverReused) {
-    EXPECT_EQ(static_cast<unsigned>(Opcode::subscript), 49u);
-    for (const unsigned slot : { 39u, 40u, 41u, 50u }) {
+// Opcode values are dense (decision 0028, stage 4): a value past the table, or a negative one, is rejected.
+TEST(IRModelTest, OpcodeValuesOutsideTheTableAreRejected) {
+    for (const int value : { static_cast<int>(Opcode::stackBlock) + 1, 1000, -1 }) {
         auto module = validAddModule();
-        module.functions[0].blocks[0].instructions[0].opcode = static_cast<Opcode>(slot);
+        module.functions[0].blocks[0].instructions[0].opcode = static_cast<Opcode>(value);
         const auto verification = Verifier().verify(module);
-        EXPECT_FALSE(verification.succeeded()) << slot;
-        EXPECT_NE(dump(verification).find("unknown or removed opcode"), std::string::npos) << slot;
+        EXPECT_FALSE(verification.succeeded()) << value;
+        EXPECT_NE(dump(verification).find("unknown opcode"), std::string::npos) << value;
     }
-    auto module = validAddModule();
-    module.types.push_back(TypeName {
-        3, "[Int: Bool]", static_cast<joyeer::typing::TypeKind>(11), joyeer::semantic::invalidSymbolId, { 1, 2 },
-    });
-    const auto verification = Verifier().verify(module);
-    EXPECT_FALSE(verification.succeeded());
-    EXPECT_NE(dump(verification).find("unknown or removed type kind"), std::string::npos);
-}
-
-// `logicalAnd` (23) was never emitted: `&&` and `||` lower to branches. Its slot is rejected and never reused
-// (wire 26).
-TEST(IRModelTest, RemovedLogicalAndWireSlotIsRejectedAndNeverReused) {
-    EXPECT_EQ(static_cast<unsigned>(Opcode::notEqual), 22u);
-    EXPECT_EQ(static_cast<unsigned>(Opcode::bitAnd), 24u);
-    auto module = validAddModule();
-    module.functions[0].blocks[0].instructions[0].opcode = static_cast<Opcode>(23);
-    const auto verification = Verifier().verify(module);
-    EXPECT_FALSE(verification.succeeded());
-    EXPECT_NE(dump(verification).find("unknown or removed opcode"), std::string::npos);
 }
 
 // Decision 0024: every malformed role binding is rejected by the verifier, not trusted from lowering.
@@ -582,67 +559,6 @@ TEST(IRModelTest, VerifierRejectsMalformedRoleEnumerations) {
     });
 }
 
-// `subscript` and `count` are String-only since the builtin dictionary went (decision 0027): the backend reads the
-// handle's fields without checking the base kind, so the verifier is their only guard.
-TEST(IRModelTest, StringByteAndCountAcceptOnlyAStringValue) {
-    auto module = validAddModule();
-    module.types.push_back(TypeName { 3, "String", joyeer::typing::TypeKind::string });
-    module.types.push_back(TypeName { 4, "UInt8", joyeer::typing::TypeKind::uint8 });
-    auto& function = module.functions[0];
-    function.name = "byte";
-    function.parameters = {
-        Parameter { Value { 0, 3, ValueCategory::value }, std::nullopt, "text", false, {} },
-        Parameter { Value { 1, 1, ValueCategory::value }, std::nullopt, "index", false, {} },
-    };
-    function.resultType = 4;
-    function.blocks[0].instructions = {
-        Instruction { Opcode::count, Value { 2, 1, ValueCategory::value }, { 0 } },
-        Instruction { Opcode::subscript, Value { 3, 4, ValueCategory::value }, { 0, 1 } },
-        Instruction { Opcode::returnValue, std::nullopt, { 3 } },
-    };
-    const auto valid = Verifier().verify(module);
-    ASSERT_TRUE(valid.succeeded()) << dump(valid);
-
-    const auto rejects = [&](const char* what, const char* message, const auto& mutate) {
-        auto invalid = module;
-        mutate(invalid);
-        const auto verification = Verifier().verify(invalid);
-        EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch)) << what;
-        EXPECT_NE(dump(verification).find(message), std::string::npos) << what << ": " << dump(verification);
-    };
-    constexpr auto subscriptMessage = "subscript index/result types do not match its base type";
-    constexpr auto countMessage = "count requires String and produces Int";
-    rejects("a subscript of a non-String base", subscriptMessage, [](Module& m) {
-        m.functions[0].parameters[0].value.type = 2;
-        m.functions[0].blocks[0].instructions.erase(m.functions[0].blocks[0].instructions.begin());
-    });
-    rejects("a subscript of an address base", subscriptMessage, [](Module& m) {
-        m.functions[0].parameters[0].value.category = ValueCategory::address;
-        m.functions[0].blocks[0].instructions.erase(m.functions[0].blocks[0].instructions.begin());
-    });
-    rejects("a subscript with a non-Int index", subscriptMessage, [](Module& m) {
-        m.functions[0].parameters[1].value.type = 2;
-    });
-    rejects("a subscript producing a non-UInt8 result", subscriptMessage, [](Module& m) {
-        m.functions[0].blocks[0].instructions[1].result->type = 1;
-        m.functions[0].resultType = 1;
-    });
-    rejects("a subscript producing an address", subscriptMessage, [](Module& m) {
-        m.functions[0].blocks[0].instructions[1].result->category = ValueCategory::address;
-    });
-    rejects("a subscript in a module without UInt8", subscriptMessage, [](Module& m) {
-        m.types.pop_back();
-        m.functions[0].blocks[0].instructions[1].result->type = 1;
-        m.functions[0].resultType = 1;
-    });
-    rejects("a count of a non-String base", countMessage, [](Module& m) {
-        m.functions[0].blocks[0].instructions[0].operands = { 1 };
-    });
-    rejects("a count producing a non-Int result", countMessage, [](Module& m) {
-        m.functions[0].blocks[0].instructions[0].result->type = 4;
-    });
-}
-
 TEST(IRModelTest, ReportsDuplicateAndUndefinedValueIds) {
     auto module = validAddModule();
     auto& add = module.functions[0].blocks[0].instructions[0];
@@ -658,7 +574,7 @@ TEST(IRModelTest, ReportsMissingTerminatorsAndInstructionsAfterTerminators) {
     auto module = validAddModule();
     auto& instructions = module.functions[0].blocks[0].instructions;
     instructions.push_back(Instruction {
-        Opcode::integerConstant,
+        Opcode::literal,
         Value { 3, 1, ValueCategory::value },
     });
 
@@ -689,7 +605,7 @@ TEST(IRModelTest, ReportsCallSignatureMismatches) {
                     FunctionId { 0 },
                 },
                 Instruction {
-                    Opcode::returnValue,
+                    Opcode::ret,
                     std::nullopt,
                     { 0 },
                 },
@@ -810,7 +726,7 @@ Function diamondChain(size_t count, bool reversed) {
         function.blocks.push_back(terminatorBlock(head + 1, Opcode::branch, {head + 3}));
         function.blocks.push_back(terminatorBlock(head + 2, Opcode::branch, {head + 3}));
     }
-    function.blocks.push_back(terminatorBlock(static_cast<BlockId>(count * 3), Opcode::returnVoid));
+    function.blocks.push_back(terminatorBlock(static_cast<BlockId>(count * 3), Opcode::ret));
     if (reversed) std::reverse(function.blocks.begin(), function.blocks.end());
     return function;
 }
@@ -825,7 +741,7 @@ TEST(IRModelTest, DominanceFollowsBranchesSwitchesAndBackEdges) {
         switchBlock(5, {6, 7}),
         terminatorBlock(6, Opcode::branch, {8}),
         terminatorBlock(7, Opcode::branch, {8, 77}),
-        terminatorBlock(8, Opcode::returnVoid),
+        terminatorBlock(8, Opcode::ret),
         // The entry is last in the vector and is a back-edge target; a target that is not a block is ignored.
         terminatorBlock(4, Opcode::conditionalBranch, {1, 2}),
     };
@@ -852,12 +768,12 @@ TEST(IRModelTest, DominanceTreatsBlocksWithoutPredecessorsAsRootsAndUnrootedCycl
         terminatorBlock(1, Opcode::branch, {10}),
         // 5 has no predecessors, so it roots its own region; 6 joins it with the entry's region.
         terminatorBlock(5, Opcode::conditionalBranch, {6, 7}),
-        terminatorBlock(6, Opcode::returnVoid),
-        terminatorBlock(7, Opcode::returnVoid),
+        terminatorBlock(6, Opcode::ret),
+        terminatorBlock(7, Opcode::ret),
         // 8 and 9 reach each other but no root reaches them; 10 joins them with the entry.
         terminatorBlock(8, Opcode::conditionalBranch, {9, 10}),
         terminatorBlock(9, Opcode::branch, {8}),
-        terminatorBlock(10, Opcode::returnVoid),
+        terminatorBlock(10, Opcode::ret),
         terminatorBlock(11, Opcode::branch, {10}),
         terminatorBlock(12, Opcode::branch, {12}),
     };
@@ -910,7 +826,7 @@ TEST(IRModelTest, DominanceWorkForManyExitsToOneBlockGrowsWithTheirDepth) {
         function.blocks.push_back(terminatorBlock(2 * index, Opcode::conditionalBranch, {exit, 2 * index + 1}));
         function.blocks.push_back(terminatorBlock(2 * index + 1, Opcode::branch, {2 * index + 2 == exit ? exit : 2 * index + 2}));
     }
-    function.blocks.push_back(terminatorBlock(exit, Opcode::returnVoid));
+    function.blocks.push_back(terminatorBlock(exit, Opcode::ret));
     const DominanceAnalysis dominance(function);
     EXPECT_TRUE(dominance.dominates(0, exit));
     EXPECT_FALSE(dominance.dominates(2, exit));
@@ -927,8 +843,8 @@ TEST(IRModelTest, DominancePinsMalformedBlockShapes) {
         terminatorBlock(2, Opcode::branch, {4}),
         terminatorBlock(2, Opcode::branch, {5}),
         terminatorBlock(3, Opcode::branch, {4}),
-        terminatorBlock(4, Opcode::returnVoid),
-        terminatorBlock(5, Opcode::returnVoid),
+        terminatorBlock(4, Opcode::ret),
+        terminatorBlock(5, Opcode::ret),
         // Switch cases count only on a switch.
         terminatorBlock(6, Opcode::branch, {}),
     };
@@ -938,7 +854,7 @@ TEST(IRModelTest, DominancePinsMalformedBlockShapes) {
     SwitchCase stray;
     stray.target = 8;
     function.blocks[6].instructions.back().switchCases.push_back(stray);
-    function.blocks.push_back(terminatorBlock(8, Opcode::returnVoid));
+    function.blocks.push_back(terminatorBlock(8, Opcode::ret));
     const DominanceAnalysis dominance(function);
     EXPECT_TRUE(dominance.dominates(1, 4));
     EXPECT_FALSE(dominance.dominates(2, 4));
@@ -1002,7 +918,7 @@ TEST(IRModelTest, DominanceMatchesTheSetBasedFixedPointOnRandomFunctions) {
     // std::mt19937's sequence is fixed by the standard; distributions are not, so draw with modulo.
     std::mt19937 random(20261118);
     const auto below = [&random](uint32_t bound) { return static_cast<BlockId>(random() % bound); };
-    const Opcode terminators[] = {Opcode::branch, Opcode::conditionalBranch, Opcode::switchPattern, Opcode::returnVoid};
+    const Opcode terminators[] = {Opcode::branch, Opcode::conditionalBranch, Opcode::switchPattern, Opcode::ret};
     for (int trial = 0; trial < 3000; ++trial) {
         Function function;
         const auto blockCount = 1 + below(10);
@@ -1120,7 +1036,7 @@ TEST(IRModelTest, VerifiesExplicitCopyTakeAndDestroyOperations) {
                 },
                 Instruction { Opcode::store, std::nullopt, { 3, 2 } },
                 Instruction { Opcode::destroy, std::nullopt, { 2 } },
-                Instruction { Opcode::returnVoid },
+                Instruction { Opcode::ret },
             },
         },
     };
@@ -1139,82 +1055,6 @@ TEST(IRModelTest, RejectsDestroyingTrivialOrNonAddressValues) {
 
     const auto verification = Verifier().verify(module);
     EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch));
-}
-
-TEST(IRModelTest, VerifiesStringUtf8ProducesAByteArray) {
-    Module module;
-    module.sourceName = "utf8.joyeer";
-    module.types = {
-        TypeName { 0, "Void", joyeer::typing::TypeKind::voidType },
-        TypeName { 1, "String", joyeer::typing::TypeKind::string },
-        TypeName { 2, "UInt8", joyeer::typing::TypeKind::uint8 },
-        TypeName {
-            3,
-            "[UInt8]",
-            joyeer::typing::TypeKind::structure,
-            50,
-            { 2 },
-        },
-        TypeName { 4, "Int", joyeer::typing::TypeKind::integer },
-    };
-    StructureDefinition array;
-    array.symbol = 50;
-    array.type = 3;
-    array.name = "[UInt8]";
-    array.role = joyeer::ir::StructureRole::array;
-    array.fields = { { 51, "address", 4, true }, { 52, "count", 4, true }, { 53, "capacity", 4, true } };
-    array.deinitializer = 1;
-    array.copier = 2;
-    module.structures.push_back(array);
-    Function function;
-    function.id = 0;
-    function.name = "bytes";
-    function.parameters = {
-        Parameter { Value { 0, 1, ValueCategory::value }, std::nullopt, "text" },
-    };
-    function.resultType = 3;
-    function.returnsValue = true;
-    function.entry = 0;
-    function.blocks = {
-        BasicBlock {
-            0,
-            "entry",
-            {
-                Instruction {
-                    Opcode::stringUtf8,
-                    Value { 1, 3, ValueCategory::value },
-                    { 0 },
-                },
-                Instruction { Opcode::returnValue, std::nullopt, { 1 } },
-            },
-        },
-    };
-    module.functions.push_back(std::move(function));
-    Function destroy;
-    destroy.id = 1;
-    destroy.name = "destroy";
-    destroy.parameters = { Parameter { Value { 0, 3, ValueCategory::address }, std::nullopt, "self", true } };
-    destroy.resultType = 0;
-    destroy.entry = 0;
-    destroy.blocks = { BasicBlock { 0, "entry", { Instruction { Opcode::returnVoid } } } };
-    module.functions.push_back(destroy);
-    Function clone;
-    clone.id = 2;
-    clone.name = "clone";
-    clone.parameters = { Parameter { Value { 0, 3, ValueCategory::value }, std::nullopt, "self" } };
-    clone.resultType = 3;
-    clone.returnsValue = true;
-    clone.entry = 0;
-    clone.blocks = { BasicBlock { 0, "entry", { Instruction { Opcode::returnValue, std::nullopt, { 0 } } } } };
-    module.functions.push_back(clone);
-
-    const auto valid = Verifier().verify(module);
-    ASSERT_TRUE(valid.succeeded()) << dump(valid);
-    EXPECT_NE(dump(module).find("string_utf8 %0"), std::string::npos);
-
-    module.functions[0].blocks[0].instructions[0].result->type = 1;
-    const auto invalid = Verifier().verify(module);
-    EXPECT_TRUE(hasError(invalid, VerificationErrorId::typeMismatch));
 }
 
 } // namespace
