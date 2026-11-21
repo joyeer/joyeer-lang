@@ -1,6 +1,6 @@
 # 0013: A smaller, described IR opcode set
 
-- Status: in progress (updated 2026-11-21)
+- Status: done (updated 2026-11-21); every item is verified on `feat/ir-opcode-descriptors`, not yet merged
 - Decisions: [0028](../decisions/0028-ir-opcode-set.md); builds on
   [0025](../decisions/0025-library-collection-capabilities.md), [0026](../decisions/0026-library-array.md) and
   [0027](../decisions/0027-library-dict.md)
@@ -29,8 +29,8 @@ implemented on `feat/ir-opcode-descriptors`: `OpcodeDescriptor` rows in `compile
 the verifier's shape, result, modifier and authorization checks, and the dumper; the families are merged (wire 27);
 the opcodes are numbered densely in table order (wire 28); and String operations are calls to the collections
 prelude, so the String opcodes are gone and `add`, `sub`, `mul` and `compare` take only scalars (48 opcodes, wire 29).
-What is left is the Release CTest and `scripts/validate.py` for every stage. `Instruction::integerValue` still has
-four meanings; the row's immediate kind names which one.
+`scripts/validate.py` passes in Debug and Release. `Instruction::integerValue` still has four meanings; the row's
+immediate kind names which one.
 
 ## Todo
 
@@ -38,7 +38,8 @@ four meanings; the row's immediate kind names which one.
 
 - [x] Remove the opcode, reject slot 23, bump the wire to 26. Evidence: commit 902a0e7,
   `IRModelTest.RemovedLogicalAndWireSlotIsRejectedAndNeverReused`, Debug CTest.
-- [ ] Release CTest and `scripts/validate.py`. Not run for stage 0.
+- [x] Release CTest and `scripts/validate.py`. Evidence: Debug and Release pass at 025d80b; see the 2026-11-21
+  validation entries in the progress log.
 
 ### Stage 1: one descriptor table (no wire change)
 
@@ -56,7 +57,8 @@ four meanings; the row's immediate kind names which one.
   order, variadic and dump tests; four doc gaps) are addressed in the same change.
 - [x] Debug CTest. Evidence: full `-j8` run passed except four timeouts (ValidationScriptTests, Fern.Manifest,
   Fern.Workspace, Compression.Interoperability), each of which passed when rerun alone.
-- [ ] Release CTest and `scripts/validate.py`. Not run.
+- [x] Release CTest and `scripts/validate.py`. Evidence: Debug and Release pass at 025d80b; see the 2026-11-21
+  validation entries in the progress log.
 
 ### Stage 2: merge families
 
@@ -73,7 +75,8 @@ four meanings; the row's immediate kind names which one.
 - [x] `ir-backend-reviewer` pass. Evidence: no critical or high findings; its medium and low findings are addressed in
   the same change, except a noncopyable `type_helper clone` test, which already fails through the shared clone check.
 - [x] Debug CTest. Evidence: 2033 tests at `-j6`; only Fern.Workspace timed out, and it passed alone.
-- [ ] Release CTest and `scripts/validate.py`. Not run.
+- [x] Release CTest and `scripts/validate.py`. Evidence: Debug and Release pass at 025d80b; see the 2026-11-21
+  validation entries in the progress log.
 
 ### Stage 4: dense numbering (done before stage 3)
 
@@ -86,7 +89,8 @@ four meanings; the row's immediate kind names which one.
 - [x] `ir-backend-reviewer` pass. Evidence: no critical or high findings; its findings are addressed in the same
   change (comment on what the static assert covers, wire pin, removed tautological checks, the C ABI test, wording).
 - [x] Debug CTest. Evidence: 2031 tests at `-j6`; only Fern.Workspace timed out, and it passed alone.
-- [ ] Release CTest and `scripts/validate.py`. Not run.
+- [x] Release CTest and `scripts/validate.py`. Evidence: Debug and Release pass at 025d80b; see the 2026-11-21
+  validation entries in the progress log.
 
 ### Stage 3: String operations leave the scalar opcodes
 
@@ -134,7 +138,8 @@ four meanings; the row's immediate kind names which one.
   `target/debug/moss.*` are taken by runs since 2026-11-07, not because of this change; the first full run of this
   stage, before that cap was reached, passed them (2033 of 2037, the other failure being the instantiation report
   whose prelude line moved, now regenerated).
-- [ ] Release CTest and `scripts/validate.py`. Not run.
+- [x] Release CTest and `scripts/validate.py`. Evidence: Debug and Release pass at 025d80b; see the 2026-11-21
+  validation entries in the progress log.
 
 ## Open questions
 
@@ -147,6 +152,15 @@ New opcodes, and any change to what programs observe outside stage 3's measured 
 
 ## Progress log
 
+- 2026-11-21: With the five full `target/debug/moss.*` folders cleared (by the user's choice),
+  `scripts/validate.py --configs Debug` at 025d80b passes: build, CTest 2045 of 2045 and `fern test` 7 of 7. With the
+  Release run below, every stage's validation item is checked.
+- 2026-11-21: `scripts/validate.py --llvm-root C:\LLVM-22.1.8` at 025d80b (all stages), Windows AMD64. Release:
+  build, CTest 2045 of 2045 and `fern test` 7 of 7 pass. Debug: build passes; CTest 2039 of 2045, where
+  Fern.Workspace passed on the validator's rerun and the five `Moss.Fern.*` suites failed before building; `fern
+  test` stopped at `moss.archive.tests` for the same reason. Each of the five ignored `target/debug/moss.*` folders
+  already holds Fern's limit of 128 build directories, from runs since 2026-11-07, so this is not a change failure.
+  The Debug row stays open until those folders are cleared and the validator is rerun.
 - 2026-11-21: The user accepted the stage 3 -O2 `string_bytes` row (attributed to code placement); recorded in 0028.
   Every stage's remaining item is the Release CTest and `scripts/validate.py`.
 - 2026-11-21: Stage 3 implemented (wire 29): String operations call the collections prelude, and the String opcodes
