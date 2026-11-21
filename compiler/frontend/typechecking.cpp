@@ -1217,8 +1217,14 @@ private:
     struct DerivedConformanceCheck {
         TypeId subject;
         SourceSpan span;
+        size_t conformance;
     };
     std::vector<DerivedConformanceCheck> derivedConformanceChecks;
+    // Answers of `satisfiesEquatable` for derived conformers, by `assumeParameters` (see there).
+    mutable bool equatableCacheEnabled = false;
+    mutable std::unordered_set<TypeId> equatableTrue[2];
+    mutable std::unordered_set<TypeId> equatableFalse[2];
+    mutable std::unordered_set<TypeId> equatableProvisional[2];
     // While the methods of a struct, enum or extension are resolved: the type they belong to and the
     // type arguments `Self` stands for, which are the parameters in scope (spec 20.12).
     std::optional<semantic::SymbolId> selfOwner;
@@ -2552,7 +2558,7 @@ private:
                 Conformance derived { subject, *referenced, {}, conformance->span };
                 derived.derived = true;
                 model->conformanceList.push_back(std::move(derived));
-                derivedConformanceChecks.push_back({ subject, conformance->span });
+                derivedConformanceChecks.push_back({ subject, conformance->span, model->conformanceList.size() - 1 });
                 continue;
             }
             Conformance result { subject, *referenced, {}, conformance->span };
@@ -2566,9 +2572,13 @@ private:
                     report(TypeCheckingDiagnosticId::missingWitness, conformance->span,
                            "'" + typeSymbol->name + "' does not implement '" + requirementTitle(requirement) +
                                    "' required by '" + protocol->name + "'",
-                           witnessSymbol != nullptr
+                           witnessSymbol == nullptr
+                                   ? std::optional<std::string>("declare the method in this extension")
+                                   : witnessSymbol->kind == semantic::SymbolKind::builtinMember
                                    ? std::optional<std::string>("a builtin member is not a declared method and cannot be a witness")
-                                   : std::optional<std::string>("declare the method in this extension"));
+                                   : std::optional<std::string>("'" + witnessSymbol->name + "' is not a method, and only "
+                                                                "a declared method can be a witness; rename it or "
+                                                                "declare the method"));
                     valid = false;
                     continue;
                 }
@@ -2617,7 +2627,7 @@ private:
     // terminate (nothing provisional is cached). A type parameter conforms when its constraint lists `Equatable`, or,
     // with `assumeParameters`, always: that asks whether the type can conform for some arguments.
     bool satisfiesEquatable(TypeId type, std::vector<TypeId>& inProgress, bool assumeParameters) const {
-        if (type == model->typeContext.errorType() || type == model->typeContext.neverType()) return true;
+        if (type == model->typeContext.errorType()) return true;
         if (model->isBuiltinEquatable(type)) return true;
         const auto* record = model->typeContext.type(type);
         if (record == nullptr) return false;
@@ -2632,24 +2642,55 @@ private:
         if (model->typeContext.mentionsTypeParameter(type) && !genericType) return false;
         const auto* conformance = model->equatableConformance(type);
         if (conformance == nullptr) return false;
-        if (!conformance->derived) return true;
+        if (!conformance->derived || conformance->invalid) return true;
         if (std::find(inProgress.begin(), inProgress.end(), type) != inProgress.end()) return true;
+        // Once every conformance is known, `false` is cached for good: it holds whatever is assumed. `true` is kept
+        // provisionally and kept for good only when the outermost question (asked with nothing in progress) is
+        // answered yes, since it may rest on an assumption about a type in progress.
+        const auto mode = assumeParameters ? 1 : 0;
+        const bool outermost = inProgress.empty();
+        if (equatableCacheEnabled) {
+            if (equatableFalse[mode].contains(type)) return false;
+            if (equatableTrue[mode].contains(type) || equatableProvisional[mode].contains(type)) return true;
+        }
         inProgress.push_back(type);
         bool conforms = true;
         for (const auto& member : model->equatableMembers(type)) {
+            // `Never` has no value, so a member of that type never compares (spec 20.13.5).
+            if (member.type == model->typeContext.neverType()) continue;
             if (!satisfiesEquatable(member.type, inProgress, assumeParameters)) { conforms = false; break; }
         }
         inProgress.pop_back();
+        if (equatableCacheEnabled) {
+            if (!conforms) equatableFalse[mode].insert(type);
+            else equatableProvisional[mode].insert(type);
+            if (outermost) {
+                if (conforms) equatableTrue[mode].insert(equatableProvisional[mode].begin(), equatableProvisional[mode].end());
+                equatableProvisional[mode].clear();
+            }
+        }
         return conforms;
+    }
+
+    void clearEquatableCache() const {
+        for (int mode = 0; mode < 2; ++mode) {
+            equatableTrue[mode].clear();
+            equatableFalse[mode].clear();
+            equatableProvisional[mode].clear();
+        }
     }
 
     // The first member path of a derived conformer that keeps it from conforming, and that member's type:
     // `value.run` and `(Int): Int` for a `Box<Holder>` whose `Holder` has a function field.
     std::optional<std::pair<std::string, TypeId>> nonEquatablePath(TypeId type, size_t depth = 0) const {
-        if (!model->isDerivedEquatable(type)) return std::nullopt;
+        const auto* conformance = model->equatableConformance(type);
+        if (conformance == nullptr || !conformance->derived || conformance->invalid) return std::nullopt;
         for (const auto& member : model->equatableMembers(type)) {
+            if (member.type == model->typeContext.neverType()) continue;
             std::vector<TypeId> inProgress { type };
-            if (satisfiesEquatable(member.type, inProgress, false)) continue;
+            const bool conforms = satisfiesEquatable(member.type, inProgress, false);
+            equatableProvisional[0].clear();
+            if (conforms) continue;
             if (member.type != type && depth < 32) {
                 if (const auto inner = nonEquatablePath(member.type, depth + 1)) {
                     return std::pair { member.name + "." + inner->first, inner->second };
@@ -2663,10 +2704,19 @@ private:
     // A derived conformance whose member can never conform, for any type arguments, is rejected at its extension
     // (spec 20.13.5); one that conforms only for some arguments is checked where it is used.
     void validateDerivedConformances() {
-        for (const auto& [subject, span] : derivedConformanceChecks) {
+        // Every conformance is recorded, so answers can be cached; a rejected conformance changes them, so the
+        // rejections are applied together at the end and the cache restarts.
+        equatableCacheEnabled = true;
+        std::vector<size_t> rejected;
+        for (const auto& [subject, span, conformanceIndex] : derivedConformanceChecks) {
+            bool valid = true;
             for (const auto& member : model->equatableMembers(subject)) {
+                if (member.type == model->typeContext.neverType()) continue;
                 std::vector<TypeId> inProgress { subject };
-                if (satisfiesEquatable(member.type, inProgress, true)) continue;
+                const bool conforms = satisfiesEquatable(member.type, inProgress, true);
+                equatableProvisional[1].clear();
+                if (conforms) continue;
+                valid = false;
                 const auto memberType = model->typeContext.displayName(member.type);
                 const auto* record = model->typeContext.type(member.type);
                 std::string help = "give '" + memberType + "' a conformance, or write 'equals(other:)' by hand";
@@ -2675,15 +2725,16 @@ private:
                            "the other members";
                 } else if (model->isDictRoleType(member.type)) {
                     help = "a dictionary never conforms (spec 20.13.3); write 'equals(other:)' by hand";
-                } else if (model->isLinear(member.type)) {
-                    help = "a linear type never conforms (spec 20.13.3)";
                 }
                 report(TypeCheckingDiagnosticId::nonEquatableMember, span,
                        "'" + model->typeContext.displayName(subject) + "' cannot derive 'Equatable': its member '" +
                                member.name + "' has the type '" + memberType + "', which does not conform",
                        help);
             }
+            if (!valid) rejected.push_back(conformanceIndex);
         }
+        for (const auto index : rejected) model->conformanceList[index].invalid = true;
+        clearEquatableCache();
     }
 
     // Whether `type` satisfies `protocol` (spec 20.4.2). Inside a generic body a type that mentions
@@ -3362,11 +3413,18 @@ private:
             if (!model->derivedEqualitySet.insert(type).second) return true;
             model->derivedEqualityList.push_back(type);
             for (const auto& member : model->equatableMembers(type)) {
+                if (member.type == model->typeContext.neverType()) continue;
                 if (!requireEquality(member.type, caller, span, requiredBy)) return false;
             }
             return true;
         };
+        // A root in a generic body is reached only when that body is instantiated (spec 20.6).
+        std::unordered_map<semantic::SymbolId, std::vector<const EqualityRoot*>> equalityRootsIn;
         for (const auto& root : equalityRoots) {
+            if (root.caller.has_value() && model->genericParameters(*root.caller) != nullptr) {
+                equalityRootsIn[*root.caller].push_back(&root);
+                continue;
+            }
             if (!requireEquality(root.type, root.caller, root.span, std::nullopt)) return;
         }
         // The `deinit` of every concrete instance of a generic struct is an instance too (spec 20.12);
@@ -3472,6 +3530,11 @@ private:
                 }
                 const GenericCall call { *witness, receiver->arguments, function, requirementCall.span };
                 if (!require(call, receiver->arguments, index)) return;
+            }
+            if (const auto found = equalityRootsIn.find(function); found != equalityRootsIn.end()) {
+                for (const auto* root : found->second) {
+                    if (!requireEquality(root->type, function, root->span, index)) return;
+                }
             }
         }
         internInstanceTypes();
@@ -4926,7 +4989,8 @@ private:
                 const auto help = leaf != nullptr && leaf->kind == TypeKind::typeParameter
                         ? std::optional<std::string>("add 'Equatable' to the constraint of '" +
                                                      model->typeContext.displayName(path->second) +
-                                                     "' where it is declared")
+                                                     "' where it is declared (for an extension's parameter, in the "
+                                                     "type's own declaration)")
                         : std::nullopt;
                 report(TypeCheckingDiagnosticId::nonEquatableMember, expression->span,
                        "'" + model->typeContext.displayName(left) + "' does not conform to 'Equatable': its member '" +
@@ -4948,13 +5012,16 @@ private:
         if (expression->kind == syntax::Kind::parenthesizedExpr) {
             return lacksOwnType(std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
         }
-        if (isNumericLiteral(expression) || expression->kind == syntax::Kind::contextualCaseExpr) return true;
+        if (isNumericLiteral(expression) || isOpenCaseReference(expression)) return true;
         if (expression->kind == syntax::Kind::literalExpr) {
             const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(expression)->literal;
             return literal != nullptr && literal->kind == nilLiteral;
         }
         if (expression->kind == syntax::Kind::arrayExpr) {
-            return std::static_pointer_cast<syntax::ArrayExprSyntax>(expression)->elements.empty();
+            const auto& elements = std::static_pointer_cast<syntax::ArrayExprSyntax>(expression)->elements;
+            return std::all_of(elements.begin(), elements.end(), [this](const auto& element) {
+                return lacksOwnType(element);
+            });
         }
         if (expression->kind == syntax::Kind::dictionaryExpr) {
             return std::static_pointer_cast<syntax::DictionaryExprSyntax>(expression)->entries.empty();
@@ -4967,9 +5034,11 @@ private:
     // through a call of the generic witness with the operand's type arguments.
     void requireEqualityWitness(const syntax::BinaryExprSyntax::Ptr& expression, TypeId operand) {
         const auto requirement = model->equatableRequirement();
-        if (!requirement.has_value() || !currentFunction.has_value()) return;
+        if (!requirement.has_value()) return;
         if (model->typeContext.mentionsTypeParameter(operand)) {
-            requirementCalls.push_back({ *currentFunction, *requirement, operand, expression->span });
+            if (currentFunction.has_value()) {
+                requirementCalls.push_back({ *currentFunction, *requirement, operand, expression->span });
+            }
             return;
         }
         equalityRoots.push_back({ operand, currentFunction, expression->span });

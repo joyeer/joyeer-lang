@@ -759,9 +759,11 @@ requirement for it. Otherwise the operands are `type-checking.invalid-operator-o
 `Equatable` and, for a user type of the current module without a conformance, the extension to add.
 
 **Typing.** Neither operand is given the enclosing expression's expected type. An operand that has a type
-of its own is checked first; an operand without one (`nil`, an implicit member such as `.Red`, an array or
-dictionary literal, a numeric literal) is then checked against that type, on either side. If neither
-operand has a type of its own, it is `type-checking.missing-contextual-type`. There is no conversion or
+of its own is checked first; an operand without one (`nil`, an implicit member such as `.Red`, an array
+literal whose elements have none either, an empty dictionary literal, a numeric literal, a case of a
+generic enum named without type arguments) is then checked against that type, on either side. If neither operand has a type of
+its own, it is `type-checking.missing-contextual-type`, except that two numeric literals take their default
+types (`0 == 0` compares two `Int`s). There is no conversion or
 implicit wrapping between the operands: `opt == 5` is rejected, with help suggesting `.Some(5)`.
 
 **Evaluation and access.** The left operand is evaluated, then the right, then the result. For a builtin

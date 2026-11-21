@@ -317,7 +317,6 @@ enum class TypeCheckingDiagnosticId {
     protocolUsedAsType,
     invalidProtocolMember,
     reservedProtocolName,
-    nonEquatableMember,
     invalidConformance,
     missingWitness,
     witnessMismatch,
@@ -337,6 +336,7 @@ enum class TypeCheckingDiagnosticId {
     instantiationLimit,
     unauthorizedIntrinsic,
     invalidPrelude,
+    nonEquatableMember,
 };
 
 // A conformance of a concrete type to a protocol (spec 20.3), with the witness of each requirement.
@@ -348,6 +348,9 @@ struct Conformance {
     // A derived `Equatable` conformance (decision 0029, spec 20.13.5): no witness method; it holds for an instance
     // when every member conforms.
     bool derived = false;
+    // A derived conformance rejected at its extension: it counts as satisfied afterwards, so the one mistake is
+    // reported once.
+    bool invalid = false;
 };
 
 // A stored field, or a payload of an enum case, that a derived `Equatable` conformance compares.

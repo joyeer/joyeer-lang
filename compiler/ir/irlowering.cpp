@@ -1320,10 +1320,17 @@ private:
             function.isRootModule = owner == nullptr || owner->isRootModule;
             const auto declaration = owner != nullptr && owner->declaration.has_value()
                     ? model->semanticModel()->node(*owner->declaration) : nullptr;
-            const auto span = declaration != nullptr ? declaration->span : SourceSpan {};
-            if (module->sourceFile(0) != nullptr && declaration != nullptr) {
-                function.debugScope = debugScopeForNode(declaration, function.id);
-                function.debugLocation = ir::DebugLocation { span, true, function.debugScope };
+            if (declaration == nullptr) {
+                report(DiagnosticId::missingType, SourceSpan {},
+                       "a derived 'Equatable' conformance has no type declaration");
+                continue;
+            }
+            // Every instruction of the body is located at the type's declaration, in the function's own root scope
+            // (a type introduces no debug scope), so each call carries a location (decision 0029).
+            const auto span = declaration->span;
+            if (module->sourceFile(0) != nullptr) {
+                function.debugScope = std::nullopt;
+                function.debugLocation = ir::DebugLocation { span, false, std::nullopt };
             }
             for (const auto* name : { "self", "other" }) {
                 ir::Parameter parameter;
@@ -1371,9 +1378,12 @@ private:
         // Compares the members `extract(index)` yields, in order, and returns their verdict.
         const auto compareMembers = [&](const std::vector<typing::TypeId>& types,
                                         const std::function<std::pair<ir::Value, ir::Value>(size_t)>& extract) {
+            // `Never` has no value and every `Void` value is equal, so neither is compared.
             std::vector<size_t> compared;
             for (size_t index = 0; index < types.size(); ++index) {
-                if (types[index] != model->types().neverType()) compared.push_back(index);
+                if (types[index] != model->types().neverType() && types[index] != model->types().voidType()) {
+                    compared.push_back(index);
+                }
             }
             if (compared.empty()) {
                 emitDerivedReturn(emitBoolLiteral(true, span), span);
@@ -1383,7 +1393,10 @@ private:
                 const auto index = compared[position];
                 const auto [left, right] = extract(index);
                 const auto same = emitMemberEquality(left, right, types[index], span);
-                if (!same.has_value()) return;
+                if (!same.has_value()) {
+                    emit(makeInstruction(ir::Opcode::unreachable, span));
+                    return;
+                }
                 if (position + 1 == compared.size()) {
                     emitDerivedReturn(*same, span);
                     return;
@@ -1410,9 +1423,9 @@ private:
                 const auto& field = fields[index];
                 return std::pair {
                     emitValue(ir::Opcode::extractField, field.type, ir::ValueCategory::value, { self.id }, span,
-                              field.symbol, true),
+                              field.symbol),
                     emitValue(ir::Opcode::extractField, field.type, ir::ValueCategory::value, { other.id }, span,
-                              field.symbol, true) };
+                              field.symbol) };
             });
         } else if (enumeration != module->enumerations.end()) {
             const auto cases = enumeration->cases;
@@ -1430,7 +1443,7 @@ private:
                 return pattern;
             };
             std::vector<ir::BlockId> caseBlocks;
-            auto dispatch = makeInstruction(ir::Opcode::switchPattern, span, true);
+            auto dispatch = makeInstruction(ir::Opcode::switchPattern, span);
             dispatch.operands = { self.id };
             for (const auto& enumCase : cases) {
                 caseBlocks.push_back(createBlock("equals.case"));
@@ -1440,7 +1453,7 @@ private:
             for (size_t index = 0; index < cases.size(); ++index) {
                 switchToBlock(caseBlocks[index]);
                 const auto matched = createBlock("equals.same");
-                auto second = makeInstruction(ir::Opcode::switchPattern, span, true);
+                auto second = makeInstruction(ir::Opcode::switchPattern, span);
                 second.operands = { other.id };
                 second.switchCases.push_back(ir::SwitchCase { casePattern(cases[index]), matched });
                 ir::Pattern anything;
@@ -1467,11 +1480,13 @@ private:
             switchToBlock(*falseBlock);
             emitDerivedReturn(emitBoolLiteral(false, span), span);
         }
+        // Every member value is borrowed and every result trivial, so the one scope holds nothing to clean up.
+        assert(scopes.size() == 1 && scopes.back().cleanups.empty());
         scopes.clear();
     }
 
     void emitDerivedReturn(ir::Value value, SourceSpan span) {
-        auto instruction = makeInstruction(ir::Opcode::ret, span, true);
+        auto instruction = makeInstruction(ir::Opcode::ret, span);
         instruction.operands = { value.id };
         emit(std::move(instruction));
     }
@@ -1484,14 +1499,15 @@ private:
         if (model->isBuiltinEquatable(type)) {
             if (isString(type)) return emitStringOperator(equalEqual, left, right, boolean, span);
             return emitValue(ir::ComparePredicate::equal, boolean, ir::ValueCategory::value, { left.id, right.id },
-                             span, std::nullopt, true);
+                             span);
         }
         const auto callee = equalityCallee(type);
         if (!callee.has_value()) {
             report(DiagnosticId::missingSymbol, span, "a member of a derived 'Equatable' conformance has no witness");
             return std::nullopt;
         }
-        auto call = makeInstruction(ir::Opcode::call, span, true);
+        // Not implicit: a call inside a function with debug information needs a location.
+        auto call = makeInstruction(ir::Opcode::call, span);
         call.callee = *callee;
         call.operands = { left.id, right.id };
         call.result = makeValue(boolean, ir::ValueCategory::value);
