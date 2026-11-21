@@ -2507,6 +2507,12 @@ TEST_F(TypeCheckingTest, ReportsBranchCopiesOfAValueProducingIfOrMatchInEveryCon
         "func f(o: Optional<Handle>): Int {\n"
         " return look(handle: match consume o { .Some(x) => x, .None => open() }) }\n",
         "func f(n: Int) { let a = open()\n match n { 1 => a, _ => open() } }\n",
+        // a block arm
+        "func look(handle: Handle): Int { return handle.fd }\n"
+        "func f(o: Optional<Handle>): Int {\n"
+        " return look(handle: match consume o { .Some(x) => { x }, .None => open() }) }\n",
+        // a type parameter is noncopyable in the generic body (decision 0021)
+        "func g<T>(flag: Bool, a: T, b: T) { if flag { a } else { b } }\n",
     };
     for (const auto& body : copies) {
         SCOPED_TRACE(body);
@@ -2526,6 +2532,9 @@ TEST_F(TypeCheckingTest, ReportsABranchCopyInAStoringContextOnce) {
         "func f(n: Int) { let a = open()\n let c = match n { 1 => a, _ => open() } }\n",
         "func f(flag: Bool): Handle { let a = open()\n return if flag { a } else { open() } }\n",
         "func f(flag: Bool): Handle { let a = open()\n if flag { a } else { open() } }\n",
+        "func f(flag: Bool) { let a = open()\n let c = (if flag { a } else { open() }) }\n",
+        // a branch whose type is coerced to the expected Optional still names the place
+        "func f(flag: Bool) { let a = open()\n let c: Optional<Handle> = if flag { a } else { .None } }\n",
     };
     for (const auto& body : copies) {
         SCOPED_TRACE(body);
@@ -2548,6 +2557,8 @@ TEST_F(TypeCheckingTest, AllowsAnIfOrMatchThatProducesFreshNoncopyableValues) {
         " return look(handle: if flag { take(handle: consume h)\n open() } else { Handle(fd: 3) }) }\n",
         // a branch that reads a field of a noncopyable place copies only the copyable field
         "func f(flag: Bool): Int { let a = open()\n return if flag { a.fd } else { 0 } }\n",
+        // an `if` of type `Never` stores no value: each `return` moves its owning local
+        "func f(flag: Bool): Handle { let a = open()\n if flag { return a } else { return open() } }\n",
     };
     for (const auto& body : fresh) {
         SCOPED_TRACE(body);

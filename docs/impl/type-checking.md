@@ -128,8 +128,8 @@ The current checker validates:
   `append` argument, an array or dictionary element, the value of a block, the operand of
   `?`, and `Dict.get`). A value-producing `if` or `match` (one whose type is not `Void` or
   `Never`) checks its branch values where it is checked, so a branch that names a place is a
-  copy in every context, a borrowing argument, a member base or a statement as much as a
-  binding, and is reported once. `consume x` moves an owning local or consuming
+  copy in every context (a borrowing argument, a member base or a statement as much as a
+  binding) and is reported once. `consume x` moves an owning local or consuming
   parameter instead, and is accepted wherever a value is stored;
   `type-checking.assignment-to-self-in-deinit` rejects `&self = ...` in a `deinit`;
 - Linear types (decision 0015): `isLinear` and `linearLeafPaths` on the checked model; the
