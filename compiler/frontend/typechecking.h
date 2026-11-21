@@ -486,6 +486,10 @@ public:
     [[nodiscard]] std::vector<EquatableMember> equatableMembers(TypeId type) const;
     // The concrete types whose derived `Equatable` witness the program needs, found with the instances.
     [[nodiscard]] const std::vector<TypeId>& derivedEqualities() const { return derivedEqualityList; }
+    // The collections prelude's `array_equal` function, whose instance for `X` is the witness of `[X]`.
+    [[nodiscard]] std::optional<semantic::SymbolId> arrayEqualFunction() const { return arrayEqualSymbol; }
+    // Whether `node` is a presence test `x == nil` (spec 20.13.4), and whether its `nil` is on the left.
+    [[nodiscard]] std::optional<bool> presenceTest(const syntax::NodePtr& node) const;
     // The type argument of the layout intrinsic call `node` (spec 20.12.5), as written; it may mention
     // type parameters that each instance substitutes.
     [[nodiscard]] std::optional<TypeId> layoutIntrinsicType(const syntax::NodePtr& node) const;
@@ -548,6 +552,8 @@ private:
     std::unordered_map<semantic::LibraryRole, semantic::SymbolId> stringRoles;
     std::vector<Conformance> conformanceList;
     std::vector<TypeId> derivedEqualityList;
+    std::optional<semantic::SymbolId> arrayEqualSymbol;
+    std::unordered_map<semantic::NodeId, bool> presenceTests;
     std::unordered_set<TypeId> derivedEqualitySet;
     std::vector<Instance> instanceList;
     std::map<std::pair<semantic::SymbolId, std::vector<TypeId>>, size_t> instanceIndices;

@@ -1523,6 +1523,18 @@ private:
         if (const auto found = derivedEqualityFunctions.find(type); found != derivedEqualityFunctions.end()) {
             return found->second;
         }
+        // `[X]`: the `array_equal` instance for `X` (spec 20.13.3, item 4).
+        if (model->isArrayRoleType(type)) {
+            const auto function = model->arrayEqualFunction();
+            const auto* record = model->types().type(type);
+            if (!function.has_value() || record == nullptr || record->arguments.empty()) return std::nullopt;
+            const auto instance = model->instanceIndex(*function, { record->arguments[0] });
+            if (!instance.has_value() || *instance >= instanceFunctions.size() ||
+                instanceFunctions[*instance] == ir::invalidFunctionId) {
+                return std::nullopt;
+            }
+            return instanceFunctions[*instance];
+        }
         const auto requirement = model->equatableRequirement();
         return requirement.has_value() ? witnessFunction(type, *requirement) : std::nullopt;
     }
@@ -2016,6 +2028,10 @@ private:
         }
         const auto type = typeOf(expression);
         if (expression->op == nullptr || !type.has_value()) return std::nullopt;
+        if (const auto nilOnLeft = model->presenceTest(expression)) {
+            return lowerPresenceTest(*nilOnLeft ? expression->right : expression->left,
+                                     expression->op->kind == equalEqual, expression->span);
+        }
         if (expression->op->kind == equalEqual || expression->op->kind == notEqual) {
             // A conformer other than a builtin compares through its `Equatable` witness (decision 0029).
             const auto operandType = typeOf(expression->left);
@@ -2064,6 +2080,50 @@ private:
                 ir::ValueCategory::value,
                 { left->id, right->id },
                 span);
+    }
+
+    // `x == nil` (spec 20.13.4): a tag test of the borrowed optional, true for `==` when it is absent. It calls no
+    // witness, so it works whatever the payload is.
+    std::optional<ir::Value> lowerPresenceTest(const syntax::ExprPtr& operand, bool equal, SourceSpan span) {
+        const auto value = lowerExpression(operand);
+        if (!value.has_value() || currentBlockTerminated()) return std::nullopt;
+        const auto presentCase = findRoleCase(value->type, ir::EnumerationRole::optional, false);
+        const auto* definition = presentCase.has_value() ? enumCaseDefinition(value->type, *presentCase) : nullptr;
+        if (definition == nullptr) {
+            report(DiagnosticId::missingSymbol, span, "a presence test needs the optional's present case");
+            return std::nullopt;
+        }
+        const auto boolean = model->types().boolType();
+        const auto result = emitValue(ir::Opcode::stackAllocate, boolean, ir::ValueCategory::address, {}, span);
+        const auto presentBlock = createBlock("presence.some");
+        const auto absentBlock = createBlock("presence.none");
+        const auto mergeBlock = createBlock("presence.merge");
+        ir::Pattern present;
+        present.kind = ir::PatternKind::enumCase;
+        present.type = value->type;
+        present.symbol = *presentCase;
+        for (const auto payloadType : definition->payloadTypes) {
+            ir::Pattern wildcard;
+            wildcard.kind = ir::PatternKind::wildcard;
+            wildcard.type = payloadType;
+            present.payloads.push_back(std::move(wildcard));
+        }
+        ir::Pattern anything;
+        anything.kind = ir::PatternKind::wildcard;
+        anything.type = value->type;
+        auto dispatch = makeInstruction(ir::Opcode::switchPattern, span);
+        dispatch.operands = { value->id };
+        dispatch.switchCases.push_back(ir::SwitchCase { present, presentBlock });
+        dispatch.switchCases.push_back(ir::SwitchCase { anything, absentBlock });
+        emit(std::move(dispatch));
+        switchToBlock(presentBlock);
+        emitRawStore(emitBoolLiteral(!equal, span), result, span);
+        emitBranch(mergeBlock, span);
+        switchToBlock(absentBlock);
+        emitRawStore(emitBoolLiteral(equal, span), result, span);
+        emitBranch(mergeBlock, span);
+        switchToBlock(mergeBlock);
+        return emitValue(ir::Opcode::load, boolean, ir::ValueCategory::value, { result.id }, span);
     }
 
     ir::Value emitBoolLiteral(bool value, SourceSpan span) {

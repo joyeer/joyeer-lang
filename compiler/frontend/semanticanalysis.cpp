@@ -1117,6 +1117,12 @@ private:
             return;
         }
         analyzeExpression(expression->right, state);
+        // `==` borrows both operands (spec 20.13.2, 20.13.4), so a linear temporary compared, such as
+        // `maybe() == nil`, would be dropped.
+        if (expression->op != nullptr && (expression->op->kind == equalEqual || expression->op->kind == notEqual)) {
+            reportBorrowedLinearTemporary(expression->left, state);
+            reportBorrowedLinearTemporary(expression->right, state);
+        }
     }
 
     void analyzeAssignment(

@@ -60,6 +60,7 @@ const char* collectionRoleName(semantic::LibraryRole role) {
         case semantic::LibraryRole::stringOrder: return "string_order";
         case semantic::LibraryRole::stringUtf8: return "string_utf8";
         case semantic::LibraryRole::equatable: return "equatable";
+        case semantic::LibraryRole::arrayEqual: return "array_equal";
         default: return "unknown";
     }
 }
@@ -1068,6 +1069,14 @@ std::vector<EquatableMember> TypeCheckedModel::equatableMembers(TypeId type) con
     return members;
 }
 
+std::optional<bool> TypeCheckedModel::presenceTest(const syntax::NodePtr& node) const {
+    const auto id = semanticModelValue->nodeId(node);
+    if (!id.has_value()) return std::nullopt;
+    const auto found = presenceTests.find(*id);
+    if (found == presenceTests.end()) return std::nullopt;
+    return found->second;
+}
+
 std::optional<TypeId> TypeCheckedModel::layoutIntrinsicType(const syntax::NodePtr& node) const {
     const auto id = semanticModelValue->nodeId(node);
     if (!id.has_value()) return std::nullopt;
@@ -1798,6 +1807,24 @@ private:
                         report(TypeCheckingDiagnosticId::invalidPrelude, symbol.span,
                                "the compiler prelude declares a second function for the " + roleName + " role");
                     }
+                    break;
+                }
+                case semantic::LibraryRole::arrayEqual: {
+                    // `private func name<T: Equatable>(left: [T], right: [T]): Bool` with a body (decision 0029).
+                    const auto* parameters = model->genericParameters(symbol.id);
+                    if (symbol.kind != semantic::SymbolKind::function || parameters == nullptr ||
+                        parameters->size() != 1 || !symbol.callable.has_value() ||
+                        symbol.callable->parameters.size() != 2) {
+                        roleFailure = "the array_equal role requires 'private func name<T: Equatable>(left: [T], "
+                                      "right: [T]): Bool'";
+                        break;
+                    }
+                    if (model->arrayEqualSymbol.has_value()) {
+                        report(TypeCheckingDiagnosticId::invalidPrelude, symbol.span,
+                               "the compiler prelude declares a second function for the array_equal role");
+                    }
+                    model->arrayEqualSymbol = symbol.id;
+                    matches = true;
                     break;
                 }
                 case semantic::LibraryRole::none:
@@ -2637,6 +2664,13 @@ private:
             const auto equatable = model->equatableProtocol();
             return equatable.has_value() && std::find(protocols.begin(), protocols.end(), *equatable) != protocols.end();
         }
+        // `[X]` conforms when `X` does, through the `array_equal` witness (spec 20.13.3, item 4).
+        if (model->isArrayRoleType(type)) {
+            const auto arguments = record->arguments;
+            return model->arrayEqualFunction().has_value() && !arguments.empty() &&
+                    satisfiesEquatable(arguments[0], inProgress, assumeParameters);
+        }
+        if (model->isDictRoleType(type)) return false;
         const bool genericType = !record->arguments.empty() &&
                 (record->kind == TypeKind::structure || record->kind == TypeKind::enumeration);
         if (model->typeContext.mentionsTypeParameter(type) && !genericType) return false;
@@ -3114,6 +3148,10 @@ private:
                 } else if (model->typeContext.mentionsTypeParameter(argument)) {
                     help = "inside a generic function, only a type parameter whose constraint lists '" +
                             symbolName(protocol) + "' satisfies it";
+                } else if (protocol == model->equatableProtocol() &&
+                           (model->typeContext.isOptional(argument) || model->typeContext.isResult(argument) ||
+                            model->isArrayRoleType(argument))) {
+                    help = equatableHelp(argument, span).value_or("");
                 } else if (model->typeContext.isOptional(argument) || model->typeContext.isResult(argument)) {
                     // An optional or result type cannot be extended (decision 0024), so no extension can fix this.
                     help = "an optional or result type cannot conform to '" + symbolName(protocol) +
@@ -3396,6 +3434,14 @@ private:
             if (!equatableRequirement.has_value() || model->isBuiltinEquatable(type) ||
                 model->typeContext.mentionsTypeParameter(type)) {
                 return true;
+            }
+            if (model->isArrayRoleType(type)) {
+                // The instance's own `==` on its element reaches the element's witness.
+                const auto function = model->arrayEqualFunction();
+                const auto* record = model->typeContext.type(type);
+                if (!function.has_value() || record == nullptr || record->arguments.empty()) return true;
+                const std::vector<TypeId> arguments { record->arguments[0] };
+                return require(GenericCall { *function, arguments, caller, span }, arguments, requiredBy);
             }
             const auto* conformance = model->equatableConformance(type);
             if (conformance == nullptr) return true;
@@ -3939,9 +3985,19 @@ private:
         const auto owner = model->semanticModelValue->referencedSymbol(declaration->extendedType);
         if (!owner.has_value()) return;
         const auto* ownerSymbol = symbolOf(*owner);
+        // The one extension the role enums admit is the empty `Equatable` conformance (decision 0029, amending 0024).
+        const auto onlyEquatable = [&]() {
+            const auto equatable = model->equatableProtocol();
+            if (!equatable.has_value() || !declaration->methods.empty() || declaration->conformances.size() != 1) {
+                return false;
+            }
+            return model->semanticModelValue->referencedSymbol(declaration->conformances.front()) == equatable;
+        };
+        const bool roleEnum = ownerSymbol != nullptr &&
+                (ownerSymbol->libraryRole == semantic::LibraryRole::optional ||
+                 ownerSymbol->libraryRole == semantic::LibraryRole::result);
         if (ownerSymbol != nullptr &&
-            (ownerSymbol->libraryRole == semantic::LibraryRole::optional ||
-             ownerSymbol->libraryRole == semantic::LibraryRole::result ||
+            ((roleEnum && !onlyEquatable()) ||
              ownerSymbol->libraryRole == semantic::LibraryRole::arrayType ||
              ownerSymbol->libraryRole == semantic::LibraryRole::dictType ||
              ownerSymbol->libraryRole == semantic::LibraryRole::dictEntry) &&
@@ -4952,9 +5008,25 @@ private:
             right = checkExpression(expression->right).value_or(model->typeContext.errorType());
         } else if (expression->op != nullptr &&
                    (expression->op->kind == equalEqual || expression->op->kind == notEqual)) {
-            // Neither operand takes the enclosing expected type; one without a type of its own is typed by the
-            // other, on either side (spec 20.13.2).
-            if (lacksOwnType(expression->left) && !lacksOwnType(expression->right)) {
+            // `x == nil` and `x == .None` on an optional test presence, whatever the payload (spec 20.13.4).
+            const bool leftAbsent = isAbsentLiteral(expression->left);
+            if (leftAbsent != isAbsentLiteral(expression->right)) {
+                const auto& value = leftAbsent ? expression->right : expression->left;
+                const auto& absent = leftAbsent ? expression->left : expression->right;
+                const auto valueType = checkExpression(value).value_or(model->typeContext.errorType());
+                const auto absentType = checkExpression(absent, valueType).value_or(model->typeContext.errorType());
+                if (valueType == model->typeContext.errorType() || absentType == model->typeContext.errorType()) {
+                    return model->typeContext.errorType();
+                }
+                if (model->typeContext.isOptional(valueType) && absentType == valueType) {
+                    if (const auto node = model->semanticModelValue->nodeId(expression)) {
+                        model->presenceTests[*node] = leftAbsent;
+                    }
+                    return model->typeContext.boolType();
+                }
+                left = leftAbsent ? absentType : valueType;
+                right = leftAbsent ? valueType : absentType;
+            } else if (lacksOwnType(expression->left) && !lacksOwnType(expression->right)) {
                 right = checkExpression(expression->right).value_or(model->typeContext.errorType());
                 left = checkExpression(expression->left, right).value_or(model->typeContext.errorType());
             } else {
@@ -4982,7 +5054,8 @@ private:
             return *result;
         }
 
-        if ((op == equalEqual || op == notEqual) && left == right) {
+        if ((op == equalEqual || op == notEqual) && left == right && !model->typeContext.isOptional(left) &&
+            !model->typeContext.isResult(left)) {
             if (const auto path = nonEquatablePath(left)) {
                 const auto* conformance = model->equatableConformance(left);
                 const auto* leaf = model->typeContext.type(path->second);
@@ -5003,6 +5076,23 @@ private:
         }
         reportInvalidOperator(expression->op, { left, right }, expression->span);
         return model->typeContext.errorType();
+    }
+
+    // `nil` or `.None` with no payload, in parentheses or not (spec 20.13.4).
+    bool isAbsentLiteral(const syntax::ExprPtr& expression) const {
+        if (expression == nullptr) return false;
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return isAbsentLiteral(std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+        }
+        if (expression->kind == syntax::Kind::literalExpr) {
+            const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(expression)->literal;
+            return literal != nullptr && literal->kind == nilLiteral;
+        }
+        if (expression->kind == syntax::Kind::contextualCaseExpr) {
+            const auto member = std::static_pointer_cast<syntax::ContextualCaseExprSyntax>(expression);
+            return member->name != nullptr && member->name->rawValue == "None" && !member->hasPayloadClause;
+        }
+        return false;
     }
 
     // An operand with no type of its own (spec 20.13.2): `nil`, an implicit member, an empty array or dictionary
@@ -5071,16 +5161,7 @@ private:
         }
         std::optional<std::string> help;
         const bool equality = op != nullptr && (op->rawValue == "==" || op->rawValue == "!=");
-        if (equality && std::any_of(operands.begin(), operands.end(), [this](TypeId operand) {
-                return model->typeContext.isOptional(operand) || model->typeContext.isResult(operand);
-            })) {
-            // Equality on the role-bound enums is not defined (decision 0024, spec 5.2).
-            // The common `x == nil` has a drop-in replacement.
-            help = std::any_of(operands.begin(), operands.end(),
-                               [this](TypeId operand) { return model->typeContext.isOptional(operand); })
-                    ? "compare with 'match', for example 'match x { .None => true, .Some(_) => false }' for 'x == nil'"
-                    : "compare with 'match', for example 'match x { .Ok(_) => ..., .Err(_) => ... }'";
-        } else if (equality && operands.size() == 2 && operands[0] == operands[1]) {
+        if (equality && operands.size() == 2 && operands[0] == operands[1]) {
             help = equatableHelp(operands[0], span);
         }
         report(TypeCheckingDiagnosticId::invalidOperatorOperands, span, std::move(message), std::move(help));
@@ -5102,8 +5183,19 @@ private:
             return "'" + name + "' is linear, and a linear type never conforms to 'Equatable' (spec 20.13.3); "
                    "compare a field instead";
         }
-        if (model->isArrayRoleType(type)) {
-            return "arrays do not conform to 'Equatable' yet; compare the counts, then each element";
+        // A container conforms when its components do (spec 20.13.3): name the first that does not.
+        if (model->isArrayRoleType(type) || model->typeContext.isOptional(type) || model->typeContext.isResult(type)) {
+            const auto arguments = record->arguments;
+            for (const auto argument : arguments) {
+                if (argument == model->typeContext.neverType() || isEquatable(argument)) continue;
+                const auto inner = equatableHelp(argument, span);
+                const auto what = model->isArrayRoleType(type) ? "element" : "payload";
+                std::string help = "'" + name + "' compares its " + what + "s, and its " + what + " type '" +
+                        model->typeContext.displayName(argument) + "' does not conform to 'Equatable'";
+                if (inner.has_value()) help += "; " + *inner;
+                if (model->typeContext.isOptional(type)) help += "; to test for a value, compare with 'nil'";
+                return help;
+            }
         }
         if (model->isDictRoleType(type)) {
             return "a dictionary never conforms to 'Equatable' (spec 20.13.3)";

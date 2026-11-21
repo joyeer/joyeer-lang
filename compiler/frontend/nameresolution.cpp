@@ -698,6 +698,7 @@ private:
                         else if (name == "string_order") value.libraryRole = LibraryRole::stringOrder;
                         else if (name == "string_utf8") value.libraryRole = LibraryRole::stringUtf8;
                         else if (name == "equatable") value.libraryRole = LibraryRole::equatable;
+                        else if (name == "array_equal") value.libraryRole = LibraryRole::arrayEqual;
                         else report(NameResolutionDiagnosticId::invalidPrelude, attribute.span,
                                     "unknown compiler prelude role '" + name + "'");
                     }

@@ -270,3 +270,20 @@ private func order(left: String, right: String): Int {
     return compareBytes(leftData: stringData(text: left), leftCount: stringCount(text: left),
             rightData: stringData(text: right), rightCount: stringCount(text: right))
 }
+
+// `[X] == [X]` when `X` conforms (decision 0029, spec 20.13.3): the counts, then the elements in index order, stopping
+// at the first that differs. Lowering calls this function's instance for `X`; a NaN element is never equal to itself.
+@compiler_role(array_equal)
+private func arrayEqual<T: Equatable>(left: [T], right: [T]): Bool {
+    if left.count != right.count {
+        return false
+    }
+    var index = 0
+    while index < left.count {
+        if left[index] != right[index] {
+            return false
+        }
+        index += 1
+    }
+    return true
+}
