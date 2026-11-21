@@ -2512,6 +2512,9 @@ TEST_F(TypeCheckingTest, ReportsBranchCopiesOfAValueProducingIfOrMatchInEveryCon
         "func g<T>(flag: Bool, a: T, b: T): T { if flag { a } else { b } }\n",
         // a used value inside a statement whose own value is discarded
         "func f(flag: Bool) { let a = open()\n if flag { take(handle: if flag { a } else { open() }) } }\n",
+        // an inner `if` that is the value of a used branch
+        "func f(flag: Bool, other: Bool) { let a = open()\n"
+        " let x = if flag { if other { a } else { open() } } else { open() } }\n",
     };
     for (const auto& body : copies) {
         SCOPED_TRACE(body);
@@ -2542,6 +2545,14 @@ TEST_F(TypeCheckingTest, AcceptsANoncopyablePlaceWhoseValueIsDiscarded) {
         "func f(n: Int) { let a = open()\n match n { 1 => a, _ => open() } }\n",
         "func f(n: Int) { let a = open()\n match n { 1 => { a }, _ => open() }\n print(value: 1) }\n",
         "func g<T>(flag: Bool, a: T, b: T) { if flag { a } else { b } }\n",
+        "func m<T>(n: Int, a: T, b: T) { match n { 1 => a, _ => b } }\n",
+        // the same inner `if` as a statement of a used branch
+        "func f(flag: Bool, other: Bool) { let a = open()\n"
+        " let x = if flag { if other { a } else { open() }\n open() } else { open() } }\n",
+        // an `if` without `else` is `Void`, whatever its branch holds
+        "func f(flag: Bool) { let a = open()\n let v = if flag { a } }\n",
+        "func f(flag: Bool) { let a = open()\n while flag { if flag { a } else { open() } } }\n",
+        "func f() { let a = open()\n (a) }\n",
     };
     for (const auto& body : discarded) {
         SCOPED_TRACE(body);

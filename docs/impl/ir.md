@@ -291,7 +291,11 @@ and `return aVoidReturningCall()` lower to a `ret` with no operand after evaluat
 expression and cleaning active scopes. An early return inside the expression
 does not create a second return or a false fallthrough value.
 
-`if` expressions merge values through a typed temporary slot. `while` emits a
+`if` and `match` expressions merge values through a typed temporary slot, which
+the enclosing scope destroys. One whose value is discarded
+(`TypeCheckedModel::isValueDiscarded`, spec 4.1.1) gets no slot: each branch's
+value is discarded in that branch, so a fresh branch temporary is destroyed when
+its branch or arm ends, and a branch that names a place does not copy it. `while` emits a
 header, body, exit, and back edge. A `Never` branch terminates without adding a
 false fallthrough edge. `break` branches to the nearest loop exit and `continue`
 to its header. Both emit cleanup only for scopes deeper than the loop's saved

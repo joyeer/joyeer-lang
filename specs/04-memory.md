@@ -89,11 +89,13 @@ such a type, reported at the copy site (provisional; see
 [decision 0015](../docs/decisions/0015-noncopyable-and-linear-types.md)).
 A value that is discarded is not needed as an owned one, so naming a noncopyable
 place there copies nothing: an expression statement, the trailing expression of a
-block whose value is unused (a `Void` function body, a `while` body, the branch of
-an `if` without `else`), and the branches of an `if` or `match` whose own value is
-discarded. As a statement, `if flag { handle } else { Handle(fd: 3) }` only reads
-`handle`; as a binding initializer or a call argument it copies `handle` and is
-rejected.
+block whose value is unused (a `Void` or `Never` function body, a `while` body,
+the branch of an `if` without `else`), the branches of an `if` or `match` whose
+own value is discarded, and the inside of a discarded parenthesized expression.
+As a statement, `if flag { handle } else { Handle(fd: 3) }` only reads `handle`;
+as a binding initializer or a call argument it copies `handle` and is rejected.
+A discarded owned temporary is still destroyed when its enclosing block or
+`match` arm ends, and a discarded linear value is an error (§4.7.1).
 Such a value may still be passed through a consuming boundary or produced as
 an owned temporary. A future explicit copy-initializer design may let a type
 opt back into copying; it is not part of v0.1.
