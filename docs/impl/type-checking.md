@@ -128,8 +128,13 @@ The current checker validates:
   `append` argument, an array or dictionary element, the value of a block, the operand of
   `?`, and `Dict.get`). A value-producing `if` or `match` (one whose type is not `Void` or
   `Never`) checks its branch values where it is checked, so a branch that names a place is a
-  copy in every context (a borrowing argument, a member base or a statement as much as a
-  binding) and is reported once. `consume x` moves an owning local or consuming
+  copy in every context where its value is used (a borrowing argument or a member base as much
+  as a binding) and is reported once. A discarded value copies nothing (spec 4.1.1): the checker
+  records, in `TypeCheckedModel::isValueDiscarded`, each expression statement, the trailing
+  expression of a `Void` or `Never` function body, a `while` body or an `if` without `else`, and
+  the branches of a discarded `if` or `match`, looking through parentheses. Such an `if` or
+  `match` is not branch-checked, and IR lowering reads the same mark: it gives it no result slot
+  and does not acquire a discarded trailing place. `consume x` moves an owning local or consuming
   parameter instead, and is accepted wherever a value is stored;
   `type-checking.assignment-to-self-in-deinit` rejects `&self = ...` in a `deinit`;
 - Linear types (decision 0015): `isLinear` and `linearLeafPaths` on the checked model; the

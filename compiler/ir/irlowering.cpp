@@ -1426,6 +1426,15 @@ private:
             discardScopeAfterTerminator();
             return std::nullopt;
         }
+        // A discarded trailing value is never needed as an owned one (spec 4.1.1): a place there is
+        // only read, never copied. An owned temporary still moves to the parent scope, which
+        // destroys it after this block's locals.
+        if (result.has_value() && requiresDestroy(result->type) &&
+                ownershipOf(*result) != ValueOwnership::owned &&
+                model->isValueDiscarded(block->items.back())) {
+            result.reset();
+            unitResult = true;
+        }
         if (result.has_value() && requiresDestroy(result->type)) {
             const auto resultSpan = !block->items.empty()
                     ? block->items.back()->span
@@ -2989,8 +2998,10 @@ private:
         const auto resultType = typeOf(expression);
         if (!scrutinee.has_value() || !resultType.has_value()) return std::nullopt;
 
+        // A discarded value needs no result: each branch's value is discarded in its own block.
         const auto producesResult = *resultType != model->types().voidType() &&
-                *resultType != model->types().neverType();
+                *resultType != model->types().neverType() &&
+                !model->isValueDiscarded(expression);
         const auto resultAddress = producesResult
                 ? std::optional<ir::Value>(emitValue(
                         ir::Opcode::stackAllocate,
@@ -3314,8 +3325,10 @@ private:
         const auto resultType = typeOf(expression);
         if (!condition.has_value() || !resultType.has_value()) return std::nullopt;
 
+        // A discarded value needs no result: each branch's value is discarded in its own block.
         const auto producesResult = *resultType != model->types().voidType() &&
-                *resultType != model->types().neverType();
+                *resultType != model->types().neverType() &&
+                !model->isValueDiscarded(expression);
         const auto resultAddress = producesResult
                 ? std::optional<ir::Value>(emitValue(
                         ir::Opcode::stackAllocate,

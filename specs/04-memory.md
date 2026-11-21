@@ -87,6 +87,13 @@ satisfy the `Copyable` constraint of §20.5. The implicit copy that lowering per
 when a borrowed value is needed as an owned one (§4.1) is a compile-time error for
 such a type, reported at the copy site (provisional; see
 [decision 0015](../docs/decisions/0015-noncopyable-and-linear-types.md)).
+A value that is discarded is not needed as an owned one, so naming a noncopyable
+place there copies nothing: an expression statement, the trailing expression of a
+block whose value is unused (a `Void` function body, a `while` body, the branch of
+an `if` without `else`), and the branches of an `if` or `match` whose own value is
+discarded. As a statement, `if flag { handle } else { Handle(fd: 3) }` only reads
+`handle`; as a binding initializer or a call argument it copies `handle` and is
+rejected.
 Such a value may still be passed through a consuming boundary or produced as
 an owned temporary. A future explicit copy-initializer design may let a type
 opt back into copying; it is not part of v0.1.

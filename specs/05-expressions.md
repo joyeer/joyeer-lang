@@ -304,7 +304,10 @@ let sign = if x > 0 { 1 } else if x < 0 { -1 } else { 0 }
 ```
 
 Every branch must produce the same type. The whole `if`-`else` must be
-total (i.e., have an `else` arm) when used as an expression.
+total (i.e., have an `else` arm) when used as an expression. An `if` or
+`match` whose value is unused, such as one in statement position, discards
+the value of the branch that runs; a branch that names a noncopyable place
+then does not copy it (§4.1.1).
 
 ### 5.10.1 Unit expressions
 
