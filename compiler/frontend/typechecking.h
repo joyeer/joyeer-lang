@@ -458,6 +458,13 @@ public:
     // The protocols a type parameter is constrained to, `Copyable` included.
     [[nodiscard]] const std::vector<semantic::SymbolId>& constraints(semantic::SymbolId typeParameter) const;
     [[nodiscard]] std::optional<semantic::SymbolId> copyableProtocol() const;
+    // The prelude protocol bound to `==` and `!=` by the `equatable` role, and its `equals` requirement
+    // (decision 0029, spec 20.13). Absent when the role prelude does not declare it.
+    [[nodiscard]] std::optional<semantic::SymbolId> equatableProtocol() const;
+    [[nodiscard]] std::optional<semantic::SymbolId> equatableRequirement() const;
+    // The compiler's own conformers (spec 20.13.3, item 1): the integer types, `Bool`, `UInt8`, `Float`,
+    // `Double`, `String` and `Void`. Their `==` is a builtin operation, never a witness call.
+    [[nodiscard]] bool isBuiltinEquatable(TypeId type) const;
     // The type argument of the layout intrinsic call `node` (spec 20.12.5), as written; it may mention
     // type parameters that each instance substitutes.
     [[nodiscard]] std::optional<TypeId> layoutIntrinsicType(const syntax::NodePtr& node) const;

@@ -17,3 +17,10 @@ public enum Result<T, E> {
     Ok(T),
     Err(E),
 }
+
+// `==` and `!=` bind to this protocol by its role (decision 0029, spec 20.13). The integer types, `Bool`, `UInt8`,
+// `Float`, `Double`, `String` and `Void` conform by the compiler, with no witness method.
+@compiler_role(equatable)
+public protocol Equatable {
+    func equals(other: Self): Bool
+}

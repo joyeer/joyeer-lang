@@ -649,7 +649,8 @@ private:
             value.visibility = model->node(*declaration)->visibility;
             if (model->isPreludeSource(span) &&
                 (kind == SymbolKind::function || kind == SymbolKind::method ||
-                 kind == SymbolKind::structure || kind == SymbolKind::enumeration)) {
+                 kind == SymbolKind::structure || kind == SymbolKind::enumeration ||
+                 kind == SymbolKind::protocol)) {
                 const auto node = std::static_pointer_cast<syntax::DeclSyntax>(model->node(*declaration));
                 for (const auto& attribute : node->attributes) {
                     const auto attributeName = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
@@ -696,6 +697,7 @@ private:
                         else if (name == "string_equal") value.libraryRole = LibraryRole::stringEqual;
                         else if (name == "string_order") value.libraryRole = LibraryRole::stringOrder;
                         else if (name == "string_utf8") value.libraryRole = LibraryRole::stringUtf8;
+                        else if (name == "equatable") value.libraryRole = LibraryRole::equatable;
                         else report(NameResolutionDiagnosticId::invalidPrelude, attribute.span,
                                     "unknown compiler prelude role '" + name + "'");
                     }
@@ -810,6 +812,9 @@ private:
             } else if (candidate.kind == SymbolKind::structure &&
                        candidate.libraryRole == LibraryRole::dictEntry && !model->dictEntrySymbol_.has_value()) {
                 model->dictEntrySymbol_ = candidate.id;
+            } else if (candidate.kind == SymbolKind::protocol &&
+                       candidate.libraryRole == LibraryRole::equatable && !model->equatableSymbol_.has_value()) {
+                model->equatableSymbol_ = candidate.id;
             }
         }
         if (!model->optionalSymbol_.has_value() || !model->resultSymbol_.has_value()) {

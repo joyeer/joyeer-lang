@@ -1786,33 +1786,92 @@ private:
             (expression->op->kind == andAnd || expression->op->kind == orOr)) {
             return lowerLogical(expression);
         }
-        auto left = lowerExpression(expression->left);
-        if (!left.has_value()) return std::nullopt;
-        left = prepareOwned(*left, expression->left->span);
-        if (!left.has_value()) return std::nullopt;
-        const auto right = lowerExpression(expression->right);
         const auto type = typeOf(expression);
-        if (!left.has_value() || !right.has_value() || !type.has_value() ||
-            expression->op == nullptr) {
-            return std::nullopt;
+        if (expression->op == nullptr || !type.has_value()) return std::nullopt;
+        if (expression->op->kind == equalEqual || expression->op->kind == notEqual) {
+            // A conformer other than a builtin compares through its `Equatable` witness (decision 0029).
+            const auto operandType = typeOf(expression->left);
+            if (operandType.has_value() && !model->isBuiltinEquatable(*operandType)) {
+                return lowerWitnessEquality(expression->left, expression->right, *operandType,
+                                            expression->op->kind == equalEqual, *type, expression->span);
+            }
+        }
+        return lowerBuiltinBinary(expression->op->kind, expression->left, expression->right, *type, expression->span);
+    }
+
+    // A binary operator on builtin operands. Where the checked body names a builtin type, the left operand is read
+    // as a value before the right is evaluated (spec 20.13.2). In a generic body the operands are a type parameter's
+    // values, so the left stays borrowed, as the checked body decided (decision 0021). `Void` equality is a constant
+    // once both operands are evaluated.
+    std::optional<ir::Value> lowerBuiltinBinary(
+            TokenKind op, const syntax::ExprPtr& leftOperand, const syntax::ExprPtr& rightOperand,
+            typing::TypeId type, SourceSpan span) {
+        auto left = lowerExpression(leftOperand);
+        if (!left.has_value()) return std::nullopt;
+        const auto checked = model->typeOf(leftOperand);
+        if (!checked.has_value() || !model->types().mentionsTypeParameter(*checked)) {
+            left = prepareOwned(*left, leftOperand->span);
+            if (!left.has_value()) return std::nullopt;
+        }
+        const auto right = lowerExpression(rightOperand);
+        if (!left.has_value() || !right.has_value()) return std::nullopt;
+        if ((op == equalEqual || op == notEqual) && left->type == model->types().voidType()) {
+            return emitBoolLiteral(op == equalEqual, span);
         }
         if (isString(left->type)) {
-            return emitStringOperator(expression->op->kind, *left, *right, *type, expression->span);
+            return emitStringOperator(op, *left, *right, type, span);
         }
-        const auto opcode = binaryOpcode(expression->op->kind);
+        const auto opcode = binaryOpcode(op);
         if (!opcode.has_value()) {
             report(
                     DiagnosticId::unsupportedSyntax,
-                    expression->span,
+                    span,
                     "binary operator is not supported by primitive IR lowering");
             return std::nullopt;
         }
         return emitValue(
                 *opcode,
-                *type,
+                type,
                 ir::ValueCategory::value,
                 { left->id, right->id },
-                expression->span);
+                span);
+    }
+
+    ir::Value emitBoolLiteral(bool value, SourceSpan span) {
+        auto constant = makeInstruction(ir::Opcode::literal, span);
+        constant.integerValue = value ? 1 : 0;
+        constant.result = makeValue(model->types().boolType(), ir::ValueCategory::value);
+        const auto result = *constant.result;
+        emit(std::move(constant));
+        recordValue(result, ValueOwnership::trivial);
+        return result;
+    }
+
+    // `left == right` on a hand-written conformance (decision 0029, spec 20.13.2): a call of the witness with both
+    // operands borrowed; `!=` compares the result with `false`.
+    std::optional<ir::Value> lowerWitnessEquality(
+            const syntax::ExprPtr& leftOperand, const syntax::ExprPtr& rightOperand, typing::TypeId operandType,
+            bool equal, typing::TypeId type, SourceSpan span) {
+        const auto requirement = model->equatableRequirement();
+        const auto callee = requirement.has_value() ? witnessFunction(operandType, *requirement) : std::nullopt;
+        if (!callee.has_value()) {
+            report(DiagnosticId::missingSymbol, span, "the 'Equatable' conformance has no witness to call");
+            return std::nullopt;
+        }
+        const auto left = lowerExpression(leftOperand);
+        if (!left.has_value() || currentBlockTerminated()) return std::nullopt;
+        const auto right = lowerExpression(rightOperand);
+        if (!right.has_value() || currentBlockTerminated()) return std::nullopt;
+        auto call = makeInstruction(ir::Opcode::call, span);
+        call.callee = *callee;
+        call.operands = { left->id, right->id };
+        call.result = makeValue(type, ir::ValueCategory::value);
+        const auto result = *call.result;
+        emit(std::move(call));
+        recordValue(result, ValueOwnership::trivial);
+        if (equal) return result;
+        const auto no = emitBoolLiteral(false, span);
+        return emitValue(ir::ComparePredicate::equal, type, ir::ValueCategory::value, { result.id, no.id }, span);
     }
 
     bool isString(typing::TypeId type) const {
@@ -3506,6 +3565,7 @@ private:
             targetSymbol->name == "utf8") {
             return lowerStringUtf8(expression);
         }
+        if (const auto builtin = lowerBuiltinEqualsRequirement(expression, targetSymbol)) return *builtin;
         const auto calleeId = calledFunction(expression, *target, targetSymbol);
         std::vector<ir::Parameter> divergingParameters;
         if (!calleeId.has_value()) {
@@ -3595,6 +3655,42 @@ private:
         return finishCall(expression, std::move(instruction), std::move(arguments), consumedArguments);
     }
 
+    // `t.equals(other: u)` in an instance whose `T` is a builtin conformer (decision 0029): the builtin `==`, since
+    // the compiler's conformances have no witness method. Returns nothing for any other call.
+    std::optional<std::optional<ir::Value>> lowerBuiltinEqualsRequirement(
+            const syntax::CallExprSyntax::Ptr& expression, const semantic::Symbol* targetSymbol) {
+        const auto requirement = model->equatableRequirement();
+        if (targetSymbol == nullptr || !requirement.has_value() || targetSymbol->id != *requirement ||
+            expression->callee->kind != syntax::Kind::memberExpr || expression->arguments.size() != 1) {
+            return std::nullopt;
+        }
+        const auto base = std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)->base;
+        const auto baseType = typeOf(base);
+        const auto type = typeOf(expression);
+        if (!baseType.has_value() || !type.has_value() || !model->isBuiltinEquatable(*baseType)) return std::nullopt;
+        return lowerBuiltinBinary(equalEqual, base, expression->arguments[0]->value, *type, expression->span);
+    }
+
+    // The IR function of `requirement`'s witness for `base`: an instance when the witness is declared in a generic
+    // type (decision 0022), else the witness's own function.
+    std::optional<ir::FunctionId> witnessFunction(typing::TypeId base, semantic::SymbolId requirement) {
+        const auto witness = model->witness(base, requirement);
+        if (!witness.has_value()) return std::nullopt;
+        if (model->genericParameters(*witness) != nullptr) {
+            const auto* receiver = model->types().type(base);
+            if (receiver == nullptr) return std::nullopt;
+            const auto instance = model->instanceIndex(*witness, receiver->arguments);
+            if (!instance.has_value() || *instance >= instanceFunctions.size() ||
+                instanceFunctions[*instance] == ir::invalidFunctionId) {
+                return std::nullopt;
+            }
+            return instanceFunctions[*instance];
+        }
+        const auto found = functions.find(*witness);
+        if (found == functions.end()) return std::nullopt;
+        return found->second;
+    }
+
     // The IR function a direct call reaches: an instance for a call of a generic function, the
     // witness for a requirement call on a type parameter (decision 0021), else the target.
     std::optional<ir::FunctionId> calledFunction(
@@ -3617,22 +3713,7 @@ private:
         if (owner != nullptr && owner->kind == semantic::SymbolKind::protocol &&
             expression->callee->kind == syntax::Kind::memberExpr) {
             const auto base = typeOf(std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)->base);
-            const auto witness = base.has_value() ? model->witness(*base, target) : std::nullopt;
-            if (!witness.has_value()) return std::nullopt;
-            if (model->genericParameters(*witness) != nullptr) {
-                // A witness declared in a generic type is an instance of the receiver's arguments.
-                const auto* receiver = model->types().type(*base);
-                if (receiver == nullptr) return std::nullopt;
-                const auto instance = model->instanceIndex(*witness, receiver->arguments);
-                if (!instance.has_value() || *instance >= instanceFunctions.size() ||
-                    instanceFunctions[*instance] == ir::invalidFunctionId) {
-                    return std::nullopt;
-                }
-                return instanceFunctions[*instance];
-            }
-            const auto found = functions.find(*witness);
-            if (found == functions.end()) return std::nullopt;
-            return found->second;
+            return base.has_value() ? witnessFunction(*base, target) : std::nullopt;
         }
         return demandFunction(target);
     }

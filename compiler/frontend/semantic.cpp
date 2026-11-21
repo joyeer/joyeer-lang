@@ -35,6 +35,7 @@ std::optional<SymbolId> SemanticModel::roleSymbol(LibraryRole role) const {
         case LibraryRole::arrayType: return arraySymbol_;
         case LibraryRole::dictType: return dictSymbol_;
         case LibraryRole::dictEntry: return dictEntrySymbol_;
+        case LibraryRole::equatable: return equatableSymbol_;
         default: return std::nullopt;
     }
 }

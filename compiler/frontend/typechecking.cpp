@@ -59,6 +59,7 @@ const char* collectionRoleName(semantic::LibraryRole role) {
         case semantic::LibraryRole::stringEqual: return "string_equal";
         case semantic::LibraryRole::stringOrder: return "string_order";
         case semantic::LibraryRole::stringUtf8: return "string_utf8";
+        case semantic::LibraryRole::equatable: return "equatable";
         default: return "unknown";
     }
 }
@@ -977,6 +978,46 @@ std::optional<semantic::SymbolId> TypeCheckedModel::copyableProtocol() const {
 bool TypeCheckedModel::isValueDiscarded(const syntax::NodePtr& node) const {
     const auto id = semanticModelValue->nodeId(node);
     return id.has_value() && discardedValues.contains(*id);
+}
+
+std::optional<semantic::SymbolId> TypeCheckedModel::equatableProtocol() const {
+    return semanticModelValue->roleSymbol(semantic::LibraryRole::equatable);
+}
+
+std::optional<semantic::SymbolId> TypeCheckedModel::equatableRequirement() const {
+    const auto protocol = equatableProtocol();
+    const auto* symbol = protocol.has_value() ? semanticModelValue->symbol(*protocol) : nullptr;
+    if (symbol == nullptr || !symbol->memberScope.has_value()) return std::nullopt;
+    const auto* members = semanticModelValue->scope(*symbol->memberScope);
+    if (members == nullptr) return std::nullopt;
+    const auto found = members->values.find("equals");
+    if (found == members->values.end()) return std::nullopt;
+    return found->second;
+}
+
+bool TypeCheckedModel::isBuiltinEquatable(TypeId type) const {
+    const auto* record = typeContext.type(type);
+    if (record == nullptr) return false;
+    switch (record->kind) {
+        case TypeKind::voidType:
+        case TypeKind::integer:
+        case TypeKind::boolean:
+        case TypeKind::string:
+        case TypeKind::uint8:
+        case TypeKind::int8:
+        case TypeKind::int16:
+        case TypeKind::int32:
+        case TypeKind::int64:
+        case TypeKind::uint16:
+        case TypeKind::uint32:
+        case TypeKind::uint64:
+        case TypeKind::unsignedInteger:
+        case TypeKind::float32:
+        case TypeKind::float64:
+            return true;
+        default:
+            return false;
+    }
 }
 
 std::optional<TypeId> TypeCheckedModel::layoutIntrinsicType(const syntax::NodePtr& node) const {
@@ -2133,6 +2174,7 @@ private:
                 report(TypeCheckingDiagnosticId::reservedProtocolName, parameter->name->span,
                        "'Copyable' is reserved for the builtin protocol (spec 20.5)");
             }
+            if (parameter->name != nullptr) rejectEquatableName(parameter->name, parameter->span);
             std::vector<semantic::SymbolId> protocols;
             for (const auto& constraint : parameter->constraints) {
                 if (!checkProtocolReference(constraint)) continue;
@@ -2207,10 +2249,20 @@ private:
         return first;
     }
 
+    // `Equatable` names the prelude protocol in every constraint (spec 20.2, 20.13): no user type or type parameter
+    // may take the name. The compiler-bundled declaration is exempt.
+    void rejectEquatableName(const Token::Ptr& name, SourceSpan span) {
+        if (name == nullptr || name->rawValue != "Equatable" || model->semanticModelValue->isPreludeSource(span)) return;
+        report(TypeCheckingDiagnosticId::reservedProtocolName, name->span,
+               "'Equatable' is reserved for the protocol of '==' and '!=' (spec 20.13)",
+               "choose another name; 'Equatable' in a constraint always means the prelude protocol");
+    }
+
     void resolveProtocol(const syntax::ProtocolDeclSyntax::Ptr& declaration) {
         const auto name = declaration->name == nullptr ? std::string() : declaration->name->rawValue;
-        if (name == "Copyable" || name == "Display" || name == "Equatable" || name == "Comparable" ||
-            name == "Any") {
+        if ((name == "Copyable" || name == "Display" || name == "Equatable" || name == "Comparable" ||
+             name == "Any") &&
+            !model->semanticModelValue->isPreludeSource(declaration->span)) {
             report(TypeCheckingDiagnosticId::reservedProtocolName,
                    declaration->name == nullptr ? declaration->span : declaration->name->span,
                    "'" + name + "' is reserved and cannot be declared (spec 20.2)",
@@ -2402,6 +2454,14 @@ private:
                 continue;
             }
             listed.push_back(*referenced);
+            if (const auto equatable = model->equatableProtocol();
+                equatable.has_value() && *referenced == *equatable && model->isLinear(subject)) {
+                report(TypeCheckingDiagnosticId::invalidConformance, conformance->span,
+                       "the linear type '" + typeSymbol->name + "' cannot conform to 'Equatable' (spec 20.13.3)",
+                       "a linear value must be ended exactly once, and its value equality has no meaning; compare "
+                       "a field instead");
+                continue;
+            }
             if (module != typeSymbol->moduleId && module != protocol->moduleId) {
                 report(TypeCheckingDiagnosticId::orphanConformance, conformance->span,
                        "a conformance of '" + typeSymbol->name + "' to '" + protocol->name +
@@ -2484,6 +2544,8 @@ private:
         if (type == model->typeContext.errorType()) return true;
         const auto copyable = model->copyableProtocol();
         if (copyable.has_value() && protocol == *copyable) return model->isCopyable(type);
+        const auto equatable = model->equatableProtocol();
+        if (equatable.has_value() && protocol == *equatable && model->isBuiltinEquatable(type)) return true;
         const auto* record = model->typeContext.type(type);
         if (record == nullptr) return false;
         if (record->kind == TypeKind::typeParameter) {
@@ -3700,6 +3762,7 @@ private:
     void resolveStructure(const syntax::StructDeclSyntax::Ptr& declaration) {
         const auto structure = model->semanticModelValue->declaredSymbol(declaration);
         if (!structure.has_value()) return;
+        rejectEquatableName(declaration->name, declaration->span);
         for (const auto& attribute : declaration->attributes) {
             const auto name = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
             if ((name == "compiler_role" || name == "compiler_transfer") &&
@@ -3747,6 +3810,7 @@ private:
     void resolveEnumeration(const syntax::EnumDeclSyntax::Ptr& declaration) {
         const auto enumeration = model->semanticModelValue->declaredSymbol(declaration);
         if (!enumeration.has_value()) return;
+        rejectEquatableName(declaration->name, declaration->span);
         for (const auto& attribute : declaration->attributes) {
             const auto name = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
             if ((name == "compiler_role" || name == "compiler_transfer") &&
@@ -4559,6 +4623,13 @@ private:
     }
 
     // Result type of `left op right`, or nullopt if the operands are invalid.
+    // Whether `type` conforms to `Equatable` (spec 20.13.3). Without the prelude protocol only the builtin
+    // conformers do.
+    bool isEquatable(TypeId type) const {
+        const auto equatable = model->equatableProtocol();
+        return equatable.has_value() ? satisfies(type, *equatable) : model->isBuiltinEquatable(type);
+    }
+
     std::optional<TypeId> binaryResult(TokenKind op, TypeId left, TypeId right) {
         switch (op) {
             case plus:
@@ -4595,18 +4666,9 @@ private:
                 break;
             case equalEqual:
             case notEqual:
-                // A noncopyable value (a task handle, a handle with `deinit`) cannot be compared: the
-                // comparison would have to copy it.
-                // Function types have no equality: identity is not stable across optimization
-                // (spec 2.3.1).
-                if (left == right && left != model->typeContext.voidType() && model->isCopyable(left) &&
-                    !containsFunctionType(left) &&
-                    !model->typeContext.mentionsTypeParameter(left) &&
-                    model->typeContext.type(left) != nullptr &&
-                    model->typeContext.type(left)->kind != TypeKind::enumeration &&
-                    model->typeContext.type(left)->kind != TypeKind::structure) {
-                    return model->typeContext.boolType();
-                }
+                // Equality is defined through `Equatable` (decision 0029, spec 20.13): both operands have one
+                // type that conforms. Equality only borrows, so a noncopyable conformer compares too.
+                if (left == right && isEquatable(left)) return model->typeContext.boolType();
                 break;
             case andAnd:
             case orOr:
@@ -4644,10 +4706,29 @@ private:
         }
 
         const auto op = expression->op == nullptr ? invalid : expression->op->kind;
-        if (const auto result = binaryResult(op, left, right); result.has_value()) return *result;
+        if (const auto result = binaryResult(op, left, right); result.has_value()) {
+            if ((op == equalEqual || op == notEqual) && !model->isBuiltinEquatable(left)) {
+                validateEqualityExclusivity(expression);
+            }
+            return *result;
+        }
 
         reportInvalidOperator(expression->op, { left, right }, expression->span);
         return model->typeContext.errorType();
+    }
+
+    // `a == b` on a conformer other than a builtin is analyzed like the call `a.equals(other: b)`: the left
+    // operand stays borrowed while the right is evaluated (spec 20.13.2), so the right may not write or move it.
+    void validateEqualityExclusivity(const syntax::BinaryExprSyntax::Ptr& expression) {
+        std::vector<CallAccess> accesses;
+        if (const auto path = storagePath(expression->left)) {
+            collectSubscriptIndexAccesses(expression->left, accesses);
+            accesses.push_back(CallAccess { *path, syntax::AccessEffect::borrowing, expression->left->span, true });
+        } else {
+            collectEvaluationAccesses(expression->left, accesses);
+        }
+        collectEvaluationAccesses(expression->right, accesses);
+        validateCallExclusivity(accesses);
     }
 
     void reportInvalidOperator(
@@ -4672,8 +4753,27 @@ private:
                                [this](TypeId operand) { return model->typeContext.isOptional(operand); })
                     ? "compare with 'match', for example 'match x { .None => true, .Some(_) => false }' for 'x == nil'"
                     : "compare with 'match', for example 'match x { .Ok(_) => ..., .Err(_) => ... }'";
+        } else if (equality && operands.size() == 2 && operands[0] == operands[1]) {
+            help = equatableHelp(operands[0]);
         }
         report(TypeCheckingDiagnosticId::invalidOperatorOperands, span, std::move(message), std::move(help));
+    }
+
+    // Why `type` has no `==`, and what would give it one (spec 20.13).
+    std::optional<std::string> equatableHelp(TypeId type) const {
+        const auto* record = model->typeContext.type(type);
+        if (record == nullptr) return std::nullopt;
+        const auto name = model->typeContext.displayName(type);
+        if (record->kind == TypeKind::typeParameter) {
+            return "add 'Equatable' to the constraint of '" + name + "', as in '<" + name + ": Equatable>'";
+        }
+        const auto* symbol = model->semanticModelValue->symbol(record->symbol);
+        if ((record->kind == TypeKind::structure || record->kind == TypeKind::enumeration) && symbol != nullptr &&
+            symbol->libraryRole == semantic::LibraryRole::none && !model->semanticModelValue->isPreludeSource(symbol->span)) {
+            return "'" + name + "' does not conform to 'Equatable'; declare 'extension " + symbol->name +
+                    ": Equatable { func equals(other: " + symbol->name + "): Bool { ... } }'";
+        }
+        return "'" + name + "' does not conform to 'Equatable' (spec 20.13)";
     }
 
     TypeId commonType(TypeId left, TypeId right, SourceSpan mismatchSpan) {

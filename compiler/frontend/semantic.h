@@ -97,6 +97,8 @@ enum class LibraryRole {
     stringEqual,
     stringOrder,
     stringUtf8,
+    // The prelude protocol `Equatable` that `==` and `!=` bind to (decision 0029, spec 20.13).
+    equatable,
 };
 
 enum class CallableKind {
@@ -248,6 +250,7 @@ private:
     // the switch `[K: V]` stays builtin, so a prelude without them is valid.
     std::optional<SymbolId> dictSymbol_;
     std::optional<SymbolId> dictEntrySymbol_;
+    std::optional<SymbolId> equatableSymbol_;
     ScopeId fileScope_ = invalidScopeId;
 
     std::vector<syntax::NodePtr> nodes_;
