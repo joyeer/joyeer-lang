@@ -334,11 +334,25 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "llvm-backend;debug-info;optimization"
     )
 
-    # Derived Equatable witnesses call other witnesses; every such call carries a debug location (decision 0029).
+    # Derived Equatable witnesses call other witnesses; every such call carries a debug location (decision 0029). The
+    # container fixture adds witnesses located in the role prelude and the presence test.
     foreach(variant IN ITEMS "O0Dwarf;-O0;-gdwarf" "O2Dwarf;-O2;-gdwarf" "O0CodeView;-O0;-gfull;-gcodeview")
         list(GET variant 0 suffix)
         list(SUBLIST variant 1 -1 arguments)
         list(JOIN arguments ";" compiler_arguments)
+        add_test(NAME LLVMBackendContainerEqualityDebug${suffix}Validation
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DCLANG=${JOYEER_CLANG_EXECUTABLE}
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/equatable_containers.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-container-equality-${suffix}.ll
+                        "-DCOMPILER_ARGS=${compiler_arguments}"
+                        "-DEXPECTED_IR_PATTERNS=!llvm.dbg.cu;!DILocation"
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyCompilerLLVMOutput.cmake
+        )
+        set_tests_properties(LLVMBackendContainerEqualityDebug${suffix}Validation PROPERTIES
+                LABELS "llvm-backend;debug-info;equatable"
+        )
         add_test(NAME LLVMBackendDerivedEqualityDebug${suffix}Validation
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
@@ -1601,6 +1615,19 @@ false
 true
 false
 false
+"
+            0 1 2 3)
+    # Equality borrows: noncopyable array elements and a compared temporary are each destroyed once (decision 0029).
+    add_joyeer_native_regression(
+            E2EEquatableOwnership equatable_ownership
+            "3
+1
+2
+1
+false
+false
+end
+7
 "
             0 1 2 3)
     # String operations through the collections prelude's String roles (decision 0028 stage 3), one expected

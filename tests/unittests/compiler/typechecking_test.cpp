@@ -3613,8 +3613,13 @@ TEST_F(TypeCheckingTest, FunctionTypesCannotBeKeysConstantsOrNeverParameters) {
 TEST_F(TypeCheckingTest, GenericCallsUseWitnessesAndCacheTransitiveInstances) {
     check(readFixture("type-checking/generics.joyeer"));
     ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
-    ASSERT_EQ(checking.model->conformances().size(), 1u);
-    EXPECT_EQ(checking.model->conformances()[0].witnesses.size(), 1u);
+    // The role prelude's `Optional` and `Result` conformances to `Equatable` (decision 0029) are not the fixture's.
+    std::vector<joyeer::typing::Conformance> conformances;
+    for (const auto& conformance : checking.model->conformances()) {
+        if (!resolution.model->isPreludeSource(conformance.span)) conformances.push_back(conformance);
+    }
+    ASSERT_EQ(conformances.size(), 1u);
+    EXPECT_EQ(conformances[0].witnesses.size(), 1u);
     ASSERT_EQ(checking.model->instances().size(), 2u);
     std::vector<std::string> names;
     for (const auto& instance : checking.model->instances()) names.push_back(instance.name);
@@ -4421,7 +4426,10 @@ protected:
         const auto userParse = joyeer::parser::Parser(userSource->tokens).parse();
         ASSERT_TRUE(userParse.succeeded()) << joyeer::parser::dump(userParse.diagnostics);
 
-        roleSource = std::make_shared<SourceFile>(roles);
+        // The collections prelude constrains `arrayEqual` by `Equatable` (decision 0029), so every replacement role
+        // prelude declares it too.
+        roleSource = std::make_shared<SourceFile>(
+                roles + "@compiler_role(equatable)\npublic protocol Equatable {\n    func equals(other: Self): Bool\n}\n");
         lexer.parse(roleSource);
         ASSERT_TRUE(lexerDiagnostics.errors.empty());
         for (auto& token : roleSource->tokens) token->span.sourceId = 1;
@@ -4959,4 +4967,39 @@ TEST_F(TypeCheckingTest, RecursiveTypesConformThroughArrays) {
           "struct Right {\n    var items: [Left]\n    var id: Int\n}\nextension Right: Equatable {}\n"
           "func f(t: Tree, j: Json, l: Left): Bool { return t == t && j != j && l == l }\n");
     EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+// Review findings on plan 0012 phase 4: help that never suggests a conformance that exists or cannot exist, the
+// `.Some` hint for `opt == 5`, and the non-optional operand of `nil`.
+TEST_F(TypeCheckingTest, ContainerHelpNamesTheComponentWithoutSuggestingAnImpossibleConformance) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("struct Box<T> {\n    var value: T\n}\nextension Box<T>: Equatable {}\n"
+          "func f(a: Box<(Int): Int>?): Bool { return a == a }\n");
+    EXPECT_FALSE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_EQ(joyeer::typing::dump(checking.diagnostics).find("extension Box"), std::string::npos)
+            << joyeer::typing::dump(checking.diagnostics);
+    check("struct Holder {\n    var runs: [(Int): Int]\n}\nextension Holder: Equatable {}\n");
+    EXPECT_TRUE(hasDiagnosticNamed(checking, "type-checking.non-equatable-member"))
+            << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_EQ(joyeer::typing::dump(checking.diagnostics).find("give '[(Int): Int]' a conformance"), std::string::npos)
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func f(opt: Int?): Bool { return opt == 5 }\n");
+    EXPECT_TRUE(diagnosticHelpContains(checking, Id::invalidOperatorOperands, ".Some("))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, NilAgainstANonOptionalSaysTheOperandIsNotOptional) {
+    check("func f(n: Int): Bool { return n == nil }\n");
+    EXPECT_FALSE(checking.succeeded());
+    EXPECT_NE(joyeer::typing::dump(checking.diagnostics).find("not optional"), std::string::npos)
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, NoneOfAUserEnumIsOrdinaryEquality) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("enum State {\n    None,\n    Some,\n}\nextension State: Equatable {}\n"
+          "func f(s: State, o: State?): Bool { return s == .None && o == .None && o == nil }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check("enum State {\n    None,\n    Some,\n}\nfunc f(s: State): Bool { return s == .None }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidOperatorOperands)) << joyeer::typing::dump(checking.diagnostics);
 }

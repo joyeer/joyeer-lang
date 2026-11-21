@@ -2514,4 +2514,27 @@ TEST_F(SemanticAnalysisTest, APresenceTestOnALinearTemporaryDropsIt) {
             << joyeer::analysis::dump(result.diagnostics);
 }
 
+// A presence test on a linear place borrows the place (spec 20.13.4): neither it nor the `nil` is dropped.
+TEST_F(SemanticAnalysisTest, APresenceTestOnALinearPlaceIsAccepted) {
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func run(): Int {\n"
+                     "    let t: Token? = .Some(mint())\n"
+                     "    if t == nil { return 0 }\n"
+                     "    if t != .None { let n = 1 }\n"
+                     "    return match consume t { .Some(k) => consume k.finish(), .None => 0 }\n"
+                     "}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+// `consume recv.take()` is an owned temporary too: comparing it drops it.
+TEST_F(SemanticAnalysisTest, APresenceTestOnAConsumedMemberCallResultDropsIt) {
+    analyzeToolchain(std::string(linearPrelude) +
+                     "struct Holder {\n    var t: Token?\n"
+                     "    consuming func take(): Token? {\n        return consume self.t\n    }\n}\n"
+                     "func run(h: consuming Holder): Bool {\n    return (consume h.take()) == nil\n}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
 } // namespace
