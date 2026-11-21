@@ -1,6 +1,6 @@
 # 0012: Equality through `Equatable`
 
-- Status: in progress (updated 2026-11-21); phase 1 is done (decision 0029 accepted, spec amended); phase 2 is next
+- Status: in progress (updated 2026-11-21); phases 1 and 2 are done (builtin and hand-written equality); phase 3 is next
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0024](../decisions/0024-library-optional-and-result.md) (rejects `==` on `Optional`/`Result`),
@@ -81,22 +81,51 @@ types it cannot compile (0024, "Equality is rejected").
 
 ### Phase 2: builtin types and the operator
 
-- [ ] Write failing tests:
-  - type-checking stage fixtures for every accepted and rejected `==` form, including those that
-    0024 rejects today;
+- [x] Write failing tests:
+  - type-checking stage fixtures for every accepted and rejected `==` form of this phase (the forms
+    0024 rejects, on `Optional` and `Result`, move to phase 4);
   - GoogleTests for conformance lookup and the scalar fast path.
-- [ ] Make `Equatable` a compiler-known protocol bound by a closed prelude role, like 0024, not by
-  its name. State its requirement.
-- [ ] Give builtin conformances to the integer types, `Bool`, `UInt8`, `Float`, `Double` and `String`.
+  Evidence: e70e44b (17 of 20 observed failing first), 8be2a99 (review findings, observed failing
+  first); `TypeCheckingTest.Equatable*`, `*Equality*`, `IRLoweringTest.LowersEqualityToTheBuiltin*`,
+  `EqualityReachesGenericWitnessInstances*`, `E2EEquatableBuiltins` and `E2EEquatableWitnessInstances`
+  at -O0 to -O3, `TypeGenericEqualityUnconstrained`, `TypeEquatableLinear`.
+- [x] Make `Equatable` a compiler-known protocol bound by a closed prelude role, like 0024, not by
+  its name. State its requirement. Evidence: 952c0e7; `lib/Runtime/roles.joyeer` declares
+  `@compiler_role(equatable) public protocol Equatable { func equals(other: Self): Bool }`, bound by
+  `SemanticModel::roleSymbol(LibraryRole::equatable)`.
+- [x] Give builtin conformances to the integer types, `Bool`, `UInt8`, `Float`, `Double` and `String`.
   Keep their current lowering, so code size and speed do not change: the scalars to the `compare`
   opcode, and `String` to the prelude's `string_equal` role call. Decide whether `String`'s witness is
-  that role function or a new one that wraps it.
-- [ ] Replace the kind test in `binaryResult` with conformance lookup. Keep `invalid-operator-operands`
-  and add help naming `Equatable`.
-- [ ] Accept `==` on `T` when the constraint lists `Equatable` (§20.5). Lower it to the witness after
-  monomorphization.
+  that role function or a new one that wraps it. Evidence: `TypeCheckedModel::isBuiltinEquatable`
+  (also `Void`); builtins have no witness method, so `String` keeps the `string_equal` call and
+  `t.equals(other:)` on a builtin instance lowers to the builtin `==`
+  (`LowersEqualityToTheBuiltinOperationOrTheWitness`: `generic<Int>` has one `compare` and no call).
+  Lowering is unchanged for non-generic builtin code; the speed gate is phase 4's benchmark.
+- [x] Replace the kind test in `binaryResult` with conformance lookup. Keep `invalid-operator-operands`
+  and add help naming `Equatable`. Evidence: 952c0e7, ed38353 (help names only what the compiler
+  accepts); `EqualityHelpNeverSuggestsAConformanceTheCompilerRejects`.
+- [x] Accept `==` on `T` when the constraint lists `Equatable` (§20.5). Lower it to the witness after
+  monomorphization. Evidence: 952c0e7, ed38353 (the witness instance is required like a call of
+  `equals`); `generic<Money>`, `same<Box<String>>` and `Box<T>.matches` call their witnesses.
+- [x] Hand-written conformances of user types, and `==` on them borrowing both operands (§20.13.2),
+  brought forward from phase 3 because generic `==` needs them. Evidence:
+  `AHandWrittenEquatableConformanceGivesEqualityAndSatisfiesTheConstraint`,
+  `ANoncopyableConformerComparesByBorrowing`, `NonBuiltinEqualityHoldsItsLeftOperandAcrossTheRight`,
+  `NonBuiltinEqualityRejectsAMoveOfTheLeftOperandInsideTheRight`.
+- [x] Type-system and IR/backend reviews of this phase. Evidence: both found the same high issue (a
+  generic type's witness instance never required by `==`) and medium and low ones; all fixed in
+  ed38353 with tests in 8be2a99, except the two items added below.
+- [x] Debug and Release CTest. Evidence: at ed38353 on Windows x64, Debug 2074 of 2074 and Release 2073
+  of 2073. `scripts/validate.py` (with `fern test`) waits for phase 5.
+- [ ] Check the shape of the role prelude's `Equatable` in `validatePreludeContracts` (one borrowing
+  `equals(other: Self): Bool`, one declaration with the role), as for the other roles. Found by the
+  type-system review; today a malformed bundle is found only by a failed lookup.
 
 ### Phase 3: derived conformances
+
+- [ ] Type an operand without a type of its own (`nil`, `.Red`, `[]`) against the other operand on
+  either side, and stop passing the enclosing expected type (§20.13.2), so `.Red == c` works with a
+  derived conformance. Today `nil == x` and `.Red == c` still type the left operand first.
 
 - [ ] Accept `extension S: Equatable {}` with no body on a user struct or enum, and derive memberwise
   (or case-then-payload) equality. Reject it when a field or payload is not `Equatable`, naming the
@@ -167,6 +196,10 @@ types may not; conformances stay in the type's module.
 - Existential `any Equatable`.
 
 ## Progress log
+
+- 2026-11-21: Phase 2 done (e70e44b tests, 952c0e7 implementation, 8be2a99 and ed38353 review findings).
+  Hand-written conformances came forward from phase 3; the reviews added the prelude-shape check
+  (phase 2) and symmetric operand typing (phase 3). Debug and Release CTest pass.
 
 - 2026-11-21: The user accepted 0029 as revised. Amended chapters 2, 5, 12 and 20 (new §20.13, marked
   not implemented), Appendix C (`prelude_protocol`) and 0024. Phase 1 is done; phase 2 starts with

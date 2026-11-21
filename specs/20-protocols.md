@@ -730,9 +730,11 @@ no memory-safety claim about an address held across a reallocation.
 
 ### 20.13 `Equatable`
 
-[Decision 0029](../docs/decisions/0029-equatable.md). **Implementation status:** specified, not yet
-implemented ([plan 0012](../docs/plan/0012-equatable.md)); until it is, the compiler accepts `==` and `!=`
-only on the builtin scalars and `String`.
+[Decision 0029](../docs/decisions/0029-equatable.md). **Implementation status:** in part
+([plan 0012](../docs/plan/0012-equatable.md)). Implemented: the protocol, the builtin conformers,
+hand-written conformances, `==` in generic code, and the access rules of §20.13.2. Not yet: derived
+conformances (§20.13.5), the conformances of `Optional`, `Result` and arrays (§20.13.3, items 3 and 4), the
+presence test (§20.13.4), and typing an operand without a type of its own on the left (§20.13.2).
 
 #### 20.13.1 The protocol
 
