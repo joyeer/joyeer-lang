@@ -137,6 +137,8 @@ private:
     // String roles and contracts are emitted only when generated code uses them.
     std::unordered_map<semantic::SymbolId, syntax::FunctionDeclSyntax::Ptr> deferredPreludeFunctions;
     std::vector<std::pair<syntax::FunctionDeclSyntax::Ptr, ir::FunctionId>> pendingPreludeBodies;
+    // The generated witness of each derived `Equatable` conformance the program needs (decision 0029).
+    std::unordered_map<typing::TypeId, ir::FunctionId> derivedEqualityFunctions;
     // Top-level `let` constants, evaluated at compile time. Scalars and strings
     // fold into each use; arrays become shared module constants.
     std::unordered_map<semantic::SymbolId, syntax::BindingDeclSyntax::Ptr> constantDeclarations;
@@ -780,6 +782,7 @@ private:
             collectFunction(method);
         });
         collectInstances(*root);
+        collectDerivedEqualities();
         linkDeinitializers(*root);
         evaluateConstants();
         // Lowering can collect more declarations without invalidating references to the functions.
@@ -1293,10 +1296,219 @@ private:
             lowerFunction(declaration, instanceFunctions[index]);
             leaveInstance();
         }
+        // A derived witness may call a String role, so these come before the deferred prelude bodies are lowered.
+        for (const auto type : model->derivedEqualities()) {
+            const auto found = derivedEqualityFunctions.find(type);
+            if (found != derivedEqualityFunctions.end()) lowerDerivedEquality(type, found->second);
+        }
         for (size_t index = 0; index < pendingPreludeBodies.size(); ++index) {
             const auto [declaration, id] = pendingPreludeBodies[index];
             lowerFunction(declaration, id);
         }
+    }
+
+    // One generated function per concrete type with a derived `Equatable` conformance (decision 0029, spec
+    // 20.13.5), named `Type.equals` and taking both values borrowed. It is not a member: only `==` reaches it.
+    void collectDerivedEqualities() {
+        for (const auto type : model->derivedEqualities()) {
+            const auto* record = model->types().type(type);
+            if (record == nullptr) continue;
+            ir::Function function;
+            function.id = static_cast<ir::FunctionId>(module->functions.size());
+            function.name = model->types().displayName(type, true) + ".equals";
+            const auto* owner = model->semanticModel()->symbol(record->symbol);
+            function.isRootModule = owner == nullptr || owner->isRootModule;
+            const auto declaration = owner != nullptr && owner->declaration.has_value()
+                    ? model->semanticModel()->node(*owner->declaration) : nullptr;
+            const auto span = declaration != nullptr ? declaration->span : SourceSpan {};
+            if (module->sourceFile(0) != nullptr && declaration != nullptr) {
+                function.debugScope = debugScopeForNode(declaration, function.id);
+                function.debugLocation = ir::DebugLocation { span, true, function.debugScope };
+            }
+            for (const auto* name : { "self", "other" }) {
+                ir::Parameter parameter;
+                parameter.value = ir::Value {
+                    static_cast<ir::ValueId>(function.parameters.size()), type, ir::ValueCategory::value };
+                parameter.name = name;
+                parameter.span = span;
+                if (std::string(name) == "other") parameter.label = "other";
+                function.parameters.push_back(std::move(parameter));
+            }
+            function.resultType = model->types().boolType();
+            function.returnsValue = true;
+            function.entry = 0;
+            derivedEqualityFunctions.emplace(type, function.id);
+            module->functions.push_back(std::move(function));
+        }
+    }
+
+    // The body of a derived witness (spec 20.13.5): a struct compares its stored fields in declaration order; an
+    // enum dispatches on both tags and compares the payloads of equal tags. Each stops at the first pair that
+    // differs. The operands are borrowed, so nothing is copied or destroyed.
+    void lowerDerivedEquality(typing::TypeId type, ir::FunctionId functionId) {
+        currentFunctionId = functionId;
+        currentBlockId = 0;
+        slots.clear();
+        ownership.clear();
+        liveOwnedTemporaries.clear();
+        scopes.clear();
+        boundParameters.clear();
+        pushScope();
+        auto& function = currentFunction();
+        currentDebugScope = function.debugScope;
+        function.blocks.push_back(ir::BasicBlock { 0, "entry", {} });
+        nextValue = static_cast<ir::ValueId>(function.parameters.size());
+        const auto self = function.parameters[0].value;
+        const auto other = function.parameters[1].value;
+        const auto span = function.debugLocation.has_value() ? function.debugLocation->span : SourceSpan {};
+        recordValue(self, ValueOwnership::borrowed);
+        recordValue(other, ValueOwnership::borrowed);
+        std::optional<ir::BlockId> falseBlock;
+        const auto differs = [&]() {
+            if (!falseBlock.has_value()) falseBlock = createBlock("equals.differ");
+            return *falseBlock;
+        };
+        // Compares the members `extract(index)` yields, in order, and returns their verdict.
+        const auto compareMembers = [&](const std::vector<typing::TypeId>& types,
+                                        const std::function<std::pair<ir::Value, ir::Value>(size_t)>& extract) {
+            std::vector<size_t> compared;
+            for (size_t index = 0; index < types.size(); ++index) {
+                if (types[index] != model->types().neverType()) compared.push_back(index);
+            }
+            if (compared.empty()) {
+                emitDerivedReturn(emitBoolLiteral(true, span), span);
+                return;
+            }
+            for (size_t position = 0; position < compared.size(); ++position) {
+                const auto index = compared[position];
+                const auto [left, right] = extract(index);
+                const auto same = emitMemberEquality(left, right, types[index], span);
+                if (!same.has_value()) return;
+                if (position + 1 == compared.size()) {
+                    emitDerivedReturn(*same, span);
+                    return;
+                }
+                const auto next = createBlock("equals.next");
+                emitConditionalBranch(*same, next, differs(), span);
+                switchToBlock(next);
+            }
+        };
+
+        const auto structure = std::find_if(module->structures.begin(), module->structures.end(),
+                [type](const auto& candidate) { return candidate.type == type; });
+        const auto enumeration = std::find_if(module->enumerations.begin(), module->enumerations.end(),
+                [type](const auto& candidate) { return candidate.type == type; });
+        if (structure != module->structures.end()) {
+            // The hidden live flag of a struct with `deinit` has no source symbol and is not a member.
+            std::vector<ir::FieldDefinition> fields;
+            for (const auto& field : structure->fields) {
+                if (field.symbol != semantic::invalidSymbolId) fields.push_back(field);
+            }
+            std::vector<typing::TypeId> types;
+            for (const auto& field : fields) types.push_back(field.type);
+            compareMembers(types, [&](size_t index) {
+                const auto& field = fields[index];
+                return std::pair {
+                    emitValue(ir::Opcode::extractField, field.type, ir::ValueCategory::value, { self.id }, span,
+                              field.symbol, true),
+                    emitValue(ir::Opcode::extractField, field.type, ir::ValueCategory::value, { other.id }, span,
+                              field.symbol, true) };
+            });
+        } else if (enumeration != module->enumerations.end()) {
+            const auto cases = enumeration->cases;
+            const auto casePattern = [type](const ir::EnumCaseDefinition& enumCase) {
+                ir::Pattern pattern;
+                pattern.kind = ir::PatternKind::enumCase;
+                pattern.type = type;
+                pattern.symbol = enumCase.symbol;
+                for (const auto payloadType : enumCase.payloadTypes) {
+                    ir::Pattern wildcard;
+                    wildcard.kind = ir::PatternKind::wildcard;
+                    wildcard.type = payloadType;
+                    pattern.payloads.push_back(std::move(wildcard));
+                }
+                return pattern;
+            };
+            std::vector<ir::BlockId> caseBlocks;
+            auto dispatch = makeInstruction(ir::Opcode::switchPattern, span, true);
+            dispatch.operands = { self.id };
+            for (const auto& enumCase : cases) {
+                caseBlocks.push_back(createBlock("equals.case"));
+                dispatch.switchCases.push_back(ir::SwitchCase { casePattern(enumCase), caseBlocks.back() });
+            }
+            emit(std::move(dispatch));
+            for (size_t index = 0; index < cases.size(); ++index) {
+                switchToBlock(caseBlocks[index]);
+                const auto matched = createBlock("equals.same");
+                auto second = makeInstruction(ir::Opcode::switchPattern, span, true);
+                second.operands = { other.id };
+                second.switchCases.push_back(ir::SwitchCase { casePattern(cases[index]), matched });
+                ir::Pattern anything;
+                anything.kind = ir::PatternKind::wildcard;
+                anything.type = type;
+                second.switchCases.push_back(ir::SwitchCase { anything, differs() });
+                emit(std::move(second));
+                switchToBlock(matched);
+                const auto& enumCase = cases[index];
+                compareMembers(enumCase.payloadTypes, [&](size_t payload) {
+                    const auto left = emitExtractPayload(
+                            enumCase.payloadTypes[payload], self.id, enumCase.symbol, static_cast<int64_t>(payload), span);
+                    const auto right = emitExtractPayload(
+                            enumCase.payloadTypes[payload], other.id, enumCase.symbol, static_cast<int64_t>(payload), span);
+                    recordValue(left, ValueOwnership::borrowed);
+                    recordValue(right, ValueOwnership::borrowed);
+                    return std::pair { left, right };
+                });
+            }
+        } else {
+            report(DiagnosticId::missingType, span, "a derived 'Equatable' conformance has no concrete definition");
+        }
+        if (falseBlock.has_value()) {
+            switchToBlock(*falseBlock);
+            emitDerivedReturn(emitBoolLiteral(false, span), span);
+        }
+        scopes.clear();
+    }
+
+    void emitDerivedReturn(ir::Value value, SourceSpan span) {
+        auto instruction = makeInstruction(ir::Opcode::ret, span, true);
+        instruction.operands = { value.id };
+        emit(std::move(instruction));
+    }
+
+    // Equality of two borrowed member values in a derived witness: the builtin operation, or a call of the member
+    // type's own witness.
+    std::optional<ir::Value> emitMemberEquality(ir::Value left, ir::Value right, typing::TypeId type, SourceSpan span) {
+        const auto boolean = model->types().boolType();
+        if (type == model->types().voidType()) return emitBoolLiteral(true, span);
+        if (model->isBuiltinEquatable(type)) {
+            if (isString(type)) return emitStringOperator(equalEqual, left, right, boolean, span);
+            return emitValue(ir::ComparePredicate::equal, boolean, ir::ValueCategory::value, { left.id, right.id },
+                             span, std::nullopt, true);
+        }
+        const auto callee = equalityCallee(type);
+        if (!callee.has_value()) {
+            report(DiagnosticId::missingSymbol, span, "a member of a derived 'Equatable' conformance has no witness");
+            return std::nullopt;
+        }
+        auto call = makeInstruction(ir::Opcode::call, span, true);
+        call.callee = *callee;
+        call.operands = { left.id, right.id };
+        call.result = makeValue(boolean, ir::ValueCategory::value);
+        const auto result = *call.result;
+        emit(std::move(call));
+        recordValue(result, ValueOwnership::trivial);
+        return result;
+    }
+
+    // The function `==` calls for a conformer other than a builtin: its generated derived witness, or its
+    // hand-written witness (an instance for a generic type).
+    std::optional<ir::FunctionId> equalityCallee(typing::TypeId type) {
+        if (const auto found = derivedEqualityFunctions.find(type); found != derivedEqualityFunctions.end()) {
+            return found->second;
+        }
+        const auto requirement = model->equatableRequirement();
+        return requirement.has_value() ? witnessFunction(type, *requirement) : std::nullopt;
     }
 
     void lowerFunction(
@@ -1853,8 +2065,7 @@ private:
     std::optional<ir::Value> lowerWitnessEquality(
             const syntax::ExprPtr& leftOperand, const syntax::ExprPtr& rightOperand, typing::TypeId operandType,
             bool equal, typing::TypeId type, SourceSpan span) {
-        const auto requirement = model->equatableRequirement();
-        const auto callee = requirement.has_value() ? witnessFunction(operandType, *requirement) : std::nullopt;
+        const auto callee = equalityCallee(operandType);
         if (!callee.has_value()) {
             report(DiagnosticId::missingSymbol, span, "the 'Equatable' conformance has no witness to call");
             return std::nullopt;
@@ -3656,8 +3867,8 @@ private:
         return finishCall(expression, std::move(instruction), std::move(arguments), consumedArguments);
     }
 
-    // `t.equals(other: u)` in an instance whose `T` is a builtin conformer (decision 0029): the builtin `==`, since
-    // the compiler's conformances have no witness method. Returns nothing for any other call.
+    // `t.equals(other: u)` in an instance whose `T` is a builtin or derived conformer (decision 0029): the builtin
+    // `==` or the derived witness, since neither is a method. Returns nothing for any other call.
     std::optional<std::optional<ir::Value>> lowerBuiltinEqualsRequirement(
             const syntax::CallExprSyntax::Ptr& expression, const semantic::Symbol* targetSymbol) {
         const auto requirement = model->equatableRequirement();
@@ -3668,7 +3879,13 @@ private:
         const auto base = std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)->base;
         const auto baseType = typeOf(base);
         const auto type = typeOf(expression);
-        if (!baseType.has_value() || !type.has_value() || !model->isBuiltinEquatable(*baseType)) return std::nullopt;
+        if (!baseType.has_value() || !type.has_value()) return std::nullopt;
+        // A derived conformer has no `equals` method either; its generated witness stands in (decision 0029).
+        if (model->isDerivedEquatable(*baseType)) {
+            return lowerWitnessEquality(base, expression->arguments[0]->value, *baseType, true, *type,
+                                        expression->span);
+        }
+        if (!model->isBuiltinEquatable(*baseType)) return std::nullopt;
         return lowerBuiltinBinary(equalEqual, base, expression->arguments[0]->value, *type, expression->span);
     }
 

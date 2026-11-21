@@ -317,6 +317,7 @@ enum class TypeCheckingDiagnosticId {
     protocolUsedAsType,
     invalidProtocolMember,
     reservedProtocolName,
+    nonEquatableMember,
     invalidConformance,
     missingWitness,
     witnessMismatch,
@@ -344,6 +345,15 @@ struct Conformance {
     semantic::SymbolId protocol = semantic::invalidSymbolId;
     std::unordered_map<semantic::SymbolId, semantic::SymbolId> witnesses;
     SourceSpan span;
+    // A derived `Equatable` conformance (decision 0029, spec 20.13.5): no witness method; it holds for an instance
+    // when every member conforms.
+    bool derived = false;
+};
+
+// A stored field, or a payload of an enum case, that a derived `Equatable` conformance compares.
+struct EquatableMember {
+    std::string name;
+    TypeId type = invalidTypeId;
 };
 
 // A call of a generic function, with its inferred type arguments in parameter order. Inside another
@@ -465,6 +475,14 @@ public:
     // The compiler's own conformers (spec 20.13.3, item 1): the integer types, `Bool`, `UInt8`, `Float`,
     // `Double`, `String` and `Void`. Their `==` is a builtin operation, never a witness call.
     [[nodiscard]] bool isBuiltinEquatable(TypeId type) const;
+    // The `Equatable` conformance that covers `type`, if any, and whether it is derived (spec 20.13.5).
+    [[nodiscard]] const Conformance* equatableConformance(TypeId type) const;
+    [[nodiscard]] bool isDerivedEquatable(TypeId type) const;
+    // The members a derived conformance compares, in order: a struct's stored fields, or every payload of every case
+    // of an enum. Their types are `type`'s instance of the declared ones.
+    [[nodiscard]] std::vector<EquatableMember> equatableMembers(TypeId type) const;
+    // The concrete types whose derived `Equatable` witness the program needs, found with the instances.
+    [[nodiscard]] const std::vector<TypeId>& derivedEqualities() const { return derivedEqualityList; }
     // The type argument of the layout intrinsic call `node` (spec 20.12.5), as written; it may mention
     // type parameters that each instance substitutes.
     [[nodiscard]] std::optional<TypeId> layoutIntrinsicType(const syntax::NodePtr& node) const;
@@ -526,6 +544,8 @@ private:
     // The validated String role functions of the collections prelude (decision 0028 stage 3), by role.
     std::unordered_map<semantic::LibraryRole, semantic::SymbolId> stringRoles;
     std::vector<Conformance> conformanceList;
+    std::vector<TypeId> derivedEqualityList;
+    std::unordered_set<TypeId> derivedEqualitySet;
     std::vector<Instance> instanceList;
     std::map<std::pair<semantic::SymbolId, std::vector<TypeId>>, size_t> instanceIndices;
 };
