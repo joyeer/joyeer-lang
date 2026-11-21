@@ -5003,3 +5003,13 @@ TEST_F(TypeCheckingTest, NoneOfAUserEnumIsOrdinaryEquality) {
     check("enum State {\n    None,\n    Some,\n}\nfunc f(s: State): Bool { return s == .None }\n");
     EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidOperatorOperands)) << joyeer::typing::dump(checking.diagnostics);
 }
+
+// `consume recv.take()` is not an operand of `==`: type checking rejects the marker there, so a linear temporary
+// produced that way never reaches a presence test (spec 20.13.4).
+TEST_F(TypeCheckingTest, AConsumedMemberCallIsNotAnEqualityOperand) {
+    check("linear struct Token {\n    var id: Int\n}\n"
+          "struct Holder {\n    var t: Token?\n    consuming func take(): Token? {\n        return consume self.t\n    }\n}\n"
+          "func run(h: consuming Holder): Bool {\n    return (consume h.take()) == nil\n}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+}

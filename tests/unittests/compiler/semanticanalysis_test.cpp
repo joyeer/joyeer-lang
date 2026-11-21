@@ -2527,14 +2527,4 @@ TEST_F(SemanticAnalysisTest, APresenceTestOnALinearPlaceIsAccepted) {
             << joyeer::analysis::dump(result.diagnostics);
 }
 
-// `consume recv.take()` is an owned temporary too: comparing it drops it.
-TEST_F(SemanticAnalysisTest, APresenceTestOnAConsumedMemberCallResultDropsIt) {
-    analyzeToolchain(std::string(linearPrelude) +
-                     "struct Holder {\n    var t: Token?\n"
-                     "    consuming func take(): Token? {\n        return consume self.t\n    }\n}\n"
-                     "func run(h: consuming Holder): Bool {\n    return (consume h.take()) == nil\n}\n");
-    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
-            << joyeer::analysis::dump(result.diagnostics);
-}
-
 } // namespace
