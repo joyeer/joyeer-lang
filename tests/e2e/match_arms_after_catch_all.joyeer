@@ -1,5 +1,18 @@
 // Arms after a catch-all arm never run: the first matching arm wins, and
 // a wildcard or binding arm matches every value.
+struct Handle {
+    var id: Int
+
+    deinit() {
+        print(value: self.id)
+    }
+}
+
+enum Slot {
+    Full(Handle),
+    Empty,
+}
+
 func pick(value: Int?): Int {
     return match value {
         .Some(1) => 10,
@@ -25,6 +38,30 @@ func label(note: String?): String {
     }
 }
 
+func take(handle: consuming Handle): Int {
+    return handle.id + 100
+}
+
+// The dead arm's move never happens: `handle` lives to the end of the function.
+func keep(flag: Bool): Int {
+    let handle = Handle(id: 7)
+    let chosen = match flag {
+        _ => 1,
+        true => take(handle: consume handle),
+    }
+    print(value: chosen)
+    return chosen
+}
+
+// The dead arm's binding never takes the payload: it is destroyed with the scrutinee.
+func open(slot: consuming Slot): Int {
+    return match consume slot {
+        .Empty => 0,
+        _ => 5,
+        .Full(handle) => handle.id,
+    }
+}
+
 func main() {
     print(value: pick(value: .Some(1)))
     print(value: pick(value: .Some(5)))
@@ -33,4 +70,7 @@ func main() {
     print(value: describe(flag: false))
     print(value: label(note: .None))
     print(value: label(note: .Some("kept" + "!")))
+    print(value: keep(flag: true))
+    print(value: open(slot: consume .Full(Handle(id: 9))))
+    print(value: open(slot: consume .Empty))
 }
