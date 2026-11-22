@@ -1,0 +1,7 @@
+// A literal pattern is not promoted into an Optional scrutinee; write `.Some(1)`.
+func pick(value: Int?): Int {
+    return match value {
+        1 => 10,
+        _ => 0,
+    }
+}

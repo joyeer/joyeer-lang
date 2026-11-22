@@ -4078,6 +4078,88 @@ TEST_F(TypeCheckingTest, NilOnTheLeftOfEqualityNeedsContextUnlessAnOptionalIsExp
             << joyeer::typing::dump(checking.diagnostics);
 }
 
+// A literal pattern compares a value of the literal's own type (spec 7, decision 0030): it is not
+// promoted into an Optional the way an expression is, so it never matches an Optional scrutinee.
+TEST_F(TypeCheckingTest, ALiteralPatternIsNotPromotedIntoAnOptionalScrutinee) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "func f(v: Int?): Int { return match v { 1 => 10, _ => 0 } }\n",
+            "func f(v: Int64?): Int { return match v { 1 => 10, _ => 0 } }\n",
+            "func f(v: Double?): Int { return match v { 1.5 => 10, _ => 0 } }\n",
+            "func f(v: String?): Int { return match v { \"a\" => 10, _ => 0 } }\n",
+            "func f(v: Bool?): Int { return match v { true => 10, _ => 0 } }\n",
+            "func f(v: UInt8?): Int { return match v { b'a' => 10, _ => 0 } }\n",
+            "func f(v: Int?): Int { return match v { nil => 0, 2 => 10, _ => 0 } }\n",
+            "enum Reading { Value(Int?), Missing }\n"
+            "func f(r: Reading): Int { return match r { .Value(1) => 10, _ => 0 } }\n",
+            "func f(v: Optional<Int?>): Int { return match v { .Some(1) => 10, _ => 0 } }\n",
+            "func f(v: Double?): Int { return match v { 1 => 10, _ => 0 } }\n",
+            "enum Box<T> { Value(T), Empty }\n"
+            "func f(b: Box<Int?>): Int { return match b { .Value(1) => 1, _ => 0 } }\n",
+        }) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_FALSE(checking.succeeded());
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::typeMismatch))
+                << joyeer::typing::dump(checking.diagnostics);
+        EXPECT_TRUE(diagnosticHelpContains(checking, Id::typeMismatch, ".Some("))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+// The `.Some(...)` help appears only where wrapping the literal would type-check.
+TEST_F(TypeCheckingTest, ALiteralPatternOfAnotherTypeGetsNoSomeHelp) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "func f(v: String?): Int { return match v { 1 => 10, _ => 0 } }\n",
+            "func f(v: String): Int { return match v { 1 => 10, _ => 0 } }\n",
+            "func f(v: Optional<Int?>): Int { return match v { 1 => 10, _ => 0 } }\n",
+        }) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::typeMismatch))
+                << joyeer::typing::dump(checking.diagnostics);
+        EXPECT_FALSE(diagnosticHelpContains(checking, Id::typeMismatch, ".Some("))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+// A literal that does not fit the Optional's payload still says that a bare literal never matches
+// an Optional, besides reporting the literal itself.
+TEST_F(TypeCheckingTest, AnInvalidLiteralOnAnOptionalReportsBothProblems) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "func f(v: Int8?): Int { return match v { 300 => 10, _ => 0 } }\n",
+            "func f(v: Int?): Int { return match v { 1.5 => 10, _ => 0 } }\n",
+        }) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidNumericLiteral))
+                << joyeer::typing::dump(checking.diagnostics);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::typeMismatch))
+                << joyeer::typing::dump(checking.diagnostics);
+        EXPECT_EQ(checking.diagnostics.size(), 2u) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, ALiteralPatternMatchesItsOwnTypeAndInsideSome) {
+    for (const auto* text : {
+            "func f(v: Int?): Int { return match v { .Some(1) => 10, nil => 1, _ => 0 } }\n",
+            "func f(v: Int64): Int { return match v { 1 => 10, _ => 0 } }\n",
+            "func f(v: String?): Int { return match v { .Some(\"a\") => 10, _ => 0 } }\n",
+            "func f(v: Bool?): Int { return match v { .Some(true) => 1, .Some(false) => 0, .None => 2 } }\n",
+            "func f(v: UInt8?): Int { return match v { .Some(b'a') => 10, _ => 0 } }\n",
+            "func f(v: Optional<Int?>): Int { return match v { .Some(.Some(1)) => 10, .Some(nil) => 1, _ => 0 } }\n",
+            "enum Box<T> { Value(T), Empty }\n"
+            "func f(b: Box<Int>): Int { return match b { .Value(1) => 1, _ => 0 } }\n",
+            "func f(v: Double?): Int { return match v { .Some(1) => 10, _ => 0 } }\n",
+        }) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
 // Guard: a user `Optional` shadows the name, never the `T?` sugar.
 TEST_F(TypeCheckingTest, UserOptionalDoesNotCaptureTheOptionalSugar) {
     check("enum Optional<T: Copyable> { Present(T) }\n"

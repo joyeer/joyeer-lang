@@ -203,6 +203,11 @@ The current checker validates:
   is bounded to 4096 specializations and depth 256; an otherwise unproved
   pathological matrix conservatively requires a catch-all arm.
 
+  A literal pattern must have exactly the scrutinee's type (spec §7.1.3,
+  decision 0030); the expression rule that promotes a value into an Optional
+  or converts it to `Any` is not used for patterns, because lowering tests the
+  scrutinee itself against the literal.
+
 A method call checks its receiver like an argument: the written marker
 (`&` or `consume`, or none) must match the method's receiver effect, a
 mutating receiver must be writable, a consuming receiver must be consumable,

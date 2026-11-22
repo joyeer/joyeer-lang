@@ -91,6 +91,28 @@ again until it is reinitialized, though payloads no arm bound stay in its storag
 reassigned or leaves scope. **Implementation status:**
 implemented for enum payloads, including nested enum patterns.
 
+### 7.1.3 Literal pattern
+
+A literal pattern matches a value equal to the literal. The scrutinee must have
+the literal's own type: an integer literal takes any numeric scrutinee type and
+a floating literal a floating-point one (§1.5), and a string, Bool or byte literal
+has type `String`, `Bool` or `UInt8`. The implicit wrapping of a value into an Optional (§2.4) does not apply
+to patterns, so a literal never matches an Optional scrutinee; match the case
+instead:
+
+```joyeer
+func pick(value: Int?): Int {
+  return match value {
+    .Some(1) => 10,     // `1 => 10` is type-checking.type-mismatch
+    _ => 0,
+  }
+}
+```
+
+`nil` is the pattern for the `None` case of an Optional scrutinee. Any other
+literal whose type differs from the scrutinee's is `type-checking.type-mismatch`
+([decision 0030](../docs/decisions/0030-literal-patterns-are-not-promoted.md)).
+
 ### 7.2 Alternative patterns
 
 A match arm may list several comma-separated patterns; the arm runs when

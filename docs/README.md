@@ -118,6 +118,7 @@ in the spec.
 | [0027](decisions/0027-library-dict.md) | `Dict` as a library struct |
 | [0028](decisions/0028-ir-opcode-set.md) | A smaller IR opcode set described by one table (accepted, in implementation) |
 | [0029](decisions/0029-contracts-and-owned-host-resources.md) | Prelude contracts, host queries and clocks, and noncopyable native resource owners |
+| [0030](decisions/0030-literal-patterns-are-not-promoted.md) | Literal patterns match only their own type; no implicit Optional promotion (accepted, implemented) |
 
 ## Conventions
 
