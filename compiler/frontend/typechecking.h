@@ -440,6 +440,13 @@ public:
     [[nodiscard]] std::optional<TypeId> dictEntryType(TypeId dictionary) const;
     // The `key` and `value` field symbols of the validated `dict_entry` struct, which a literal stores through.
     [[nodiscard]] std::optional<std::array<semantic::SymbolId, 2>> dictEntryFields() const;
+    // Whether the value of expression `node` is discarded (spec 4.1.1): an expression statement, the
+    // trailing expression of a block whose value is unused (a `Void` or `Never` function body, a
+    // `while` body, the branch of an `if` without `else`), a branch of an `if` or `match` whose value
+    // is discarded, or the inside of a discarded parenthesized expression. A discarded value is never
+    // needed as an owned one, so lowering neither copies a place there nor gives such an `if` or
+    // `match` a result.
+    [[nodiscard]] bool isValueDiscarded(const syntax::NodePtr& node) const;
     // Consuming parameters declared with exactly the role's owned type parameter accept owned arguments.
     [[nodiscard]] bool isOwnedArgumentContext(semantic::SymbolId function, size_t parameter) const;
     // The consuming method that ends a linear value of `type`. With `leaf`, arrays are looked through and the
@@ -495,6 +502,7 @@ private:
     std::unordered_map<semantic::SymbolId, std::vector<semantic::SymbolId>> constraintLists;
     std::unordered_map<semantic::NodeId, GenericCall> genericCalls;
     std::unordered_map<semantic::NodeId, TypeId> layoutIntrinsicTypes;
+    std::unordered_set<semantic::NodeId> discardedValues;
     // A validated role-bound collection declaration (decisions 0025, 0026, 0027): its structure role, the type
     // parameters it owns elements of, in declaration order, and the method of each method role the compiler calls.
     struct CollectionRole {

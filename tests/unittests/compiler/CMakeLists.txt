@@ -1045,6 +1045,10 @@ if(JOYEER_CLANG_EXECUTABLE)
     add_joyeer_native_regression(
             E2EDeinitMoves deinit_moves
             "10\n20\n30\n40\n5\n50\n60\n7\n6\n4\n3\n2\n1\n")
+    # A discarded noncopyable place is read, never copied; a discarded `if` or `match` has no result.
+    add_joyeer_native_regression(
+            E2EDiscardedNoncopyableTail discarded_noncopyable_tail
+            "1\n10\n21\n22\n2\n30\n3\n40\n41\n4\n41\n42\n4\n51\n5\n50\n51\n5\n1\n")
     add_joyeer_native_regression(
             E2EArrayRemoveLast array_remove_last
             "3\n2\n-1\nbb\n1\n2\n3\n2\n1\n")

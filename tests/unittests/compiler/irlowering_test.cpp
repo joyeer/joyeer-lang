@@ -458,6 +458,46 @@ TEST_F(IRLoweringTest, ReturningAnOwningLocalOfANoncopyableTypeMovesIt) {
     EXPECT_EQ(opcodeCount(make, joyeer::ir::Opcode::take), 1u);
 }
 
+// A discarded value is read, not acquired: a noncopyable place there lowers without a copy, and an
+// `if` or `match` whose value is discarded has no result slot to store a branch into.
+TEST_F(IRLoweringTest, ADiscardedNoncopyablePlaceIsNotCopied) {
+    const std::string prelude =
+            "struct Handle {\n    var fd: Int\n    deinit() { }\n}\n"
+            "func open(): Handle { return Handle(fd: 1) }\n";
+    const std::vector<std::string> discarded {
+        "func f(flag: Bool) { let a = open()\n if flag { a } }\n",
+        "func f() { let a = open()\n a }\n",
+        "func f(a: Handle) { a }\n",
+        "func f(flag: Bool) { let a = open()\n while flag { a } }\n",
+        "func f(flag: Bool) { let a = open()\n if flag { a } else { open() } }\n",
+        "func f(flag: Bool) { let a = open()\n if flag { a } else { open() }\n print(value: 1) }\n",
+        "func f(flag: Bool, other: Bool) { let a = open()\n"
+        " if flag { open() } else if other { a } else { open() } }\n",
+        "func f(flag: Bool, other: Bool) { let a = open()\n if flag { if other { a } else { open() } } }\n",
+        "func f(flag: Bool) { let a = open()\n (if flag { a } else { open() }) }\n",
+        "func f(n: Int) { let a = open()\n match n { 1 => a, _ => open() } }\n",
+        "func f(n: Int) { let a = open()\n match n { 1 => { a }, _ => open() }\n print(value: 1) }\n",
+    };
+    for (const auto& body : discarded) {
+        SCOPED_TRACE(body);
+        ASSERT_NO_FATAL_FAILURE(lower(prelude + body));
+        ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+        const auto& f = function("f");
+        EXPECT_EQ(opcodeCount(f, joyeer::ir::Opcode::copyValue), 0u);
+        EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+    }
+}
+
+// The instance of a generic body whose discarded `if` names its type-parameter places.
+TEST_F(IRLoweringTest, ADiscardedTypeParameterPlaceIsNotCopiedInAnInstance) {
+    ASSERT_NO_FATAL_FAILURE(lower("struct Handle {\n    var fd: Int\n    deinit() { }\n}\n"
+                                  "func g<T>(flag: Bool, a: T, b: T) { if flag { a } else { b } }\n"
+                                  "func f() { let a = Handle(fd: 1)\n let b = Handle(fd: 2)\n"
+                                  " g(flag: true, a: a, b: b) }\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
 TEST_F(IRLoweringTest, ArrayRemoveLastLowersToALibraryCallWithAnOwnedOptionalResult) {
     ASSERT_NO_FATAL_FAILURE(lower("func pop(): Int? {\n"
                                   "    var numbers: [Int] = [1, 2]\n"

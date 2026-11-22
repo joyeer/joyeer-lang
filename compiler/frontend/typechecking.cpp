@@ -974,6 +974,11 @@ std::optional<semantic::SymbolId> TypeCheckedModel::copyableProtocol() const {
     return found->second;
 }
 
+bool TypeCheckedModel::isValueDiscarded(const syntax::NodePtr& node) const {
+    const auto id = semanticModelValue->nodeId(node);
+    return id.has_value() && discardedValues.contains(*id);
+}
+
 std::optional<TypeId> TypeCheckedModel::layoutIntrinsicType(const syntax::NodePtr& node) const {
     const auto id = semanticModelValue->nodeId(node);
     if (!id.has_value()) return std::nullopt;
@@ -4016,7 +4021,11 @@ private:
         currentReturnType = signature == nullptr
             ? model->typeContext.errorType()
             : signature->result;
-        checkBlock(function->body);
+        // A `Void` or `Never` body discards its trailing expression, as IR lowering does.
+        checkBlock(function->body, std::nullopt,
+                currentReturnType.has_value() &&
+                        (*currentReturnType == model->typeContext.voidType() ||
+                         *currentReturnType == model->typeContext.neverType()));
         // A trailing expression is the function's value; one that names a noncopyable place copies it.
         if (function->body != nullptr && !function->body->items.empty() &&
             currentReturnType.has_value() &&
@@ -4030,13 +4039,17 @@ private:
         currentFunction = previousFunction;
     }
 
+    // Every item but the last is a statement whose value is discarded; the last is discarded too when
+    // the block's own value is (`discarded`).
     TypeId checkBlock(const syntax::BlockExprSyntax::Ptr& block,
-            std::optional<TypeId> expected = std::nullopt) {
+            std::optional<TypeId> expected = std::nullopt,
+            bool discarded = false) {
         if (block == nullptr) return model->typeContext.errorType();
         TypeId result = model->typeContext.voidType();
         for (size_t index = 0; index < block->items.size(); ++index) {
-            const auto itemType = checkNode(block->items[index],
-                    index + 1 == block->items.size() ? expected : std::nullopt);
+            const auto isLast = index + 1 == block->items.size();
+            if (!isLast || discarded) markValueDiscarded(block->items[index]);
+            const auto itemType = checkNode(block->items[index], isLast ? expected : std::nullopt);
             if (result != model->typeContext.neverType()) result = itemType;
         }
         recordNodeType(block, result);
@@ -4059,7 +4072,7 @@ private:
                     condition,
                     model->typeContext.boolType(),
                     statement->condition->span);
-            checkBlock(statement->body);
+            checkBlock(statement->body, std::nullopt, true);
             --loopDepth;
             recordNodeType(node, model->typeContext.voidType());
             return model->typeContext.voidType();
@@ -4241,7 +4254,8 @@ private:
                 break;
             }
             case syntax::Kind::blockExpr:
-                result = checkBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression), expected);
+                result = checkBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression), expected,
+                        model->isValueDiscarded(expression));
                 break;
             case syntax::Kind::ifExpr: {
                 const auto conditional = std::static_pointer_cast<syntax::IfExprSyntax>(expression);
@@ -4251,15 +4265,19 @@ private:
                     condition,
                     model->typeContext.boolType(),
                     conditional->condition->span);
-                const auto thenType = checkBlock(conditional->thenBranch, expected);
+                // An `if` without `else` is `Void`, so its branch value is always discarded.
+                const auto discarded = model->isValueDiscarded(expression);
+                const auto thenType = checkBlock(conditional->thenBranch, expected,
+                        discarded || conditional->elseBranch == nullptr);
                 if (conditional->elseBranch == nullptr) {
                     result = model->typeContext.voidType();
                     break;
                 }
+                if (discarded) markValueDiscarded(conditional->elseBranch);
                 const auto elseType = checkExpression(conditional->elseBranch, expected).value_or(
                     model->typeContext.errorType());
                 result = commonType(thenType, elseType, conditional->elseBranch->span);
-                if (producesBranchValue(result)) {
+                if (!discarded && producesBranchValue(result)) {
                     requireNoImplicitCopy(conditional->thenBranch, thenType);
                     requireNoImplicitCopy(conditional->elseBranch, elseType);
                 }
@@ -6586,10 +6604,23 @@ private:
         }
     }
 
+    // Records that the value of `node` is discarded (TypeCheckedModel::isValueDiscarded), looking
+    // through parentheses. Must run before `node` is checked, which reads the mark.
+    void markValueDiscarded(const syntax::NodePtr& node) {
+        auto current = node;
+        while (current != nullptr && isExpressionKind(current->kind)) {
+            if (const auto id = model->semanticModelValue->nodeId(current); id.has_value()) {
+                model->discardedValues.insert(*id);
+            }
+            if (current->kind != syntax::Kind::parenthesizedExpr) break;
+            current = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(current)->expression;
+        }
+    }
+
     // Whether an `if` or `match` of this type stores its branch values into a result, which IR
-    // lowering does for every type but `Void` and `Never`: a branch that names a noncopyable place
-    // then copies it, wherever the expression appears (a borrowing argument, a member base or a
-    // statement as much as a binding). An error type has already been reported.
+    // lowering does for every type but `Void` and `Never` unless the value is discarded: a branch
+    // that names a noncopyable place then copies it, wherever the expression appears (a borrowing
+    // argument or a member base as much as a binding). An error type has already been reported.
     bool producesBranchValue(TypeId type) const {
         return type != model->typeContext.voidType() && type != model->typeContext.neverType() &&
                 type != model->typeContext.errorType();
@@ -6958,11 +6989,13 @@ private:
         coverage.reserve(expression->arms.size());
         std::optional<TypeId> result;
         bool validPatterns = true;
+        const auto discarded = model->isValueDiscarded(expression);
 
         for (const auto& arm : expression->arms) {
             const auto previousDiagnostics = diagnostics.size();
             coverage.push_back(checkPattern(arm->pattern, scrutinee));
             validPatterns &= diagnostics.size() == previousDiagnostics;
+            if (discarded) markValueDiscarded(arm->body);
             const auto armType = checkExpression(arm->body, expected).value_or(
                     model->typeContext.errorType());
             recordNodeType(arm, armType);
@@ -6973,7 +7006,7 @@ private:
 
         if (validPatterns) checkMatchExhaustiveness(expression, scrutinee, coverage);
         requireOwnedScrutineeForMovedBindings(expression);
-        if (result.has_value() && producesBranchValue(*result)) {
+        if (!discarded && result.has_value() && producesBranchValue(*result)) {
             for (const auto& arm : expression->arms) {
                 requireNoImplicitCopy(arm->body, model->typeOf(arm->body));
             }
