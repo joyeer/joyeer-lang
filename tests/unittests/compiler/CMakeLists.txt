@@ -338,6 +338,10 @@ if(JOYEER_CLANG_EXECUTABLE)
     # container fixture adds witnesses located in the role prelude and the presence test.
     foreach(variant IN ITEMS "O0Dwarf;-O0;-gdwarf" "O2Dwarf;-O2;-gdwarf" "O0CodeView;-O0;-gfull;-gcodeview")
         list(GET variant 0 suffix)
+        # CodeView is a Windows native format: the compiler rejects -gcodeview elsewhere.
+        if(suffix STREQUAL "O0CodeView" AND NOT WIN32)
+            continue()
+        endif()
         list(SUBLIST variant 1 -1 arguments)
         list(JOIN arguments ";" compiler_arguments)
         add_test(NAME LLVMBackendContainerEqualityDebug${suffix}Validation
