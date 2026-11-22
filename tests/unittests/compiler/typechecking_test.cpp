@@ -5081,3 +5081,74 @@ TEST_F(TypeCheckingTest, APayloadIsNamedByItsCaseAndPosition) {
     EXPECT_NE(joyeer::typing::dump(checking.diagnostics).find("'Wrap.0'"), std::string::npos)
             << joyeer::typing::dump(checking.diagnostics);
 }
+
+namespace {
+
+// Whether any diagnostic's help contains `text` (the dump omits help).
+bool anyHelpContains(const joyeer::typing::TypeCheckingResult& checking, const std::string& text) {
+    return std::any_of(checking.diagnostics.begin(), checking.diagnostics.end(), [&](const auto& diagnostic) {
+        return diagnostic.help.has_value() && diagnostic.help->find(text) != std::string::npos;
+    });
+}
+
+}  // namespace
+
+// Final type-system review (plan 0012 phase 5): help that never suggests a rejected conformance, one report per
+// mistake, the cast regression, `Never` payloads, extension parameters, and generic struct initializers as operands.
+TEST_F(TypeCheckingTest, ADerivedMemberWhoseOwnConformanceFailsIsReportedOnce) {
+    check("struct A {\n    var run: (Int): Int\n}\nextension A: Equatable {}\n"
+          "struct B {\n    var a: A\n}\nextension B: Equatable {}\n");
+    EXPECT_EQ(std::count_if(checking.diagnostics.begin(), checking.diagnostics.end(), [](const auto& diagnostic) {
+        return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::nonEquatableMember;
+    }), 1) << joyeer::typing::dump(checking.diagnostics);
+    check("struct Box<T> {\n    var value: T\n}\n"
+          "struct Holder {\n    var box: Box<(Int): Int>\n}\nextension Holder: Equatable {}\n");
+    EXPECT_FALSE(anyHelpContains(checking, "give 'Box<(Int): Int>' a conformance"))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, EquatableConstraintHelpNeverSuggestsAnImpossibleExtension) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "func same<T: Equatable>(a: T, b: T): Bool { return a == b }\n"
+            "func square(value: Int): Int { return value }\nfunc run(): Bool { return same(a: square, b: square) }\n",
+            "func same<T: Equatable>(a: T, b: T): Bool { return a == b }\n"
+            "func run(d: [Int: Int]): Bool { return same(a: d, b: d) }\n",
+            "struct Box<T> {\n    var value: T\n}\nfunc same<T: Equatable>(a: T, b: T): Bool { return a == b }\n"
+            "func run(b: Box<Int>): Bool { return same(a: b, b: b) }\n",
+        }) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::unsatisfiedConstraint)) << joyeer::typing::dump(checking.diagnostics);
+        EXPECT_FALSE(anyHelpContains(checking, "extension (Int)"));
+        EXPECT_FALSE(anyHelpContains(checking, "extension [Int: Int]"));
+        EXPECT_FALSE(anyHelpContains(checking, "extension Box<Int>"));
+        EXPECT_TRUE(anyHelpContains(checking, "Equatable")) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, ACastIsAnOperandWithATypeOfItsOwn) {
+    check("func f(): Bool { return (1 as Float) == 0.5 }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, HelpCountsANeverPayloadAsConforming) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("enum Outcome {\n    Done(Int),\n    Impossible(Never),\n}\nfunc f(a: Outcome, b: Outcome): Bool { return a == b }\n");
+    EXPECT_TRUE(diagnosticHelpContains(checking, Id::invalidOperatorOperands, "extension Outcome: Equatable {}"))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, HelpForAnExtensionParameterPointsAtTheTypeDeclaration) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("struct Box<T> {\n    var value: T\n}\n"
+          "extension Box<U> {\n    func same(other: U): Bool { return self.value == other }\n}\n");
+    EXPECT_TRUE(diagnosticHelpContains(checking, Id::invalidOperatorOperands, "type's own declaration"))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AGenericStructInitializerIsTypedByTheOtherOperand) {
+    check("struct Box<T> {\n    var value: T\n}\nextension Box<T>: Equatable {}\n"
+          "func f(b: Box<UInt8>): Bool { return Box(value: 1) == b && b == Box(value: 1) }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
