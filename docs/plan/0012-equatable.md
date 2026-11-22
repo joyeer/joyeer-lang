@@ -1,6 +1,6 @@
 # 0012: Equality through `Equatable`
 
-- Status: in progress (updated 2026-11-21); phases 1 to 3 are done (builtin, hand-written and derived equality); phase 4 is next
+- Status: in progress (updated 2026-11-21); phases 1 to 4 are implemented (phase 4's benchmark is open); phase 5 (acceptance) is next
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0024](../decisions/0024-library-optional-and-result.md) (rejects `==` on `Optional`/`Result`),
@@ -144,9 +144,9 @@ types it cannot compile (0024, "Equality is rejected").
 - [x] End-to-end fixtures: compare structs, payload enums and generic instances; reject the
   non-conforming ones. Evidence: `E2EEquatableDerived` and `E2EEquatableDerivedEdges` at -O0 to -O3,
   and the -gdwarf/-gcodeview compiles of `equatable_derived`.
-- [ ] Recursive types: compare a recursive enum or struct. Blocked: `indirect` cases are not implemented
-  (the lexer rejects them), so recursion needs an array, which conforms in phase 4. The coinductive check
-  is in place.
+- [x] Recursive types: compare a recursive enum or struct. `indirect` cases are not implemented, so
+  recursion goes through arrays (phase 4). Evidence: `RecursiveTypesConformThroughArrays` (trees, JSON
+  enums, mutual recursion) and the `Tree` and `Json` cases of `E2EEquatableContainers`.
 - [x] Type-system and IR/backend reviews of this phase. Evidence: their findings (a stored-field
   default without its witness, a `-g` LLVM verification failure, `Never` operands, cascading
   diagnostics, exponential checks, operand typing, witnesses for uninstantiated bodies, help text)
@@ -156,15 +156,31 @@ types it cannot compile (0024, "Equality is rejected").
 
 ### Phase 4: Optional, Result and containers
 
-- [ ] Give the `optional` and `result` role enums the derived, payload-conditional conformance.
-  Remove 0024's rejection and its `match` help.
-- [ ] Lower `x == nil` and `x != nil` as a tag test for every optional, including one whose payload
-  is not `Equatable`, such as a function or a noncopyable type.
-- [ ] Give the role-bound library `Array<T>` conformance when `T` conforms, without reviving a compiler array
+- [x] Give the `optional` and `result` role enums the derived, payload-conditional conformance.
+  Remove 0024's rejection and its `match` help. Evidence: 51b9953 tests (11 observed failing), 872a1b2;
+  the role prelude's two empty `Equatable` extensions, the only extension the role enums admit;
+  `OptionalResultAndArraysConformWhenTheirComponentsDo`, `TypeOptionalEqualityRejected` and
+  `TypeResultEqualityRejected` now with non-conforming payloads; help names the payload (f984011).
+- [x] Lower `x == nil` and `x != nil` as a tag test for every optional, including one whose payload
+  is not `Equatable`, such as a function or a noncopyable type. Evidence: `NilComparisonTestsPresence*`,
+  `LowersContainerEqualityAndPresenceTests` (no call, one `switchPattern`), `APresenceTestOnALinearPlaceIsAccepted`,
+  `APresenceTestOnALinearTemporaryDropsIt`; `.None` and `nil` on either side.
+- [x] Give the role-bound library `Array<T>` conformance when `T` conforms, without reviving a compiler array
   kind or dispatching on the name `Array`. Decide library witness iteration versus a runtime element-compare
-  callback in the equality decision. Check `Dict` separately against the open question below.
-- [ ] End-to-end fixtures for `Int?`, `Point?`, `Result<Int, String>`, `[Int]`, `[[String]]`, `== nil`
-  on a function optional, and noncopyable payloads compared by borrowing.
+  callback in the equality decision. Check `Dict` separately against the open question below. Evidence:
+  library witness iteration, as 0029 decided: `@compiler_role(array_equal) arrayEqual<T: Equatable>` in
+  the collections prelude; `Dict` does not conform; `ArrayCharacterization.EqualityOfLibraryArrays*`.
+- [x] End-to-end fixtures for `Int?`, `Point?`, `Result<Int, String>`, `[Int]`, `[[String]]`, `== nil`
+  on a function optional, and noncopyable payloads compared by borrowing. Evidence:
+  `E2EEquatableContainers` and `E2EEquatableOwnership` (each element and temporary destroyed once) at
+  -O0 to -O3, and the -gdwarf/-gcodeview compiles of the containers fixture.
+- [x] Type-system and IR/backend reviews of this phase. Evidence: the IR review found nothing critical or
+  high; the type-system review's two high findings (presence test on a linear place, a consumed member
+  call) and its medium and low ones have tests in bf42aa7 and fixes in f984011; the consumed member call
+  was already rejected by type checking (0e45997). Not fixed here: the IR verifier accepts `switchPattern`
+  cases after a wildcard and non-exhaustive switches (older than this plan).
+- [x] Debug and Release CTest of phase 4. Evidence: at f984011 on Windows x64, Debug 2128 of 2128 and
+  Release 2127 of 2127.
 - [ ] Benchmark scalar, string and array equality in both profiles against the pre-change baseline.
 
 ### Phase 5: acceptance
@@ -214,6 +230,10 @@ types may not; conformances stay in the type's module.
 - Existential `any Equatable`.
 
 ## Progress log
+
+- 2026-11-22: Phase 4 implemented (51b9953 tests, 872a1b2, bf42aa7 and f984011 review findings).
+  Recursion through arrays closes phase 3's open item. A replacement role prelude must now declare
+  `Equatable`, which the collections prelude uses. The benchmark stays open.
 
 - 2026-11-21: Phase 3 implemented (c42dd76 tests, 4616d7c, 23d9945 implementation, 9c3c654 and
   5242c84 review findings). Recursive types wait for phase 4 arrays (no `indirect`). The full Debug run

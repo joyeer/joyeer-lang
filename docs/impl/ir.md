@@ -313,7 +313,11 @@ with the instances): a struct's `extractField`s each stored field (not the hidde
 and compares them in declaration order, an enum's `switchPattern`s on both tags and `extractPayload`s the
 payloads of equal tags; each `conditionalBranch`es to a shared `false` return at the first difference, and
 `Void` and `Never` members are skipped. Its instructions are located at the type's declaration in the
-function's root scope. No opcode is added.
+function's root scope. `Optional` and `Result` instances use the same generated witnesses (the role
+prelude's `Equatable` extensions are derived), and `[X] == [X]` calls the `arrayEqual` instance for `X`
+from the collections prelude. A presence test `x == nil` is a `switchPattern` on the borrowed optional
+into blocks that store `true` or `false` in a Bool slot, then a `load`; it calls nothing. No opcode is
+added.
 
 `&&` and `||` emit conditional right-hand blocks and Boolean merge slots.
 Their right operands and temporaries are evaluated only on the true-left and

@@ -1,6 +1,6 @@
 # 0029: Equality through `Equatable`
 
-- Status: accepted (2026-11-21, by the user, as revised after review); not yet implemented. The user chose explicit
+- Status: accepted (2026-11-21, by the user, as revised after review); implemented in plan 0012 phases 2 to 4 (2026-11-22), with the acceptance gates of phase 5 open. The user chose explicit
   opt-in, the requirement `equals(other:)`, `x == nil` as a presence test on any optional, and conformance for
   noncopyable but not linear types. The other answers are the author's, revised after a language-designer and a
   type-system review (see "Review"). Work is tracked in [plan 0012](../plan/0012-equatable.md).
