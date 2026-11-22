@@ -1060,7 +1060,7 @@ TEST(IRModelTest, RejectsDestroyingTrivialOrNonAddressValues) {
 // The rule of `switch_pattern` cases (docs/impl/ir.md section 4): every pattern's kind fits its type, a top-level
 // wildcard is the last case, and the cases cover every value of the scrutinee. Types 3 to 5 are `Never`, `Bool?`
 // and `Never?`, whose cases are `Some` (11) and `None` (12) of the optional declaration 10; types 6 to 9 are
-// `String`, `UInt8`, `Int8` and `Float64`.
+// `String`, `UInt8`, `Int8` and `Double`, and types 13 and 14 are `UInt64` and `Float`.
 Pattern anything(TypeId type) {
     Pattern pattern;
     pattern.type = type;
@@ -1093,7 +1093,9 @@ Module switchModule(TypeId scrutinee, const std::vector<Pattern>& patterns) {
     module.types.push_back(TypeName { 6, "String", joyeer::typing::TypeKind::string });
     module.types.push_back(TypeName { 7, "UInt8", joyeer::typing::TypeKind::uint8 });
     module.types.push_back(TypeName { 8, "Int8", joyeer::typing::TypeKind::int8 });
-    module.types.push_back(TypeName { 9, "Float64", joyeer::typing::TypeKind::float64 });
+    module.types.push_back(TypeName { 9, "Double", joyeer::typing::TypeKind::float64 });
+    module.types.push_back(TypeName { 13, "UInt64", joyeer::typing::TypeKind::uint64 });
+    module.types.push_back(TypeName { 14, "Float", joyeer::typing::TypeKind::float32 });
     module.enumerations.push_back(EnumerationDefinition {
         10, 4, "Bool?",
         { EnumCaseDefinition { 11, "Some", { 2 } }, EnumCaseDefinition { 12, "None", {} } },
@@ -1221,7 +1223,10 @@ TEST(IRModelTest, SwitchPatternAcceptsEveryPatternKindOnItsType) {
                 literal(PatternKind::integerLiteral, 8, -128), literal(PatternKind::integerLiteral, 8, 127),
                 anything(8) }) },
         { "String: \"a\"", switchModule(6, { textual(PatternKind::stringLiteral, 6, "a"), anything(6) }) },
-        { "Float64: 1.5", switchModule(9, { textual(PatternKind::floatingLiteral, 9, "1.5"), anything(9) }) },
+        { "Double: 1.5", switchModule(9, { textual(PatternKind::floatingLiteral, 9, "1.5"), anything(9) }) },
+        { "Float: 1.5", switchModule(14, { textual(PatternKind::floatingLiteral, 14, "1.5"), anything(14) }) },
+        // An unsigned literal arrives as its two's-complement bits: -1 is `UInt64`'s largest value.
+        { "UInt64: 18446744073709551615", switchModule(13, { literal(PatternKind::integerLiteral, 13, -1), anything(13) }) },
     };
     for (const auto& [what, module] : valid) {
         const auto verification = Verifier().verify(module);
@@ -1244,7 +1249,7 @@ TEST(IRModelTest, SwitchPatternRejectsAnIntegerLiteralOffAnIntegerTypeOrOutOfRan
         { "Bool?: 0", switchModule(4, { literal(PatternKind::integerLiteral, 4, 0), anything(4) }) },
         { "Bool: 1", switchModule(2, { literal(PatternKind::integerLiteral, 2, 1), anything(2) }) },
         { "String: 1", switchModule(6, { literal(PatternKind::integerLiteral, 6, 1), anything(6) }) },
-        { "Float64: 1", switchModule(9, { literal(PatternKind::integerLiteral, 9, 1), anything(9) }) },
+        { "Double: 1", switchModule(9, { literal(PatternKind::integerLiteral, 9, 1), anything(9) }) },
         { "UInt8: 256", switchModule(7, { literal(PatternKind::integerLiteral, 7, 256), anything(7) }) },
         { "UInt8: -1", switchModule(7, { literal(PatternKind::integerLiteral, 7, -1), anything(7) }) },
         { "Int8: 128", switchModule(8, { literal(PatternKind::integerLiteral, 8, 128), anything(8) }) },
@@ -1284,7 +1289,7 @@ TEST(IRModelTest, SwitchPatternRejectsAByteLiteralOffUInt8OrOutOfRange) {
 TEST(IRModelTest, SwitchPatternRejectsAFloatingLiteralOffAFloatingType) {
     expectPatternKindMismatch({
         { "Int: 1.5", switchModule(1, { textual(PatternKind::floatingLiteral, 1, "1.5"), anything(1) }) },
-        { "Float64: x", switchModule(9, { textual(PatternKind::floatingLiteral, 9, "x"), anything(9) }) },
+        { "Double: x", switchModule(9, { textual(PatternKind::floatingLiteral, 9, "x"), anything(9) }) },
     });
 }
 

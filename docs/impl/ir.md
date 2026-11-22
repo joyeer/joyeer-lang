@@ -394,12 +394,12 @@ be one the backend can test on that type, or the verifier reports `ir.type-misma
 
 | Pattern kind | Type | Value |
 |---|---|---|
-| wildcard | any | none |
+| wildcard | any type | none |
 | integer literal | a signed or unsigned integer type, `UInt8` included | fits the type's width (unsigned values as their two's-complement bits) |
 | Boolean literal | `Bool` | 0 or 1; the backend keeps only the low bit |
 | string literal | `String` | any text |
 | byte literal | `UInt8` | 0 to 255 |
-| floating literal | `Float32` or `Float64` | finite text that parses as that type |
+| floating literal | `Float` or `Double` | finite text that parses as that type |
 | enum case | an enumeration with that case | one payload pattern per case payload |
 
 The first matching case wins, and the case list obeys two rules the verifier enforces:
@@ -427,13 +427,17 @@ The first matching case wins, and the case list obeys two rules the verifier enf
 The LLVM backend lowers the high-level pattern list into tag and value tests in order. It
 branches to the first wildcard without testing further cases, and ends the tests with
 `unreachable`. That is dead for every switch the coverage check settled; past its budget the
-verifier trusts the producer, as it does for a type-checked `match`. Ending the tests with a
-`no switch case matched` panic instead would catch a producer bug past the budget, but it is
-not free at `-O2` for a covered switch: LLVM can no longer drop the last tag test, so an enum
-switch keeps one more compare and a cold panic block, a function that needed no stack frame
-gets one for the call, a branch-free `cmov` selection becomes branches, and the function loses
-`willreturn` and `nounwind`. Only a `Bool` switch, whose `i1` has no third value, compiles the
-same. The backend therefore keeps `unreachable`. It branches on a matching tag before
+verifier trusts the producer, as it does for a type-checked `match`. A producer bug past the
+budget is therefore undefined behaviour: at `-O2` LLVM uses the `unreachable` to drop the last
+test, so an unmatched value runs the last tested case. Ending the tests with a call to the
+runtime's `no switch case matched` panic instead would catch that bug, but it is not free at
+`-O2` for a covered switch without a wildcard (measured on x86-64 Windows with LLVM 22.1.8):
+LLVM can no longer drop the last tag test, so an enum switch keeps one more compare and a cold
+panic block, a function that needed no stack frame gets one for the call, a branch-free `cmov`
+selection becomes branches, and the function loses `willreturn` (and `nounwind`, since the
+backend does not declare `joyeer_panic` `nounwind`). A `Bool` switch, whose `i1` has no third
+value, and a switch that ends with a wildcard compile the same either way. The backend
+therefore keeps `unreachable`. It branches on a matching tag before
 interpreting payloads, and recursively short-circuits payload tests. Case lookup uses concrete enum type identity
 plus case symbol, including distinct builtin container instantiations.
 
@@ -480,8 +484,8 @@ after its operands (as `fits` has).
 
 Lowering returns an `ir-lowering.verification-failed` diagnostic when a modeled
 check fails, at the span of the instruction the error names (`ir::verificationErrorSpan`). An
-error that names no instruction, such as a duplicate identifier or a block without a
-terminator, has an empty span. Passing this verifier is not proof of source-level correctness or
+error that names no instruction, such as a duplicate type, function or block identifier or a
+block without a terminator, has an empty span. Passing this verifier is not proof of source-level correctness or
 validity of all subsequently emitted LLVM text. Native output additionally
 parses and verifies that text in the LLVM backend.
 
