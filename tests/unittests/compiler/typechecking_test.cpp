@@ -5127,8 +5127,10 @@ TEST_F(TypeCheckingTest, EquatableConstraintHelpNeverSuggestsAnImpossibleExtensi
     }
 }
 
+// `as` converts between integer types only (`1 as Float` is rejected, before and after `Equatable`). A cast has a type
+// of its own, so a literal on either side takes it; the compiler before `Equatable` rejected `1 == (1 as UInt8)`.
 TEST_F(TypeCheckingTest, ACastIsAnOperandWithATypeOfItsOwn) {
-    check("func f(): Bool { return (1 as Float) == 0.5 }\n");
+    check("func f(): Bool { return (1 as UInt8) == 1 && 1 == (1 as UInt8) && (300 as Int16) != 2 }\n");
     EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
 }
 
