@@ -4055,6 +4055,9 @@ TEST_F(TypeCheckingTest, ALiteralPatternIsNotPromotedIntoAnOptionalScrutinee) {
             "enum Reading { Value(Int?), Missing }\n"
             "func f(r: Reading): Int { return match r { .Value(1) => 10, _ => 0 } }\n",
             "func f(v: Optional<Int?>): Int { return match v { .Some(1) => 10, _ => 0 } }\n",
+            "func f(v: Double?): Int { return match v { 1 => 10, _ => 0 } }\n",
+            "enum Box<T> { Value(T), Empty }\n"
+            "func f(b: Box<Int?>): Int { return match b { .Value(1) => 1, _ => 0 } }\n",
         }) {
         SCOPED_TRACE(text);
         check(text);
@@ -4066,6 +4069,41 @@ TEST_F(TypeCheckingTest, ALiteralPatternIsNotPromotedIntoAnOptionalScrutinee) {
     }
 }
 
+// The `.Some(...)` help appears only where wrapping the literal would type-check.
+TEST_F(TypeCheckingTest, ALiteralPatternOfAnotherTypeGetsNoSomeHelp) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "func f(v: String?): Int { return match v { 1 => 10, _ => 0 } }\n",
+            "func f(v: String): Int { return match v { 1 => 10, _ => 0 } }\n",
+            "func f(v: Optional<Int?>): Int { return match v { 1 => 10, _ => 0 } }\n",
+        }) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::typeMismatch))
+                << joyeer::typing::dump(checking.diagnostics);
+        EXPECT_FALSE(diagnosticHelpContains(checking, Id::typeMismatch, ".Some("))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+// A literal that does not fit the Optional's payload still says that a bare literal never matches
+// an Optional, besides reporting the literal itself.
+TEST_F(TypeCheckingTest, AnInvalidLiteralOnAnOptionalReportsBothProblems) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "func f(v: Int8?): Int { return match v { 300 => 10, _ => 0 } }\n",
+            "func f(v: Int?): Int { return match v { 1.5 => 10, _ => 0 } }\n",
+        }) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidNumericLiteral))
+                << joyeer::typing::dump(checking.diagnostics);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::typeMismatch))
+                << joyeer::typing::dump(checking.diagnostics);
+        EXPECT_EQ(checking.diagnostics.size(), 2u) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
 TEST_F(TypeCheckingTest, ALiteralPatternMatchesItsOwnTypeAndInsideSome) {
     for (const auto* text : {
             "func f(v: Int?): Int { return match v { .Some(1) => 10, nil => 1, _ => 0 } }\n",
@@ -4074,6 +4112,9 @@ TEST_F(TypeCheckingTest, ALiteralPatternMatchesItsOwnTypeAndInsideSome) {
             "func f(v: Bool?): Int { return match v { .Some(true) => 1, .Some(false) => 0, .None => 2 } }\n",
             "func f(v: UInt8?): Int { return match v { .Some(b'a') => 10, _ => 0 } }\n",
             "func f(v: Optional<Int?>): Int { return match v { .Some(.Some(1)) => 10, .Some(nil) => 1, _ => 0 } }\n",
+            "enum Box<T> { Value(T), Empty }\n"
+            "func f(b: Box<Int>): Int { return match b { .Value(1) => 1, _ => 0 } }\n",
+            "func f(v: Double?): Int { return match v { .Some(1) => 10, _ => 0 } }\n",
         }) {
         SCOPED_TRACE(text);
         check(text);
