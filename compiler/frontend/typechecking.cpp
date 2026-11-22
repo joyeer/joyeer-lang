@@ -7058,8 +7058,7 @@ private:
             case syntax::Kind::literalPattern: {
                 const auto literal =
                         std::static_pointer_cast<syntax::LiteralPatternSyntax>(pattern);
-                const auto actual = patternLiteralType(literal->literal, expected);
-                requireLiteralPatternType(actual, expected, pattern->span);
+                checkLiteralPatternType(literal->literal, expected, pattern->span);
                 if (literal->literal != nullptr && literal->literal->kind == booleanLiteral) {
                     coverage.booleanLiteral = literal->literal->rawValue == Literals::TRUE;
                 }
@@ -7081,20 +7080,40 @@ private:
     // A literal pattern compares a value of exactly the literal's type (spec 7.1.3, decision 0030).
     // Unlike an expression it is neither promoted into an Optional nor converted to `Any`: lowering
     // tests the scrutinee itself against the literal, so the two types must be the same.
-    void requireLiteralPatternType(TypeId actual, TypeId expected, SourceSpan span) {
+    void checkLiteralPatternType(const Token::Ptr& literal, TypeId expected, SourceSpan span) {
         const auto error = model->typeContext.errorType();
-        if (actual == expected || actual == error || expected == error) return;
-        const auto actualName = model->typeContext.displayName(actual);
+        if (expected == error) return;
         const auto expectedName = model->typeContext.displayName(expected);
+        const auto* expectedType = model->typeContext.type(expected);
+        if (literal != nullptr && literal->kind != nilLiteral &&
+            model->typeContext.isOptional(expectedType)) {
+            // Type the literal against the payload: it reports a literal the payload cannot hold,
+            // and `.Some(...)` is suggested only where wrapping the literal would type-check.
+            const auto payload = expectedType->arguments.front();
+            if (payload == error) return;
+            const auto actual = patternLiteralType(literal, payload);
+            report(
+                    TypeCheckingDiagnosticId::typeMismatch,
+                    span,
+                    actual == error
+                            ? "a literal pattern cannot match a value of type '" + expectedName + "'"
+                            : "a literal pattern of type '" + model->typeContext.displayName(actual) +
+                                    "' cannot match a value of type '" + expectedName + "'",
+                    actual == payload
+                            ? "a literal pattern is not promoted into an Optional; write it inside "
+                              "'.Some(...)' to match a present value"
+                            : "a literal pattern is not promoted into an Optional");
+            return;
+        }
+        const auto actual = patternLiteralType(literal, expected);
+        if (actual == expected || actual == error) return;
+        const auto actualName = model->typeContext.displayName(actual);
         report(
                 TypeCheckingDiagnosticId::typeMismatch,
                 span,
                 "a literal pattern of type '" + actualName + "' cannot match a value of type '" +
                         expectedName + "'",
-                model->typeContext.isOptional(model->typeContext.type(expected))
-                        ? "a literal pattern is not promoted into an Optional; write it inside "
-                          "'.Some(...)' to match a present value"
-                        : "expected '" + expectedName + "' but found '" + actualName + "'");
+                "expected '" + expectedName + "' but found '" + actualName + "'");
     }
 
     TypeId patternLiteralType(const Token::Ptr& literal, TypeId expected) {

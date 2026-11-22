@@ -28,8 +28,9 @@ literal compared against an `Any` scrutinee, which no runtime type test can impl
 
 A literal pattern matches only a scrutinee of the literal's own type; an integer or floating literal
 takes the scrutinee's numeric type when it is one. No implicit Optional promotion or `Any` conversion
-applies in a pattern. A mismatch is `type-checking.type-mismatch`; on an Optional scrutinee the help
-says to write the literal inside `.Some(...)`.
+applies in a pattern. A mismatch is `type-checking.type-mismatch`. On an Optional scrutinee the
+literal is also typed against the Optional's payload: the help says to write it inside `.Some(...)`
+only when that would type-check, and a literal the payload cannot hold is reported as well.
 
 ## Consequences
 
@@ -40,7 +41,8 @@ says to write the literal inside `.Some(...)`.
   pattern. User code has no way to name `Any`, so the `Any` case is a guard for compiler-internal
   types rather than a user-visible change.
 - Tests: `TypeCheckingTest.ALiteralPatternIsNotPromotedIntoAnOptionalScrutinee`,
-  `TypeCheckingTest.ALiteralPatternMatchesItsOwnTypeAndInsideSome`, and the rejected fixture
+  `ALiteralPatternOfAnotherTypeGetsNoSomeHelp`, `AnInvalidLiteralOnAnOptionalReportsBothProblems`,
+  `ALiteralPatternMatchesItsOwnTypeAndInsideSome`, and the rejected fixture
   `tests/type-checking/err/optional_literal_pattern.joyeer`.
 - Option 2 can be added later without breaking any accepted program.
 
