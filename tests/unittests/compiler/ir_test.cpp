@@ -1057,4 +1057,147 @@ TEST(IRModelTest, RejectsDestroyingTrivialOrNonAddressValues) {
     EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch));
 }
 
+// The rule of `switch_pattern` cases (docs/impl/ir.md section 4): a top-level wildcard is the last case, and the
+// cases cover every value of the scrutinee. Types 3 to 5 are `Never`, `Bool?` and `Never?`, whose cases are
+// `Some` (11) and `None` (12) of the optional declaration 10.
+Pattern anything(TypeId type) {
+    Pattern pattern;
+    pattern.type = type;
+    return pattern;
+}
+
+Pattern enumCase(TypeId type, joyeer::semantic::SymbolId symbol, std::vector<Pattern> payloads = {}) {
+    Pattern pattern;
+    pattern.kind = PatternKind::enumCase;
+    pattern.type = type;
+    pattern.symbol = symbol;
+    pattern.payloads = std::move(payloads);
+    return pattern;
+}
+
+Pattern literal(PatternKind kind, TypeId type, int64_t value) {
+    Pattern pattern;
+    pattern.kind = kind;
+    pattern.type = type;
+    pattern.integerValue = value;
+    return pattern;
+}
+
+// `func pick(value: <scrutinee>)`, whose entry switches over `value` to returning blocks 1, 2, 3, ... in case order.
+Module switchModule(TypeId scrutinee, const std::vector<Pattern>& patterns) {
+    auto module = validAddModule();
+    module.types.push_back(TypeName { 3, "Never", joyeer::typing::TypeKind::never });
+    module.types.push_back(TypeName { 4, "Bool?", joyeer::typing::TypeKind::enumeration, 10, { 2 } });
+    module.types.push_back(TypeName { 5, "Never?", joyeer::typing::TypeKind::enumeration, 10, { 3 } });
+    module.enumerations.push_back(EnumerationDefinition {
+        10, 4, "Bool?",
+        { EnumCaseDefinition { 11, "Some", { 2 } }, EnumCaseDefinition { 12, "None", {} } },
+        EnumerationRole::optional, 0, 1,
+    });
+    module.enumerations.push_back(EnumerationDefinition {
+        10, 5, "Never?",
+        { EnumCaseDefinition { 11, "Some", { 3 } }, EnumCaseDefinition { 12, "None", {} } },
+        EnumerationRole::optional, 0, 1,
+    });
+    Function pick;
+    pick.id = 1;
+    pick.name = "pick";
+    pick.parameters = { Parameter { Value { 10, scrutinee, ValueCategory::value }, std::nullopt, "value", false, {} } };
+    pick.resultType = 0;
+    pick.entry = 0;
+    Instruction dispatch { Opcode::switchPattern, std::nullopt, { 10 } };
+    for (size_t index = 0; index < patterns.size(); ++index) {
+        dispatch.switchCases.push_back(SwitchCase { patterns[index], static_cast<BlockId>(index + 1) });
+    }
+    pick.blocks.push_back(BasicBlock { 0, "entry", { dispatch } });
+    for (size_t index = 0; index < patterns.size(); ++index) {
+        pick.blocks.push_back(BasicBlock {
+            static_cast<BlockId>(index + 1), "arm", { Instruction { Opcode::ret } } });
+    }
+    module.functions.push_back(std::move(pick));
+    return module;
+}
+
+Pattern someBool(Pattern payload) {
+    return enumCase(4, 11, { std::move(payload) });
+}
+
+Pattern boolean(bool value) {
+    return literal(PatternKind::booleanLiteral, 2, value ? 1 : 0);
+}
+
+Pattern integer(int64_t value) {
+    return literal(PatternKind::integerLiteral, 1, value);
+}
+
+TEST(IRModelTest, SwitchPatternAcceptsCoveringCasesEndedByAnyWildcard) {
+    const std::vector<std::pair<const char*, Module>> valid {
+        { "Some(_), None", switchModule(4, { someBool(anything(2)), enumCase(4, 12) }) },
+        { "None, Some(_)", switchModule(4, { enumCase(4, 12), someBool(anything(2)) }) },
+        { "Some(_), _", switchModule(4, { someBool(anything(2)), anything(4) }) },
+        { "_ alone", switchModule(4, { anything(4) }) },
+        { "nested Booleans", switchModule(4, { someBool(boolean(true)), someBool(boolean(false)), enumCase(4, 12) }) },
+        { "a nested case, then a wildcard", switchModule(4, { someBool(boolean(true)), anything(4) }) },
+        // A case that an earlier one already covers is dead but harmless: the first matching case wins.
+        { "a covered case", switchModule(4, { someBool(anything(2)), someBool(boolean(true)), enumCase(4, 12) }) },
+        { "Never? with both cases", switchModule(5, { enumCase(5, 11, { anything(3) }), enumCase(5, 12) }) },
+        { "Bool literals", switchModule(2, { boolean(false), boolean(true) }) },
+        { "Int literals, then a wildcard", switchModule(1, { integer(1), integer(2), anything(1) }) },
+    };
+    for (const auto& [what, module] : valid) {
+        const auto verification = Verifier().verify(module);
+        EXPECT_TRUE(verification.succeeded()) << what << ": " << dump(verification);
+    }
+}
+
+TEST(IRModelTest, SwitchPatternRejectsCasesAfterAWildcard) {
+    // The backend branches to the first wildcard and never tests the cases after it.
+    const std::vector<std::pair<const char*, Module>> invalid {
+        { "_, Some(_)", switchModule(4, { anything(4), someBool(anything(2)) }) },
+        { "_, _", switchModule(4, { anything(4), anything(4) }) },
+        { "Some(_), _, None", switchModule(4, { someBool(anything(2)), anything(4), enumCase(4, 12) }) },
+        { "Int: _, 1", switchModule(1, { anything(1), integer(1) }) },
+    };
+    for (const auto& [what, module] : invalid) {
+        const auto verification = Verifier().verify(module);
+        EXPECT_TRUE(hasError(verification, VerificationErrorId::unreachableSwitchCase))
+                << what << ": " << dump(verification);
+        EXPECT_FALSE(hasError(verification, VerificationErrorId::typeMismatch)) << what;
+    }
+}
+
+TEST(IRModelTest, SwitchPatternRejectsCasesThatMissAValue) {
+    // The backend ends the case tests with `unreachable`, so a value that no case matches is undefined behaviour.
+    const std::vector<std::pair<const char*, Module>> invalid {
+        { "Some(_) alone", switchModule(4, { someBool(anything(2)) }) },
+        { "None alone", switchModule(4, { enumCase(4, 12) }) },
+        { "Some(true), None", switchModule(4, { someBool(boolean(true)), enumCase(4, 12) }) },
+        { "Bool: true", switchModule(2, { boolean(true) }) },
+        // The backend truncates a Boolean literal to its low bit, so only 0 and 1 count as `false` and `true`.
+        { "Bool: 2, false", switchModule(2, { literal(PatternKind::booleanLiteral, 2, 2), boolean(false) }) },
+        { "Int literals", switchModule(1, { integer(1), integer(2) }) },
+        // An uninhabited payload does not remove its case: every case still needs a pattern.
+        { "Never?: None alone", switchModule(5, { enumCase(5, 12) }) },
+    };
+    for (const auto& [what, module] : invalid) {
+        const auto verification = Verifier().verify(module);
+        EXPECT_TRUE(hasError(verification, VerificationErrorId::nonExhaustiveSwitch))
+                << what << ": " << dump(verification);
+        EXPECT_FALSE(hasError(verification, VerificationErrorId::typeMismatch)) << what;
+    }
+}
+
+TEST(IRModelTest, SwitchPatternRejectsAWildcardPayloadOfTheWrongType) {
+    // `Never?`'s `Some` carries `Never`; a wildcard typed as `Bool` or as the scrutinee is not its payload.
+    for (const TypeId payload : { TypeId { 2 }, TypeId { 5 } }) {
+        const auto verification = Verifier().verify(
+                switchModule(5, { enumCase(5, 11, { anything(payload) }), enumCase(5, 12) }));
+        EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch))
+                << payload << ": " << dump(verification);
+    }
+    // Nor is a top-level wildcard of another type a case of the scrutinee.
+    const auto verification = Verifier().verify(switchModule(5, { enumCase(5, 12), anything(4) }));
+    EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch)) << dump(verification);
+}
+
 } // namespace

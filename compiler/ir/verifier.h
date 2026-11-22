@@ -23,6 +23,10 @@ enum class VerificationErrorId {
     typeMismatch,
     callMismatch,
     invalidSourceLocation,
+    // A `switch_pattern` case after a top-level wildcard, which no value can reach.
+    unreachableSwitchCase,
+    // A `switch_pattern` whose cases do not cover every value of its scrutinee.
+    nonExhaustiveSwitch,
 };
 
 struct VerificationError {

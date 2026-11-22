@@ -902,6 +902,63 @@ return number
     EXPECT_EQ(opcodeCount(function("optional"), joyeer::ir::Opcode::switchPattern), 1u);
 }
 
+// A wildcard or binding arm matches every value, so the arms after it never run: the dispatch ends with it
+// (the IR verifier rejects a case after a top-level wildcard), and their bodies are not lowered.
+TEST_F(IRLoweringTest, DispatchesNoArmAfterACatchAllArm) {
+    lower(R"JOYEER(func pick(value: Int?): Int {
+return match value {
+.Some(1) => 10,
+n => 20,
+.Some(m) => m,
+_ => 30,
+}
+}
+func flag(value: Bool): Int {
+return match value {
+_ => 1,
+true => 2,
+}
+}
+)JOYEER");
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    for (const auto& [name, cases] : { std::pair { "pick", 2u }, std::pair { "flag", 1u } }) {
+        const auto& lowered = function(name);
+        ASSERT_EQ(opcodeCount(lowered, joyeer::ir::Opcode::switchPattern), 1u) << name;
+        const auto& dispatch = lowered.blocks[0].instructions.back();
+        ASSERT_EQ(dispatch.opcode, joyeer::ir::Opcode::switchPattern) << name;
+        ASSERT_EQ(dispatch.switchCases.size(), cases) << name << "\n" << joyeer::ir::dump(*result.module);
+        EXPECT_EQ(dispatch.switchCases.back().pattern.kind, joyeer::ir::PatternKind::wildcard) << name;
+    }
+    // Neither dead arm's payload binding nor its body reaches IR.
+    EXPECT_EQ(opcodeCount(function("pick"), joyeer::ir::Opcode::extractPayload), 0u);
+}
+
+// The verifier's coverage check has a work budget, and its matrix is not the type checker's: the type checker
+// gives `nil` no coverage, the IR makes it `.None`. Running out of budget must not reject a match that the type
+// checker accepted; here the sixteen `nil` rows cost the verifier 2^16 specializations.
+TEST_F(IRLoweringTest, VerifiesAMatchWhoseCoverageExceedsTheWorkBudget) {
+    std::string text = "enum S { s(Bool, Int?";
+    for (int column = 0; column < 16; ++column) text += ", Bool";
+    text += ") }\nfunc pick(v: S): Int {\nreturn match v {\n";
+    const auto row = [](const std::string& first, const std::string& second, int trueColumn) {
+        std::string arm = ".s(" + first + ", " + second;
+        for (int column = 0; column < 16; ++column) arm += column == trueColumn ? ", true" : ", _";
+        return arm + ") => 0,\n";
+    };
+    text += row("_", ".Some(_)", -1);
+    for (int column = 0; column < 16; ++column) text += row("_", "nil", column);
+    for (const auto* first : { "true", "false" }) {
+        for (const auto* second : { ".Some(_)", ".None" }) text += row(first, second, -1);
+    }
+    text += "}\n}\n";
+    lower(text);
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+}
+
 TEST_F(IRLoweringTest, CarriesSourceLocationsAndMarksCleanupImplicit) {
     lower(R"JOYEER(func run(input: consuming String) {
 let text = "value"
