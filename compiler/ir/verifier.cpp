@@ -27,4 +27,8 @@ const char* verificationErrorName(VerificationErrorId id) {
     return "ir.unknown";
 }
 
+SourceSpan verificationErrorSpan(const Module&, const VerificationError&) {
+    return {};
+}
+
 } // namespace joyeer::ir

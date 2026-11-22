@@ -1057,9 +1057,10 @@ TEST(IRModelTest, RejectsDestroyingTrivialOrNonAddressValues) {
     EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch));
 }
 
-// The rule of `switch_pattern` cases (docs/impl/ir.md section 4): a top-level wildcard is the last case, and the
-// cases cover every value of the scrutinee. Types 3 to 5 are `Never`, `Bool?` and `Never?`, whose cases are
-// `Some` (11) and `None` (12) of the optional declaration 10.
+// The rule of `switch_pattern` cases (docs/impl/ir.md section 4): every pattern's kind fits its type, a top-level
+// wildcard is the last case, and the cases cover every value of the scrutinee. Types 3 to 5 are `Never`, `Bool?`
+// and `Never?`, whose cases are `Some` (11) and `None` (12) of the optional declaration 10; types 6 to 9 are
+// `String`, `UInt8`, `Int8` and `Float64`.
 Pattern anything(TypeId type) {
     Pattern pattern;
     pattern.type = type;
@@ -1089,6 +1090,10 @@ Module switchModule(TypeId scrutinee, const std::vector<Pattern>& patterns) {
     module.types.push_back(TypeName { 3, "Never", joyeer::typing::TypeKind::never });
     module.types.push_back(TypeName { 4, "Bool?", joyeer::typing::TypeKind::enumeration, 10, { 2 } });
     module.types.push_back(TypeName { 5, "Never?", joyeer::typing::TypeKind::enumeration, 10, { 3 } });
+    module.types.push_back(TypeName { 6, "String", joyeer::typing::TypeKind::string });
+    module.types.push_back(TypeName { 7, "UInt8", joyeer::typing::TypeKind::uint8 });
+    module.types.push_back(TypeName { 8, "Int8", joyeer::typing::TypeKind::int8 });
+    module.types.push_back(TypeName { 9, "Float64", joyeer::typing::TypeKind::float64 });
     module.enumerations.push_back(EnumerationDefinition {
         10, 4, "Bool?",
         { EnumCaseDefinition { 11, "Some", { 2 } }, EnumCaseDefinition { 12, "None", {} } },
@@ -1128,6 +1133,14 @@ Pattern boolean(bool value) {
 
 Pattern integer(int64_t value) {
     return literal(PatternKind::integerLiteral, 1, value);
+}
+
+Pattern textual(PatternKind kind, TypeId type, std::string text) {
+    Pattern pattern;
+    pattern.kind = kind;
+    pattern.type = type;
+    pattern.text = std::move(text);
+    return pattern;
 }
 
 TEST(IRModelTest, SwitchPatternAcceptsCoveringCasesEndedByAnyWildcard) {
@@ -1173,8 +1186,6 @@ TEST(IRModelTest, SwitchPatternRejectsCasesThatMissAValue) {
         { "None alone", switchModule(4, { enumCase(4, 12) }) },
         { "Some(true), None", switchModule(4, { someBool(boolean(true)), enumCase(4, 12) }) },
         { "Bool: true", switchModule(2, { boolean(true) }) },
-        // The backend truncates a Boolean literal to its low bit, so only 0 and 1 count as `false` and `true`.
-        { "Bool: 2, false", switchModule(2, { literal(PatternKind::booleanLiteral, 2, 2), boolean(false) }) },
         { "Int literals", switchModule(1, { integer(1), integer(2) }) },
         // An uninhabited payload does not remove its case: every case still needs a pattern.
         { "Never?: None alone", switchModule(5, { enumCase(5, 12) }) },
@@ -1198,6 +1209,114 @@ TEST(IRModelTest, SwitchPatternRejectsAWildcardPayloadOfTheWrongType) {
     // Nor is a top-level wildcard of another type a case of the scrutinee.
     const auto verification = Verifier().verify(switchModule(5, { enumCase(5, 12), anything(4) }));
     EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch)) << dump(verification);
+}
+
+TEST(IRModelTest, SwitchPatternAcceptsEveryPatternKindOnItsType) {
+    const std::vector<std::pair<const char*, Module>> valid {
+        { "Int: -5", switchModule(1, { integer(-5), anything(1) }) },
+        { "UInt8: 0, 255, byte(0), byte(255)", switchModule(7, {
+                literal(PatternKind::integerLiteral, 7, 0), literal(PatternKind::integerLiteral, 7, 255),
+                literal(PatternKind::byteLiteral, 7, 0), literal(PatternKind::byteLiteral, 7, 255), anything(7) }) },
+        { "Int8: -128, 127", switchModule(8, {
+                literal(PatternKind::integerLiteral, 8, -128), literal(PatternKind::integerLiteral, 8, 127),
+                anything(8) }) },
+        { "String: \"a\"", switchModule(6, { textual(PatternKind::stringLiteral, 6, "a"), anything(6) }) },
+        { "Float64: 1.5", switchModule(9, { textual(PatternKind::floatingLiteral, 9, "1.5"), anything(9) }) },
+    };
+    for (const auto& [what, module] : valid) {
+        const auto verification = Verifier().verify(module);
+        EXPECT_TRUE(verification.succeeded()) << what << ": " << dump(verification);
+    }
+}
+
+// Each module ends its cases with a wildcard, so a pattern whose kind does not fit its type is its only error.
+void expectPatternKindMismatch(const std::vector<std::pair<const char*, Module>>& invalid) {
+    for (const auto& [what, module] : invalid) {
+        const auto verification = Verifier().verify(module);
+        EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch)) << what << ": " << dump(verification);
+    }
+}
+
+TEST(IRModelTest, SwitchPatternRejectsAnIntegerLiteralOffAnIntegerTypeOrOutOfRange) {
+    // The backend compares an integer literal with `icmp eq` on the scrutinee: an enum is a struct, and a
+    // value outside the type is truncated to one that another literal also names.
+    expectPatternKindMismatch({
+        { "Bool?: 0", switchModule(4, { literal(PatternKind::integerLiteral, 4, 0), anything(4) }) },
+        { "Bool: 1", switchModule(2, { literal(PatternKind::integerLiteral, 2, 1), anything(2) }) },
+        { "String: 1", switchModule(6, { literal(PatternKind::integerLiteral, 6, 1), anything(6) }) },
+        { "Float64: 1", switchModule(9, { literal(PatternKind::integerLiteral, 9, 1), anything(9) }) },
+        { "UInt8: 256", switchModule(7, { literal(PatternKind::integerLiteral, 7, 256), anything(7) }) },
+        { "UInt8: -1", switchModule(7, { literal(PatternKind::integerLiteral, 7, -1), anything(7) }) },
+        { "Int8: 128", switchModule(8, { literal(PatternKind::integerLiteral, 8, 128), anything(8) }) },
+        { "Int8: -129", switchModule(8, { literal(PatternKind::integerLiteral, 8, -129), anything(8) }) },
+        { "Bool?: Some(1)", switchModule(4, { someBool(literal(PatternKind::integerLiteral, 2, 1)), anything(4) }) },
+    });
+}
+
+TEST(IRModelTest, SwitchPatternRejectsABooleanLiteralOffBoolOrOtherThanZeroAndOne) {
+    // The backend truncates a Boolean literal to its low bit, so only 0 and 1 name `false` and `true`.
+    expectPatternKindMismatch({
+        { "Int: true", switchModule(1, { literal(PatternKind::booleanLiteral, 1, 1), anything(1) }) },
+        { "Bool?: true", switchModule(4, { literal(PatternKind::booleanLiteral, 4, 1), anything(4) }) },
+        { "Bool: 2", switchModule(2, { literal(PatternKind::booleanLiteral, 2, 2), anything(2) }) },
+        { "Bool: -1", switchModule(2, { literal(PatternKind::booleanLiteral, 2, -1), anything(2) }) },
+    });
+}
+
+TEST(IRModelTest, SwitchPatternRejectsAStringLiteralOffString) {
+    // The backend compares a string literal with the runtime's string equality, which reads a `String`.
+    expectPatternKindMismatch({
+        { "Int: \"a\"", switchModule(1, { textual(PatternKind::stringLiteral, 1, "a"), anything(1) }) },
+        { "UInt8: \"a\"", switchModule(7, { textual(PatternKind::stringLiteral, 7, "a"), anything(7) }) },
+        { "Bool?: \"a\"", switchModule(4, { textual(PatternKind::stringLiteral, 4, "a"), anything(4) }) },
+    });
+}
+
+TEST(IRModelTest, SwitchPatternRejectsAByteLiteralOffUInt8OrOutOfRange) {
+    expectPatternKindMismatch({
+        { "Int: byte(1)", switchModule(1, { literal(PatternKind::byteLiteral, 1, 1), anything(1) }) },
+        { "Int8: byte(1)", switchModule(8, { literal(PatternKind::byteLiteral, 8, 1), anything(8) }) },
+        { "UInt8: byte(256)", switchModule(7, { literal(PatternKind::byteLiteral, 7, 256), anything(7) }) },
+        { "UInt8: byte(-1)", switchModule(7, { literal(PatternKind::byteLiteral, 7, -1), anything(7) }) },
+    });
+}
+
+TEST(IRModelTest, SwitchPatternRejectsAFloatingLiteralOffAFloatingType) {
+    expectPatternKindMismatch({
+        { "Int: 1.5", switchModule(1, { textual(PatternKind::floatingLiteral, 1, "1.5"), anything(1) }) },
+        { "Float64: x", switchModule(9, { textual(PatternKind::floatingLiteral, 9, "x"), anything(9) }) },
+    });
+}
+
+TEST(IRModelTest, SwitchPatternRejectsAnEnumCaseOffAnEnumeration) {
+    expectPatternKindMismatch({
+        { "Int: Some(_)", switchModule(1, { enumCase(1, 11, { anything(2) }), anything(1) }) },
+        { "Bool: None", switchModule(2, { enumCase(2, 12), anything(2) }) },
+    });
+}
+
+TEST(IRModelTest, VerificationErrorSpanIsTheFailingInstructionsSpan) {
+    auto module = switchModule(1, { textual(PatternKind::stringLiteral, 1, "a"), anything(1) });
+    module.functions[1].blocks[0].instructions[0].span = SourceSpan { 30, 5, 0 };
+    const auto verification = Verifier().verify(module);
+    ASSERT_EQ(verification.errors.size(), 1u) << dump(verification);
+    const auto span = verificationErrorSpan(module, verification.errors[0]);
+    EXPECT_EQ(span.offset, 30u);
+    EXPECT_EQ(span.length, 5u);
+
+    // An error that names no instruction, or one the module does not have, has no span.
+    const std::vector<VerificationError> elsewhere {
+        { VerificationErrorId::duplicateId, std::nullopt, std::nullopt, std::nullopt, "" },
+        { VerificationErrorId::missingTerminator, FunctionId { 1 }, BlockId { 0 }, std::nullopt, "" },
+        { VerificationErrorId::typeMismatch, FunctionId { 1 }, BlockId { 9 }, size_t { 0 }, "" },
+        { VerificationErrorId::typeMismatch, FunctionId { 1 }, BlockId { 0 }, size_t { 9 }, "" },
+        { VerificationErrorId::typeMismatch, FunctionId { 9 }, BlockId { 0 }, size_t { 0 }, "" },
+    };
+    for (const auto& error : elsewhere) {
+        const auto none = verificationErrorSpan(module, error);
+        EXPECT_EQ(none.offset, 0u);
+        EXPECT_EQ(none.length, 0u);
+    }
 }
 
 } // namespace
