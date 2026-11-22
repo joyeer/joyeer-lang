@@ -201,6 +201,8 @@ The current checker validates:
   complementary Boolean and nested enum patterns can cover it collectively.
   Wildcards stay symbolic rather than enumerating payload products. A `nil`
   pattern over an Optional covers its absent case, exactly like `.None`.
+  Over any other type, including a user enum named `Optional`, a `nil`
+  pattern is a `type-checking.type-mismatch` in every pattern position.
   Analysis is bounded to 4096 specializations and depth 256; an otherwise
   unproved pathological matrix conservatively requires a catch-all arm. Enum
   cases are specialized in declaration order, so whether a match fits the
@@ -336,7 +338,6 @@ The intended rules above must not be weakened to describe these bugs:
 |---|---|---|
 | Writable argument types | Optional value promotion can be accepted for `inout` or `initializing` storage and rejected only by IR verification. | Writable storage types are invariant unless explicit writeback conversion semantics exist. |
 | Contextual branch results | Expected types can be lost when checking block and `if` results. | Propagate context into reachable trailing expressions. |
-| `nil` patterns | A `nil` pattern whose expected type is not the prelude's Optional (in any pattern position, including a user enum named `Optional`) gets an error type without a type-checking diagnostic and fails only in IR lowering, without a stage-appropriate message. | Diagnose invalid pattern types at this stage. |
 
 These remaining issues concern stage-appropriate diagnostics and contextual
 typing. Passing the current tests is not a proof that every possible

@@ -4364,8 +4364,9 @@ private:
     }
 
     // When `type` is a user declaration that shares its name with a role-bound prelude enum, the
-    // help that tells an author the sugar did not bind to it (decision 0024).
-    [[nodiscard]] std::optional<std::string> roleShadowHelp(std::optional<TypeId> type) const {
+    // help that tells an author the sugar did not bind to it (decision 0024). `only` limits it to shadows of one role.
+    [[nodiscard]] std::optional<std::string> roleShadowHelp(
+            std::optional<TypeId> type, std::optional<semantic::LibraryRole> only = std::nullopt) const {
         const auto* record = type.has_value() ? model->typeContext.type(*type) : nullptr;
         if (record == nullptr || (record->kind != TypeKind::enumeration && record->kind != TypeKind::structure)) {
             return std::nullopt;
@@ -4373,6 +4374,7 @@ private:
         const auto* declaration = model->semanticModelValue->symbol(record->symbol);
         if (declaration == nullptr || declaration->libraryRole != semantic::LibraryRole::none) return std::nullopt;
         for (const auto role : {semantic::LibraryRole::optional, semantic::LibraryRole::result}) {
+            if (only.has_value() && role != *only) continue;
             const auto roleSymbol = model->semanticModelValue->roleSymbol(role);
             const auto* roleDeclaration = roleSymbol.has_value() ? model->semanticModelValue->symbol(*roleSymbol) : nullptr;
             if (roleDeclaration != nullptr && roleDeclaration->name == declaration->name) {
@@ -7162,13 +7164,31 @@ private:
             case byteLiteral: return model->typeContext.uint8Type();
             case nilLiteral: {
                 const auto* expectedType = model->typeContext.type(expected);
-                return model->typeContext.isOptional(expectedType)
-                        ? expected
-                        : model->typeContext.errorType();
+                if (model->typeContext.isOptional(expectedType)) return expected;
+                // An error type was already reported where it arose.
+                if (expected != model->typeContext.errorType()) reportNilPatternMismatch(literal->span, expected);
+                return model->typeContext.errorType();
             }
             default:
                 return model->typeContext.errorType();
         }
+    }
+
+    // A `nil` pattern matches only the prelude's Optional (decision 0024); reporting here keeps the failure at this
+    // stage rather than as an error type that IR lowering later reports as a missing return.
+    void reportNilPatternMismatch(SourceSpan span, TypeId expected) {
+        // Only a shadow of Optional explains `nil`; a user `Result` gets the plain help.
+        auto help = roleShadowHelp(expected, semantic::LibraryRole::optional);
+        if (!help.has_value()) {
+            const auto* record = model->typeContext.type(expected);
+            const auto name = model->typeContext.displayName(expected);
+            help = "'nil' matches only an Optional such as '" + name + "?'";
+            if (record != nullptr && record->kind == TypeKind::enumeration) {
+                *help += "; match a case of '" + name + "' with '.CaseName'";
+            }
+        }
+        report(TypeCheckingDiagnosticId::typeMismatch, span,
+               "a 'nil' pattern cannot match a value of type '" + model->typeContext.displayName(expected) + "'", help);
     }
 
     PatternCoverage checkEnumCasePattern(

@@ -1887,6 +1887,8 @@ add_joyeer_rejected_regression(TypeOptionalLiteralPatternRejected type-checking
         optional_literal_pattern type-checking.type-mismatch)
 set_tests_properties(TypeOptionalEqualityRejected TypeResultEqualityRejected TypeOptionalLiteralPatternRejected PROPERTIES
         LABELS "type-checking;regression;library-containers")
+add_joyeer_rejected_regression(TypeNilPatternNotOptionalRejected type-checking
+        nil_pattern_not_optional type-checking.type-mismatch)
 add_joyeer_rejected_regression(TypeRegressionConditionalExclusivity type-checking
         regression_type_conditional_exclusivity type-checking.overlapping-access)
 add_joyeer_rejected_regression(TypeRegressionReceiverExclusivity type-checking
