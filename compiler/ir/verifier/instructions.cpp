@@ -29,6 +29,30 @@ bool validFloatingLiteral(typing::TypeKind kind, std::string_view text) {
             kind == typing::TypeKind::float64 && fits(double{});
 }
 
+// Whether `value` is a value of the integer type `kind`; unsigned values arrive as their two's-complement bits.
+bool integerFits(typing::TypeKind kind, int64_t value) {
+    const auto bits = typing::scalarBitWidth(kind);
+    return bits == 64 || (typing::isSignedInteger(kind)
+            ? value >= -(int64_t{1} << (bits - 1)) && value < (int64_t{1} << (bits - 1))
+            : static_cast<uint64_t>(value) < (uint64_t{1} << bits));
+}
+
+// Whether a pattern of `kind` other than a wildcard or an enum case can test a value of type `type` with `value`
+// or `text`: the backend compares integer and byte literals with `icmp eq`, a Boolean literal by its low bit,
+// a string literal with the runtime's string equality and a floating literal with `fcmp oeq`.
+bool literalPatternFits(PatternKind kind, typing::TypeKind type, int64_t value, std::string_view text) {
+    switch (kind) {
+        case PatternKind::integerLiteral: return typing::isInteger(type) && integerFits(type, value);
+        case PatternKind::booleanLiteral: return type == typing::TypeKind::boolean && (value == 0 || value == 1);
+        case PatternKind::stringLiteral: return type == typing::TypeKind::string;
+        case PatternKind::byteLiteral: return type == typing::TypeKind::uint8 && integerFits(type, value);
+        case PatternKind::floatingLiteral: return validFloatingLiteral(type, text);
+        case PatternKind::wildcard:
+        case PatternKind::enumCase: break;
+    }
+    return false;
+}
+
 // The type checker's pattern matrix (`patternMatrixIsExhaustive` in compiler/frontend/typechecking.cpp)
 // over IR patterns of verified types: whether the rows cover every tuple of values of the column types.
 // A wildcard covers its column; `true` and `false` together cover `Bool`; one case pattern per case
@@ -342,10 +366,7 @@ void FunctionVerifier::verifyLiteral(const InstructionSite& site) {
         const auto kind = type->kind;
         const auto value = instruction.integerValue;
         if (typing::isInteger(kind)) {
-            const auto bits = typing::scalarBitWidth(kind);
-            valid = bits == 64 || (typing::isSignedInteger(kind)
-                    ? value >= -(int64_t{1} << (bits - 1)) && value < (int64_t{1} << (bits - 1))
-                    : static_cast<uint64_t>(value) < (uint64_t{1} << bits));
+            valid = integerFits(kind, value);
         } else if (kind == typing::TypeKind::boolean) {
             valid = value == 0 || value == 1;
         } else {
@@ -706,8 +727,8 @@ void FunctionVerifier::verifyConditionalBranch(const InstructionSite& site) {
     }
 }
 
-// Every case pattern matches the scrutinee's type, recursively through enum payloads; a top-level
-// wildcard is the last case; and the cases cover every value of the scrutinee (docs/impl/ir.md section 4).
+// Every case pattern has the scrutinee's type and a kind that can test it, recursively through enum payloads; a
+// top-level wildcard is the last case; and the cases cover every value of the scrutinee (docs/impl/ir.md section 4).
 void FunctionVerifier::verifySwitchPattern(const InstructionSite& site) {
     const auto& block = site.block;
     const auto& instruction = site.instruction;
@@ -724,10 +745,13 @@ void FunctionVerifier::verifySwitchPattern(const InstructionSite& site) {
         }
         if (pattern.kind != PatternKind::enumCase) {
             return pattern.payloads.empty() && !pattern.symbol.has_value() &&
-                    (pattern.kind != PatternKind::floatingLiteral ||
-                     validFloatingLiteral(types.at(pattern.type)->kind, pattern.text));
+                    (pattern.kind == PatternKind::wildcard ||
+                     literalPatternFits(pattern.kind, types.at(pattern.type)->kind, pattern.integerValue,
+                                        pattern.text));
         }
-        if (!pattern.symbol.has_value()) return false;
+        if (!pattern.symbol.has_value() || types.at(pattern.type)->kind != typing::TypeKind::enumeration) {
+            return false;
+        }
         const auto* enumCase = context.enumCaseFor(expectedType, *pattern.symbol);
         if (enumCase == nullptr ||
             pattern.payloads.size() != enumCase->payloadTypes.size()) {

@@ -2,6 +2,8 @@
 
 #include "compiler/ir/verifier/internal.h"
 
+#include <algorithm>
+
 namespace joyeer::ir {
 
 VerificationResult Verifier::verify(const Module& module) const {
@@ -25,6 +27,19 @@ const char* verificationErrorName(VerificationErrorId id) {
         case VerificationErrorId::nonExhaustiveSwitch: return "ir.non-exhaustive-switch";
     }
     return "ir.unknown";
+}
+
+SourceSpan verificationErrorSpan(const Module& module, const VerificationError& error) {
+    if (!error.function.has_value() || !error.block.has_value() || !error.instruction.has_value()) return {};
+    const auto function = std::find_if(module.functions.begin(), module.functions.end(), [&error](const auto& candidate) {
+        return candidate.id == *error.function;
+    });
+    if (function == module.functions.end()) return {};
+    const auto block = std::find_if(function->blocks.begin(), function->blocks.end(), [&error](const auto& candidate) {
+        return candidate.id == *error.block;
+    });
+    if (block == function->blocks.end() || *error.instruction >= block->instructions.size()) return {};
+    return block->instructions[*error.instruction].span;
 }
 
 } // namespace joyeer::ir

@@ -93,7 +93,7 @@ public:
             for (const auto& error : verification.errors) {
                 report(
                         DiagnosticId::verificationFailed,
-                        {},
+                        ir::verificationErrorSpan(*module, error),
                         std::string(ir::verificationErrorName(error.id)) +
                                 ": " + error.message);
             }

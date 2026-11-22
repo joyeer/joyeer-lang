@@ -56,6 +56,10 @@ public:
 // The stable diagnostic ID of `id`, such as "ir.type-mismatch".
 [[nodiscard]] const char* verificationErrorName(VerificationErrorId id);
 
+// The source span of the instruction `error` names in `module`, or an empty span when it names none or one the
+// module does not have. Lowering reports verifier errors at this span.
+[[nodiscard]] SourceSpan verificationErrorSpan(const Module& module, const VerificationError& error);
+
 } // namespace joyeer::ir
 
 #endif

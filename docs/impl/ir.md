@@ -393,6 +393,19 @@ A pattern that binds a noncopyable payload cannot copy it: the scrutinee is stor
 `match consume x`, or a slot that takes over an owned temporary), the arm takes the payload with
 `payload_address` and `take`, and whatever no arm binds is destroyed with that storage.
 
+Every pattern has the type of the value it tests: the scrutinee, or an enum payload. Its kind must
+be one the backend can test on that type, or the verifier reports `ir.type-mismatch`:
+
+| Pattern kind | Type | Value |
+|---|---|---|
+| wildcard | any type | none |
+| integer literal | a signed or unsigned integer type, `UInt8` included | fits the type's width (unsigned values as their two's-complement bits) |
+| Boolean literal | `Bool` | 0 or 1; the backend keeps only the low bit |
+| string literal | `String` | any text |
+| byte literal | `UInt8` | 0 to 255 |
+| floating literal | `Float` or `Double` | finite text that parses as that type |
+| enum case | an enumeration with that case | one payload pattern per case payload |
+
 The first matching case wins, and the case list obeys two rules the verifier enforces:
 
 - **A top-level wildcard is the last case** (`ir.unreachable-switch-case`). A wildcard or
@@ -418,7 +431,17 @@ The first matching case wins, and the case list obeys two rules the verifier enf
 The LLVM backend lowers the high-level pattern list into tag and value tests in order. It
 branches to the first wildcard without testing further cases, and ends the tests with
 `unreachable`. That is dead for every switch the coverage check settled; past its budget the
-verifier trusts the producer, as it does for a type-checked `match`. It branches on a matching tag before
+verifier trusts the producer, as it does for a type-checked `match`. A producer bug past the
+budget is therefore undefined behaviour: at `-O2` LLVM uses the `unreachable` to drop the last
+test, so an unmatched value runs the last tested case. Ending the tests with a call to the
+runtime's `no switch case matched` panic instead would catch that bug, but it is not free at
+`-O2` for a covered switch without a wildcard (measured on x86-64 Windows with LLVM 22.1.8):
+LLVM can no longer drop the last tag test, so an enum switch keeps one more compare and a cold
+panic block, a function that needed no stack frame gets one for the call, a branch-free `cmov`
+selection becomes branches, and the function loses `willreturn` (and `nounwind`, since the
+backend does not declare `joyeer_panic` `nounwind`). A `Bool` switch, whose `i1` has no third
+value, and a switch that ends with a wildcard compile the same either way. The backend
+therefore keeps `unreachable`. It branches on a matching tag before
 interpreting payloads, and recursively short-circuits payload tests. Case lookup uses concrete enum type identity
 plus case symbol, including distinct builtin container instantiations.
 
@@ -441,8 +464,9 @@ plus case symbol, including distinct builtin container instantiations.
   have one, and must have a `deinit`); a `copier` that is not a function borrowing the struct and returning it;
   an element address that is converted, returned, stored as a value, or used outside its dominance; a
   collection opcode outside a runtime function, or `clone_at` on a noncopyable type;
-- malformed recursive patterns, and `switch_pattern` cases after a top-level wildcard or that
-  miss a value of the scrutinee (section 4);
+- malformed recursive patterns, a pattern kind or literal value its type cannot hold, and
+  `switch_pattern` cases after a top-level wildcard or that miss a value of the scrutinee
+  (section 4);
 - malformed source maps, unknown source IDs, debug spans outside their own
   file's byte bounds, or locations without module source information;
 - detached/cyclic/cross-function lexical scopes, invalid parameter indices,
@@ -463,7 +487,9 @@ opcode needs a dumper case only for a callee, block targets, switch cases, paren
 after its operands (as `fits` has).
 
 Lowering returns an `ir-lowering.verification-failed` diagnostic when a modeled
-check fails. Passing this verifier is not proof of source-level correctness or
+check fails, at the span of the instruction the error names (`ir::verificationErrorSpan`). An
+error that names no instruction, such as a duplicate type, function or block identifier or a
+block without a terminator, has an empty span. Passing this verifier is not proof of source-level correctness or
 validity of all subsequently emitted LLVM text. Native output additionally
 parses and verifies that text in the LLVM backend.
 
