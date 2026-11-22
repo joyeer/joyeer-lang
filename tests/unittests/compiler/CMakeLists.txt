@@ -1285,6 +1285,9 @@ none
             E2ERegressionPayloadCoverage regression_type_payload_coverage
             "0\n0\n1\n2\n3\n3\n4\n7\n10\n11\n12\n20\n21\n22\n23\n24\n")
     add_joyeer_native_regression(
+            E2ERegressionNilPatternCoverage regression_type_nil_pattern_coverage
+            "0\n5\n1\n2\n9\n3\n6\n10\n")
+    add_joyeer_native_regression(
             E2ERegressionEvaluationAccesses regression_type_evaluation_accesses
             "2\n7\n4\nupdated\n7\nchanged\n7\n10\n5\n")
     add_joyeer_native_regression(

@@ -1,0 +1,29 @@
+// A `nil` pattern covers an Optional's absent case, so it pairs with `.Some` to make a match exhaustive.
+enum Pair { Of(Int?, Int?) }
+
+func unwrap(value: Int?): Int {
+    return match value { nil => 0, .Some(x) => x }
+}
+
+func nested(value: Optional<Int?>): Int {
+    return match value { nil => 1, .Some(nil) => 2, .Some(.Some(x)) => x }
+}
+
+func both(value: Pair): Int {
+    return match value {
+        .Of(nil, _) => 3,
+        .Of(.Some(x), nil) => x,
+        .Of(.Some(x), .Some(y)) => x + y,
+    }
+}
+
+func main() {
+    print(value: unwrap(value: nil))
+    print(value: unwrap(value: .Some(5)))
+    print(value: nested(value: nil))
+    print(value: nested(value: .Some(nil)))
+    print(value: nested(value: .Some(.Some(9))))
+    print(value: both(value: .Of(nil, .Some(4))))
+    print(value: both(value: .Of(.Some(6), nil)))
+    print(value: both(value: .Of(.Some(6), .Some(4))))
+}
