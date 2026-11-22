@@ -50,8 +50,9 @@ public:
             return true;
         }
         // Past the budget or the depth the answer is "covered", so a switch is rejected only for a value that
-        // no case matches. The type checker's matrix is not this one (it gives `nil` no coverage and visits
-        // enum cases in another order), so a match it accepts can still cost more here.
+        // no case matches. The type checker runs this algorithm on the same patterns (`nil` is `.None`, cases
+        // in declaration order) with a smaller budget, so every lowered `match` is settled before this point;
+        // the budget only guards other producers.
         if (remaining == 0 || depth == 256) return true;
         --remaining;
 

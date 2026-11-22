@@ -1200,4 +1200,33 @@ TEST(IRModelTest, SwitchPatternRejectsAWildcardPayloadOfTheWrongType) {
     EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch)) << dump(verification);
 }
 
+// The coverage check has a work budget; past it the answer is "covered", so a costly switch is not rejected. The
+// sixteen `None` rows below cost 2^16 specializations. The type checker runs the same algorithm with a smaller
+// budget and rejects such a `match`, so this switch comes only from another producer.
+TEST(IRModelTest, SwitchPatternTrustsAMatrixThatExceedsTheWorkBudget) {
+    constexpr int wide = 16;
+    const auto row = [](Pattern first, Pattern second, int trueColumn) {
+        std::vector<Pattern> payloads = { std::move(first), std::move(second) };
+        for (int column = 0; column < wide; ++column) {
+            payloads.push_back(column == trueColumn ? boolean(true) : anything(2));
+        }
+        return enumCase(6, 21, std::move(payloads));
+    };
+    std::vector<Pattern> patterns = { row(anything(2), someBool(anything(2)), -1) };
+    for (int column = 0; column < wide; ++column) patterns.push_back(row(anything(2), enumCase(4, 12), column));
+    for (const bool first : { true, false }) {
+        patterns.push_back(row(boolean(first), someBool(anything(2)), -1));
+        patterns.push_back(row(boolean(first), enumCase(4, 12), -1));
+    }
+
+    auto module = switchModule(6, patterns);
+    std::vector<TypeId> payloadTypes = { 2, 4 };
+    payloadTypes.insert(payloadTypes.end(), wide, TypeId { 2 });
+    module.types.push_back(TypeName { 6, "S", joyeer::typing::TypeKind::enumeration, 20 });
+    module.enumerations.push_back(EnumerationDefinition { 20, 6, "S", { EnumCaseDefinition { 21, "s", payloadTypes } } });
+
+    const auto verification = Verifier().verify(module);
+    EXPECT_TRUE(verification.succeeded()) << dump(verification);
+}
+
 } // namespace
