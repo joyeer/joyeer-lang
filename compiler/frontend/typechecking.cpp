@@ -7059,7 +7059,7 @@ private:
                 const auto literal =
                         std::static_pointer_cast<syntax::LiteralPatternSyntax>(pattern);
                 const auto actual = patternLiteralType(literal->literal, expected);
-                requireAssignable(actual, expected, pattern->span);
+                requireLiteralPatternType(actual, expected, pattern->span);
                 if (literal->literal != nullptr && literal->literal->kind == booleanLiteral) {
                     coverage.booleanLiteral = literal->literal->rawValue == Literals::TRUE;
                 }
@@ -7076,6 +7076,25 @@ private:
 
         recordNodeType(pattern, expected);
         return coverage;
+    }
+
+    // A literal pattern compares a value of exactly the literal's type (spec 7.1.3, decision 0030).
+    // Unlike an expression it is neither promoted into an Optional nor converted to `Any`: lowering
+    // tests the scrutinee itself against the literal, so the two types must be the same.
+    void requireLiteralPatternType(TypeId actual, TypeId expected, SourceSpan span) {
+        const auto error = model->typeContext.errorType();
+        if (actual == expected || actual == error || expected == error) return;
+        const auto actualName = model->typeContext.displayName(actual);
+        const auto expectedName = model->typeContext.displayName(expected);
+        report(
+                TypeCheckingDiagnosticId::typeMismatch,
+                span,
+                "a literal pattern of type '" + actualName + "' cannot match a value of type '" +
+                        expectedName + "'",
+                model->typeContext.isOptional(model->typeContext.type(expected))
+                        ? "a literal pattern is not promoted into an Optional; write it inside "
+                          "'.Some(...)' to match a present value"
+                        : "expected '" + expectedName + "' but found '" + actualName + "'");
     }
 
     TypeId patternLiteralType(const Token::Ptr& literal, TypeId expected) {
