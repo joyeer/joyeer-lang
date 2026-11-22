@@ -23,16 +23,17 @@ thread-safe runtime (P4), tasks (P5a), channels (P5b, P6) and the worker-pool we
 The implementation notes are in [runtime](../impl/runtime.md) and
 [supported features](../impl/supported-features.md).
 
-The source-library migration in [0010](0010-generics.md) ran full `scripts/validate.py` on Windows
-x64 and Linux x86_64 (WSL Ubuntu), Debug and Release: Windows CTest 1665/1665 and fern 7/7 in each;
-Linux CTest 1641/1641 and fern 7/7 in each. Native AArch64 and macOS remain unverified.
+The [source-library migration](../decisions/0023-library-concurrency.md#final-comparison-and-validation)
+passed full Debug and Release validation on Windows x64, Linux x86_64 (WSL Ubuntu), and macOS ARM64.
+That run does not establish Linux AArch64 acceptance.
 
 ## Todo
 
 ### Acceptance gates
 
 - [x] Run `scripts/validate.py` on Windows, on a machine with Python 3.9 or later.
-  Evidence: plan 0010 Phase 4, Windows x64 Debug/Release, unfiltered CTest 1665/1665 and fern 7/7 each.
+  Evidence: [0023](../decisions/0023-library-concurrency.md#final-comparison-and-validation),
+  Windows x64 Debug/Release, unfiltered CTest 1665/1665 and fern 7/7 each.
 - [x] Windows Release. Evidence: the same full Phase 4 validator run.
 - [ ] AArch64 Linux (the thread and channel paths are written but untested there).
 - [ ] macOS, including the `os_unfair_lock` path.
@@ -42,8 +43,8 @@ Linux CTest 1641/1641 and fern 7/7 in each. Native AArch64 and macOS remain unve
 - [ ] Test the `-lpthread` link argument (emitted for a program that starts a task or names a channel
   end type) on glibc older than 2.34.
 - [ ] Stop the Windows C-startup link (`/WHOLEARCHIVE`) from loading every runtime archive member: a plain
-  archive plus `/INCLUDE:wmain` on Windows, with a regression test. (macOS `-force_load` was removed by
-  plan 0011 stage 5; see `docs/plan/0011-library-containers.md`.)
+  archive plus `/INCLUDE:wmain` on Windows, with a regression test. (macOS `-force_load` was removed
+  by [0026](../decisions/0026-library-array.md), amendment A7.)
 
 ### Language and compiler gaps
 
@@ -53,12 +54,12 @@ Linux CTest 1641/1641 and fern 7/7 in each. Native AArch64 and macOS remain unve
   construction commits, so a `?` in a later element cannot drop a handle (today the run-time backstop
   traps `task dropped without join`).
 - [ ] Qualified builtin enum cases (`ConversionError.OutOfRange`) lower in IR.
-  `ChannelClosed.Closed` is now an ordinary source enum case (plan 0010 Phase 4, the durable
-  `generic-callbacks.joyeer` fixture), so that part no longer needs builtin lowering.
+  `ChannelClosed.Closed` is now an ordinary source enum case ([0023](../decisions/0023-library-concurrency.md),
+  the durable `generic-callbacks.joyeer` fixture), so that part no longer needs builtin lowering.
 - [ ] `consume Chain.End` (a qualified payload-less case) is accepted.
 - [ ] `==` on a struct or enum, or a diagnostic with a workaround.
-- [ ] Early, accurate diagnostics for `spawn(...).join()`. (A function or method used as a value is done:
-  [generics plan](0010-generics.md), Phase 1.)
+- [ ] Early, accurate diagnostics for `spawn(...).join()`. (The function-value diagnostics were
+  addressed in [0020](../decisions/0020-function-values.md).)
 - [ ] A joined result can be an argument (`print(value: consume h.join())`); today the argument marker
   and the receiver marker collide.
 - [ ] A channel that carries its own receiver does not leak.

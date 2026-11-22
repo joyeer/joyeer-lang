@@ -1,13 +1,14 @@
 # 0023: Concurrency as a source-library prelude
 
-- Status: accepted (2026-11-14), implemented and validated on Windows x64 and Linux x86_64.
+- Status: accepted (2026-11-14), implemented in [#23](https://github.com/joyeer/joyeer-lang/pull/23)
+  and validated on Windows x64, Linux x86_64 (WSL2), and macOS ARM64.
 - Spec: §2.6.3, §4.1.1/§4.7.1, §5.6.1, §19.4.5, §20.5/.6/.12,
   [§21](../../specs/21-concurrency.md), and Appendix C.
 
 ## Context
 
-Phase 4 of [plan 0010](../plan/0010-generics.md) replaces compiler-defined task and channel
-types and operations with Joyeer declarations. The public calls, ownership rules, stable diagnostics,
+This migration replaces compiler-defined task and channel types and operations with Joyeer declarations.
+The public calls, ownership rules, stable diagnostics,
 task limit, traps, and close protocol must stay compatible with §21 and decisions 0018 and 0019.
 
 Phase 3 supplies concrete generic layouts and raw typed moves, but not everything this migration
@@ -129,8 +130,8 @@ ordinary `deinit` structures have a hidden live flag. Neither is assumed free: i
 must establish the plan's no-regression gate in both profiles.
 
 Independent implementation reviews and failing regressions checked the compatibility metadata,
-must-transfer analysis, and verified-IR boundary. Acceptance evidence is recorded below; native
-macOS and AArch64 verification remain open platform gates, not inferred from x86_64 results.
+must-transfer analysis, and verified-IR boundary. The recorded native macOS ARM64 results cover
+macOS and AArch64 on a supported OS; they are not Linux AArch64 results.
 
 ### Language review
 
@@ -214,7 +215,7 @@ differ from ratios of the two unpaired medians because process timings drift wit
 Executable sizes (baseline -> candidate): task O0 93184 -> 96256 B, channel O0 101376 -> 105984 B,
 task O2 45568 -> 45568 B, channel O2 48640 -> 49152 B.
 
-Full acceptance used `python scripts/validate.py --llvm-root <sdk> --jobs <n>
+Initial acceptance used `python scripts/validate.py --llvm-root <sdk> --jobs <n>
 --define BUILD_TESTING=ON --define JOYEER_BUILD_FERN=ON --define JOYEER_BUILD_COMPRESSION=ON`
 in an MSVC x64 Developer shell on Windows (`n=4`) and an isolated Git archive plus exact patch/new
 files on WSL Ubuntu (`n=12`). LLVM was the developer-provided 22.1.8 SDK; no toolchains were installed.
@@ -223,6 +224,13 @@ files on WSL Ubuntu (`n=12`). LLVM was the developer-provided 22.1.8 SDK; no too
 |---|---|---|
 | Windows x64 | build, unfiltered CTest 1665/1665, fern 7/7 | build, unfiltered CTest 1665/1665, fern 7/7 |
 | Linux x86_64 (WSL Ubuntu) | build, unfiltered CTest 1641/1641, fern 7/7 | build, unfiltered CTest 1641/1641, fern 7/7 |
+| macOS ARM64 (`799dce4`) | build, unfiltered CTest 2019/2019, fern 7/7 | build, unfiltered CTest 2019/2019, fern 7/7 |
 
-Native macOS, AArch64, and the earlier debugger-breakpoint gate were not run. Future removal of
-`Optional`, `Result`, `Array`, and `Dict` is tracked in [0011](../plan/0011-library-containers.md).
+The macOS run on 2026-11-22 used LLVM 22.1.8 and SDK/deployment target 26.5.
+It needed no reruns and covered the task and channel fixtures at `-O0` through
+`-O3` and both `JoyeerCInterop.GenericCallbacks` gates. The separate
+[generic debugger check](0021-protocols-and-generic-functions.md#validation-and-measurements)
+also passed. Linux AArch64 remains tracked in the [concurrency plan](../plan/0009-concurrency.md).
+
+The later migration of `Optional`, `Result`, `Array`, and `Dict` to library declarations is covered
+by the [collection validation](../impl/runtime.md#collection-validation).

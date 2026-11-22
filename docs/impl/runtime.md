@@ -212,6 +212,30 @@ and replaced values exactly once. Cloning a normalized dictionary preserves
 its count and independently clones its entries without repeating duplicate
 key detection.
 
+### Collection validation
+
+The [library collection switch](https://github.com/joyeer/joyeer-lang/pull/31)
+removed the dedicated `Array` and `Dict` type kinds and executable opcodes.
+Full [platform validation](../building.md#full-platform-validation) passed
+with LLVM 22.1.8:
+
+| Platform | Revision | Debug and Release (each) |
+|---|---|---|
+| Windows x64 | `a14b5f2` | CTest 2005/2005, `fern test` 7/7; selected CTest cases passed on rerun |
+| Linux x86_64 (WSL2 Ubuntu) | `a14b5f2` | CTest 1981/1981, `fern test` 7/7; no reruns |
+| macOS ARM64 | `799dce4` | CTest 2019/2019, `fern test` 7/7; no reruns |
+
+The native macOS run used SDK and deployment target 26.5. An independent `Dict`
+pass at the same revision passed nine runtime checks (including two expected
+missing-key traps) and ten expected compiler rejections at each of `-O0` and
+`-O2`. The cases covered literal evaluation and destruction order, nested
+mutation and copying, lookup, and key and value constraints.
+
+On 2026-11-22, the maintainer confirmed completing the remaining Windows x64
+and WSL verification and approved retiring the plan after the macOS pass.
+The table records the functional runs, not benchmark timings. The benchmark
+method and revisions are in [Comparing two builds](../../tests/perf/README.md#comparing-two-builds).
+
 ### Unit values
 
 Source `Void` values use LLVM's zero-sized `{}` type in value and storage

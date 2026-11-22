@@ -1,7 +1,7 @@
 # 0020: Function values
 
 - Status: accepted (2026-11-12), after `language-designer` and `ir-backend-reviewer` reviews whose findings are folded in
-  below. Phase 1 of the [generics plan](../plan/0010-generics.md). Implementation in progress.
+  below. Implemented in [#22](https://github.com/joyeer/joyeer-lang/pull/22).
 - Spec: [§2.3](../../specs/02-types.md#23-composite-types) (function types, made normative). The spec
   change also amends §2.9, §3.1.1, §3.2.1, §4.1.1, §4.4, §5.4, §5.6, §5.8, §5.11, §12.2, §19.4.5,
   §19.4.7, §19.5, §21.2.1 and Appendix C (see "Spec changes").
@@ -25,8 +25,8 @@ The runtime already calls through addresses, but untyped: `joyeer_intrinsic_call
 signature. The backend generates its own typed thunks for tasks (`taskThunk`) and its own clone and
 destroy helpers for collections, because Joyeer code cannot name a typed function.
 
-The [generics plan](../plan/0010-generics.md) needs function values first. They are the smallest
-step that lets library code accept behavior as a parameter; generic code (Phase 2) builds on them.
+Function values are the smallest step that lets library code accept behavior as a parameter;
+[bounded generic functions](0021-protocols-and-generic-functions.md) build on them.
 [0013](0013-concurrency-model.md) and [0018](0018-tasks.md) already promised that `spawn`'s
 `function:` argument is a subset of this feature.
 
@@ -356,7 +356,7 @@ not needed now; if Phase 4 finds that it is, it gets its own record.
   ([0009 plan](../plan/0009-concurrency.md)); this record replaces that with a defined feature.
 - The backend already generates per-type thunks and helpers that Joyeer code cannot express
   ([native_collections.cpp](../../compiler/backend/native_collections.cpp)). Typed function values are
-  the first step to moving them into the library (plan 0010, Phase 4).
+  the first step to [moving them into the library](0023-library-concurrency.md).
 - Review: a `language-designer` review (2026-11-12) found six blocking gaps (field-call syntax, type
   grammar, the list of amended sections, the `initializing` exclusion, the exact rejected kinds,
   evaluation order) and ten risks. All are resolved above; its five alternative choices were adopted:

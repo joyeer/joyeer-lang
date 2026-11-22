@@ -45,7 +45,8 @@ Rules (the language-level ones are in §12.5):
   name. Public APIs wrap internal bindings.
 - Add a module or workspace member only when it has real sources; no empty modules.
 - Layout: `lib/<Module>/`, tests in `tests/lib/<Module>/`, both listed in the root `workspace.toml`.
-- Use ordinary public functions until protocols exist ([generics plan](0010-generics.md)).
+- Prefer ordinary public functions for module APIs; use [protocols](../../specs/20-protocols.md)
+  where generic constraints are needed.
 
 Acceptance for each new module: source and dependency validation, visibility, case-sensitive names,
 ambiguity, prelude collisions, duplicate names and cycles. Run real test executables in Debug and

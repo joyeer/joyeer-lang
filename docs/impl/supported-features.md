@@ -82,7 +82,7 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Optional Compression library | Separately built miniz-backed classic ZIP creation, listing, and bounded in-memory extraction; see [Compression](compression.md) |
 
 `Array`, `Dict`, `Optional` and `Result` are library declarations bound by closed roles; no container is
-compiler-defined ([library-container plan](../plan/0011-library-containers.md)).
+compiler-defined. See the [collection implementation and validation](runtime.md#collections).
 User generic structs/enums are supported independently through §20.12.
 
 `--report-instantiations` prints one line per concrete generic function

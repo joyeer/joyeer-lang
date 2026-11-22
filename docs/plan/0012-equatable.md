@@ -48,7 +48,7 @@ types it cannot compile (0024, "Equality is rejected").
 - **After 0024:** `Optional` and `Result` reject `==`, with help pointing to `match`.
 - **After the 0026 array switch:** arrays are ordinary role-bound structs, so the existing struct rule
   rejects `[Int] == [Int]` during type checking rather than accepting it and failing LLVM verification.
-  No array equality implementation is added by plan 0011.
+  The array switch did not implement array equality.
 - **Spec:** `Equatable` is reserved and unusable (§12.4, §20.2, `type-checking.reserved-protocol-name`).
   Generic code cannot use operators on `T` (§20.5).
 - **Gaps:** there are no default implementations, conditional conformances or operator declarations
@@ -129,8 +129,8 @@ All are settled in the Phase 1 decision.
   `x == nil` be clearer? Function optionals are the main case for the tag test.
 - **Floats.** Should `Float` and `Double` conform although IEEE equality is not reflexive, or get a
   separate rule? Today's behavior must not change for scalar `==`.
-- **`Dict`.** Order-independent equality needs key lookup per entry. Should `Dict` get equality now,
-  or wait for the library `Dict` of plan 0011 Phase 4 and a `Hashable` key decision?
+- **`Dict`.** Order-independent equality needs key lookup per entry. Should the
+  [library `Dict`](../decisions/0027-library-dict.md) get equality now or wait for a `Hashable` key decision?
 - **Noncopyable and linear types.** Equality only borrows. Can every noncopyable type conform, and
   can a linear type?
 - **Cross-module conformance.** Today a conformance must be in the type's module. Is that enough for

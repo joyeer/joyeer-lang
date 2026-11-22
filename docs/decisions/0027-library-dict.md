@@ -9,7 +9,8 @@
 - Spec: [§2.6](../../specs/02-types.md#26-generics) and §2.6.1 (lookup), §4.1.1 (copyability),
   [§20.5](../../specs/20-protocols.md) (key constraints), §20.12.5 (layout intrinsics and roles) and
   [§21.2.2](../../specs/21-concurrency.md) (task transfer) change with this record once it is accepted.
-- Plan: [0011](../plan/0011-library-containers.md), Phase 4. Builds on [0025](0025-library-collection-capabilities.md)
+- Implementation: [library collection switch](https://github.com/joyeer/joyeer-lang/pull/31).
+  Builds on [0025](0025-library-collection-capabilities.md)
   and [0026](0026-library-array.md) and **amends 0025's dictionary paragraph** (Decision 3); relates to
   [plan 0012](../plan/0012-equatable.md).
 
@@ -310,7 +311,7 @@ about a missed gate; a missed gate is not renegotiated in a pull request.
 machine-code investigation found the hot loops identical; the difference is the runtime library's code placement,
 which the larger user code moves by 0x90 bytes. The builtin baseline moved to the candidate's runtime addresses
 reproduces the miss (1.042 [1.013, 1.057]), and the candidate at the baseline's alignment passes (0.990 [0.981,
-1.001]). The user accepted the row on this evidence; the limits above are unchanged. Evidence in plan 0011's log.
+1.001]). The user accepted the row on this evidence; the limits above are unchanged.
 
 ## Open questions
 
@@ -348,5 +349,6 @@ Revision 4 has not been reviewed.
 
 ## Evidence
 
-The inventory above; prior art 0024, 0025 (the access-mode lowering of the dictionary subscript), 0026 (the array
-switch, its measurement method and its lessons).
+The inventory above, the [benchmark harnesses](../../tests/perf/README.md#comparing-two-builds), and the
+[collection validation](../impl/runtime.md#collection-validation). Prior art: 0024, 0025 (the access-mode lowering
+of the dictionary subscript), 0026 (the array switch, its measurement method and its lessons).
