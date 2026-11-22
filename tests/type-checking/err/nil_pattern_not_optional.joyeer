@@ -1,0 +1,8 @@
+enum Pair { Of(Int, Int) }
+
+func f(value: Pair): Int {
+    return match value {
+        .Of(nil, _) => 0,
+        _ => 1,
+    }
+}

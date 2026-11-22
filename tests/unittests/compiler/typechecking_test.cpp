@@ -1539,6 +1539,47 @@ func unwrap(value: Optional<Int>): Int {
     EXPECT_FALSE(checking.succeeded());
 }
 
+// A `nil` pattern matches only the prelude's Optional. Anywhere else it is a type mismatch at this stage, not an error
+// type that IR lowering later reports as a missing return.
+TEST_F(TypeCheckingTest, NilPatternOnANonOptionalIsATypeMismatch) {
+    struct Case {
+        const char* text;
+        const char* help;
+    };
+    for (const auto& [text, help] : {
+            Case { "func f(value: Int): Int { return match value { nil => 0, _ => 1 } }\n",
+                   "'nil' matches only an Optional" },
+            Case { "enum Pair { Of(Int, Int) }\n"
+                   "func f(value: Pair): Int { return match value { .Of(nil, _) => 0, _ => 1 } }\n",
+                   "'nil' matches only an Optional" },
+            Case { "func f(value: Optional<Int?>): Int { return match value { .Some(.Some(nil)) => 0, _ => 1 } }\n",
+                   "'nil' matches only an Optional" },
+            Case { "enum Color { Red, Green }\n"
+                   "func f(value: Color): Int { return match value { nil => 0, _ => 1 } }\n",
+                   "'.CaseName'" },
+            Case { "enum Optional<T> { None, Some(T) }\n"
+                   "func f(value: Optional<Int>): Int { return match value { nil => 0, .Some(x) => x } }\n",
+                   "not the prelude's" },
+        }) {
+        SCOPED_TRACE(text);
+        ASSERT_NO_FATAL_FAILURE(check(text));
+        ASSERT_EQ(checking.diagnostics.size(), 1u) << joyeer::typing::dump(checking.diagnostics);
+        const auto& diagnostic = checking.diagnostics.front();
+        EXPECT_EQ(diagnostic.id, joyeer::typing::TypeCheckingDiagnosticId::typeMismatch);
+        ASSERT_TRUE(diagnostic.help.has_value()) << diagnostic.message;
+        EXPECT_NE(diagnostic.help->find(help), std::string::npos) << *diagnostic.help;
+    }
+}
+
+TEST_F(TypeCheckingTest, NilPatternUnderAnUnknownCaseReportsOnlyTheUnknownCase) {
+    ASSERT_NO_FATAL_FAILURE(check(R"JOYEER(
+enum Pair { Of(Int) }
+func f(value: Pair): Int { return match value { .Missing(nil) => 0, _ => 1 } }
+)JOYEER"));
+    ASSERT_EQ(checking.diagnostics.size(), 1u) << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_EQ(checking.diagnostics.front().id, joyeer::typing::TypeCheckingDiagnosticId::unknownEnumCase);
+}
+
 // Case specialization follows declaration order, so the 4096-specialization budget does not depend on how a hash map
 // orders an enum's members. In declaration order the failing default matrix below stops at `Missing` after one
 // specialization and the whole match costs 3 + t + t*k*(2^n - 1) = 3 + 8 + 8*2*255 = 4091. Visiting a wide case
