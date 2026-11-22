@@ -1908,6 +1908,88 @@ TEST_F(SemanticAnalysisTest, TheTailOfAFunctionThatReturnsAValueIsMovedOn) {
             << joyeer::analysis::dump(result.diagnostics);
 }
 
+// Semantic analysis follows the type checker's record of discarded values (spec 4.1.1), so the
+// passes agree on which values are dropped.
+TEST_F(SemanticAnalysisTest, AnIfWithoutElseDropsItsLinearBranchValueInEveryContext) {
+    // An `if` without `else` is `Void`, so binding it does not receive the branch value.
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func run(c: Bool) {\n    let v = if c { mint() }\n}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func run(c: Bool): Int {\n    let v = if c { mint() }\n    return 1\n}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func run(c: Bool) {\n    let v = if c { if c { mint() } } else { }\n}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+    // Every context that would receive a value receives `Void` instead.
+    for (const std::string body : {
+                 "func take(v: Void) { }\nfunc run(c: Bool) {\n    take(v: if c { mint() })\n}\n",
+                 "func run(c: Bool) {\n    return if c { mint() }\n}\n",
+                 "func run(c: Bool) {\n    var v = ()\n    v = if c { mint() }\n}\n",
+                 "func run(n: Int) {\n    let v = match n { _ => if true { mint() } }\n}\n",
+                 "func run(c: Bool) {\n    let v = if c { } else { if c { mint() } }\n}\n",
+                 "func run(c: Bool) {\n    let v = (if c { mint() })\n}\n",
+         }) {
+        analyzeToolchain(std::string(linearPrelude) + body);
+        EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+                << body << joyeer::analysis::dump(result.diagnostics);
+    }
+    // The original repro: an unjoined task handle.
+    analyze("func square(value: consuming Int): Int { return value * value }\n"
+            "func mk(): JoinHandle<Int> { return spawn(function: square, input: consume 3) }\n"
+            "func main() {\n    let flag = true\n    let v = if flag { mk() }\n}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, ADiscardedParenthesizedIfOrMatchDoesNotDropItsLinearPlaces) {
+    const std::string ends = "    let x = consume a.finish()\n    let y = consume b.finish()\n    return x + y\n}\n";
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func run(c: Bool): Int {\n    let a = mint()\n    let b = mint()\n"
+                     "    (if c { a } else { b })\n" + ends);
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearNotConsumed))
+            << joyeer::analysis::dump(result.diagnostics);
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func run(c: Bool): Int {\n    let a = mint()\n    let b = mint()\n"
+                     "    ((if c { a } else { b }))\n" + ends);
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func run(c: Bool): Int {\n    let a = mint()\n    let b = mint()\n"
+                     "    (if c { a })\n" + ends);
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func run(n: Int): Int {\n    let a = mint()\n    let b = mint()\n"
+                     "    (match n { 1 => a, _ => b })\n" + ends);
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearNotConsumed))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+// Each dropped branch value is reported at its own tail.
+TEST_F(SemanticAnalysisTest, ADiscardedParenthesizedLinearValueIsStillDropped) {
+    const auto droppedCount = [this] {
+        return std::count_if(result.diagnostics.begin(), result.diagnostics.end(), [](const auto& diagnostic) {
+            return diagnostic.id == joyeer::analysis::DiagnosticId::linearResultDropped;
+        });
+    };
+    analyzeToolchain(std::string(linearPrelude) + "func run() {\n    (mint())\n    let n = 1\n}\n");
+    EXPECT_EQ(droppedCount(), 1) << joyeer::analysis::dump(result.diagnostics);
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func run(c: Bool) {\n    (if c { mint() } else { mint() })\n    let n = 1\n}\n");
+    EXPECT_EQ(droppedCount(), 2) << joyeer::analysis::dump(result.diagnostics);
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func run(n: Int) {\n    (match n { 1 => mint(), _ => mint() })\n    let m = 1\n}\n");
+    EXPECT_EQ(droppedCount(), 2) << joyeer::analysis::dump(result.diagnostics);
+}
+
 TEST_F(SemanticAnalysisTest, AWildcardArmDropsALinearPayloadOfAMovedScrutinee) {
     const std::string box = "enum Box {\n    Full(Token),\n    Empty,\n}\n";
     analyzeToolchain(std::string(linearPrelude) + box +

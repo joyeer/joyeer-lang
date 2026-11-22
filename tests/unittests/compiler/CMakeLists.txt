@@ -1049,6 +1049,10 @@ if(JOYEER_CLANG_EXECUTABLE)
     add_joyeer_native_regression(
             E2EDiscardedNoncopyableTail discarded_noncopyable_tail
             "1\n10\n21\n22\n2\n30\n3\n40\n41\n4\n41\n42\n4\n51\n5\n50\n51\n5\n1\n")
+    # A discarded parenthesized `if` names its linear places without moving or dropping them.
+    add_joyeer_native_regression(
+            E2EDiscardedLinearBranch discarded_linear_branch
+            "9\n16\n")
     add_joyeer_native_regression(
             E2EArrayRemoveLast array_remove_last
             "3\n2\n-1\nbb\n1\n2\n3\n2\n1\n")
@@ -1896,6 +1900,8 @@ add_joyeer_rejected_regression(FlowRegressionCompoundTargetConsumed semantic-ana
         regression_flow_compound_target_consumed semantic-analysis.use-after-consume)
 add_joyeer_rejected_regression(FlowRegressionAssignmentTargetConsumed semantic-analysis
         regression_flow_assignment_target_consumed semantic-analysis.use-after-consume)
+add_joyeer_rejected_regression(FlowRegressionVoidIfLinearTail semantic-analysis
+        regression_flow_void_if_linear_tail semantic-analysis.linear-result-dropped)
 
 add_test(NAME NameResolutionCliRejectsUndefinedName
         COMMAND ${CMAKE_COMMAND}

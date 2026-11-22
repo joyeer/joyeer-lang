@@ -345,9 +345,6 @@ private:
     // been evaluated but which has not committed yet (decision 0015, rule 3): an early exit in a later
     // operand would leave them to be dropped.
     size_t pendingLinearMoves = 0;
-    // Set just before analysing an expression that is a statement, so a block, `if` or `match` in
-    // that position knows its tail value is dropped rather than used.
-    bool statementPosition = false;
     std::vector<InitializationState::ProjectionPath*> activePaths;
     std::vector<std::vector<semantic::SymbolId>> localScopes;
     struct LoopFlow {
@@ -395,11 +392,7 @@ private:
                 }
             }
         }
-        const auto resultType = signatureResult(function);
-        const bool bodyYieldsValue = resultType.has_value() &&
-                *resultType != model->types().voidType() &&
-                *resultType != model->types().neverType();
-        analyzeBlock(declaration->body, state, bodyYieldsValue);
+        analyzeBlock(declaration->body, state);
         if (state.reachable) {
             reportUninitializedParameters(declaration->span, state);
             for (const auto symbol : linearParameters) {
@@ -535,12 +528,17 @@ private:
         });
     }
 
-    // A statement whose value is a linear value that nothing receives drops it.
+    // A discarded expression (TypeCheckedModel::isValueDiscarded) whose value is a linear value that
+    // nothing receives drops it. Parentheses are looked through, as the type checker does.
     void reportDroppedLinearValue(const syntax::ExprPtr& statement, const InitializationState& state) {
-        if (!state.reachable || statement == nullptr || isPlaceStatement(statement)) return;
-        // A block, `if` or `match` reports for its own tails.
-        if (statement->kind == syntax::Kind::blockExpr || statement->kind == syntax::Kind::ifExpr ||
-            statement->kind == syntax::Kind::matchExpr) {
+        auto inner = statement;
+        while (inner != nullptr && inner->kind == syntax::Kind::parenthesizedExpr) {
+            inner = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(inner)->expression;
+        }
+        if (!state.reachable || inner == nullptr || isPlaceStatement(inner)) return;
+        // A block, `if` or `match` reports for its own discarded tails.
+        if (inner->kind == syntax::Kind::blockExpr || inner->kind == syntax::Kind::ifExpr ||
+            inner->kind == syntax::Kind::matchExpr) {
             return;
         }
         const auto type = model->typeOf(statement);
@@ -595,17 +593,11 @@ private:
         return storagePath(expression).has_value();
     }
 
-    std::optional<typing::TypeId> signatureResult(
-            const std::optional<semantic::SymbolId>& function) const {
-        const auto* signature = function.has_value() ? model->callable(*function) : nullptr;
-        return signature == nullptr ? std::optional<typing::TypeId>() : signature->result;
-    }
-
-    // `valueUsed` is false when the block's last expression is a statement whose value is dropped.
+    // Which items' values are dropped is the type checker's record (TypeCheckedModel::isValueDiscarded):
+    // every item but the last, and the last when the block's own value is discarded.
     void analyzeBlock(
             const syntax::BlockExprSyntax::Ptr& block,
-            InitializationState& state,
-            bool valueUsed = true) {
+            InitializationState& state) {
         if (block == nullptr) return;
         localScopes.emplace_back();
         for (const auto& item : block->items) {
@@ -634,19 +626,12 @@ private:
                 analyzeLoopExit(item->kind, state, item->span);
                 continue;
             }
-            const bool isValueItem = valueUsed && item == block->items.back();
-            if (item->kind == syntax::Kind::blockExpr) {
-                analyzeBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(item), state, isValueItem);
-                continue;
-            }
             if (isExpressionKind(item->kind)) {
                 const auto statement = std::static_pointer_cast<syntax::ExprSyntax>(item);
-                statementPosition = !isValueItem;
                 analyzeExpression(statement, state);
-                statementPosition = false;
-                // A statement's value is dropped, so a linear one would be lost; the last
-                // expression of a block whose value is used is moved on by the caller.
-                if (!isValueItem) reportDroppedLinearValue(statement, state);
+                // A discarded value is dropped, so a linear one would be lost; the last expression
+                // of a block whose value is used is moved on by the caller.
+                if (model->isValueDiscarded(statement)) reportDroppedLinearValue(statement, state);
             }
         }
         for (const auto symbol : localScopes.back()) {
@@ -682,7 +667,7 @@ private:
             loops.push_back(LoopFlow { localScopes.size(), {}, {}, pendingLinearMoves });
             analyzeExpression(statement->condition, entry);
             auto bodyState = entry;
-            analyzeBlock(statement->body, bodyState, false);
+            analyzeBlock(statement->body, bodyState);
             auto flow = std::move(loops.back());
             loops.pop_back();
             flow.continues.push_back(std::move(bodyState));
@@ -709,7 +694,6 @@ private:
     void analyzeExpression(
             const syntax::ExprPtr& expression,
             InitializationState& state) {
-        const bool statement = std::exchange(statementPosition, false);
         if (expression == nullptr || !state.reachable) return;
         switch (expression->kind) {
             case syntax::Kind::nameExpr:
@@ -948,10 +932,10 @@ private:
                 break;
             }
             case syntax::Kind::blockExpr:
-                analyzeBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression), state, !statement);
+                analyzeBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression), state);
                 break;
             case syntax::Kind::ifExpr:
-                analyzeIf(std::static_pointer_cast<syntax::IfExprSyntax>(expression), state, statement);
+                analyzeIf(std::static_pointer_cast<syntax::IfExprSyntax>(expression), state);
                 break;
             case syntax::Kind::returnExpr: {
                 const auto returned =
@@ -975,7 +959,7 @@ private:
                 break;
             }
             case syntax::Kind::matchExpr:
-                analyzeMatch(std::static_pointer_cast<syntax::MatchExprSyntax>(expression), state, statement);
+                analyzeMatch(std::static_pointer_cast<syntax::MatchExprSyntax>(expression), state);
                 break;
             default:
                 break;
@@ -1250,20 +1234,17 @@ private:
         return std::nullopt;
     }
 
+    // The type checker marks the branch tails of a discarded `if`, and the then-branch tail of every
+    // `if` without `else`, which is `Void`.
     void analyzeIf(
             const syntax::IfExprSyntax::Ptr& expression,
-            InitializationState& state,
-            bool statement = false) {
+            InitializationState& state) {
         analyzeExpression(expression->condition, state);
         if (!state.reachable) return;
         auto thenState = state;
-        analyzeBlock(expression->thenBranch, thenState, !statement);
+        analyzeBlock(expression->thenBranch, thenState);
         auto elseState = state;
-        if (expression->elseBranch != nullptr) {
-            statementPosition = statement;
-            analyzeExpression(expression->elseBranch, elseState);
-            statementPosition = false;
-        }
+        if (expression->elseBranch != nullptr) analyzeExpression(expression->elseBranch, elseState);
         state = merge({ std::move(thenState), std::move(elseState) });
     }
 
@@ -1340,8 +1321,7 @@ private:
 
     void analyzeMatch(
             const syntax::MatchExprSyntax::Ptr& expression,
-            InitializationState& state,
-            bool statement = false) {
+            InitializationState& state) {
         analyzeExpression(expression->scrutinee, state);
         if (!state.reachable) return;
         const auto scrutineeType = model->typeOf(expression->scrutinee);
@@ -1354,10 +1334,8 @@ private:
             localScopes.emplace_back();
             if (movesLinear) checkLinearPatternDrops(arm->pattern, *scrutineeType, true);
             initializePattern(arm->pattern, armState, localScopes.back());
-            statementPosition = statement;
             analyzeExpression(arm->body, armState);
-            statementPosition = false;
-            if (statement) reportDroppedLinearValue(arm->body, armState);
+            if (model->isValueDiscarded(arm->body)) reportDroppedLinearValue(arm->body, armState);
             for (const auto symbol : localScopes.back()) {
                 checkLinearEnded(symbol, armState, arm->span, "the end of this match arm");
                 forgetBinding(symbol, armState);
