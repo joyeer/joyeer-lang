@@ -1,9 +1,11 @@
+import Foundation
 import System
 
 private func validProject(project: borrowing Project): Bool {
     var index = 0
     while index < project.modules.count {
-        if project.modules[index].directory != pathDirectory(path: project.modules[index].path) {
+        if project.modules[index].directory !=
+            pathDirectory(path: project.modules[index].path, windows: System.isWindows()) {
             return false
         }
         if project.modules[index].dependencyIndexes.count != project.modules[index].spec.dependencies.count {
@@ -33,9 +35,9 @@ private func manifestBoundary(args: [String]): Int {
         }
         return match loadProject(options: options) {
             .Ok(project) => {
-                if args.count != 3 || decimal(value: project.modules.count) != args[2] { return 30 }
+                if args.count != 3 || decimalString(value: project.modules.count) != args[2] { return 30 }
                 if !validProject(project: project) { return 32 }
-                print(value: "project ok: modules=" + decimal(value: project.modules.count))
+                print(value: "project ok: modules=" + decimalString(value: project.modules.count))
                 return 0
             },
             .Err(_) => 31,
@@ -48,8 +50,8 @@ private func manifestBoundary(args: [String]): Int {
     if args[1] == "workspace" {
         return match parseWorkspace(contents: source) {
             .Ok(members) => {
-                if args.count != 3 || decimal(value: members.count) != args[2] { return 23 }
-                print(value: "workspace ok: members=" + decimal(value: members.count))
+                if args.count != 3 || decimalString(value: members.count) != args[2] { return 23 }
+                print(value: "workspace ok: members=" + decimalString(value: members.count))
                 return 0
             },
             .Err(_) => 24,
@@ -58,15 +60,15 @@ private func manifestBoundary(args: [String]): Int {
     return match parseManifest(contents: source) {
         .Ok(parsed) => {
             if args.count != 3 || args[1] != "accept" || parsed.name != args[2] { return 25 }
-            print(value: "manifest ok: sources=" + decimal(value: parsed.sources.count) +
-                " name=" + decimal(value: parsed.name.count))
+            print(value: "manifest ok: sources=" + decimalString(value: parsed.sources.count) +
+                " name=" + decimalString(value: parsed.name.count))
             return 0
         },
         .Err(error) => {
             if args.count != 4 || args[1] != "reject" { return 26 }
             if error.message != args[2] { return 27 }
-            if decimal(value: error.pos) != args[3] { return 28 }
-            print(value: "manifest rejected at byte " + decimal(value: error.pos))
+            if decimalString(value: error.pos) != args[3] { return 28 }
+            print(value: "manifest rejected at byte " + decimalString(value: error.pos))
             return 0
         },
     }

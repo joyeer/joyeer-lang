@@ -43,6 +43,8 @@ enum JoyeerDictionaryKeyKind {
 // status 1; a null message reads "unknown error". Written in Joyeer
 // (lib/Runtime/core/panic.joyeer) and exported with this C ABI.
 JOYEER_NORETURN void joyeer_panic(const char* message);
+// The same failure path for arbitrary bytes, including embedded NUL.
+JOYEER_NORETURN void joyeer_panic_bytes(const uint8_t* data, int64_t count);
 
 // The runtime allocator and its leak counter, written in Joyeer
 // (lib/Runtime/core/allocator.joyeer). A size is the byte count the block was

@@ -1,8 +1,3 @@
-if(WIN32)
-    set(JOYEER_FERN_HOST_WINDOWS true)
-else()
-    set(JOYEER_FERN_HOST_WINDOWS false)
-endif()
 configure_file(platform.joyeer.in platform.joyeer @ONLY)
 
 # This is the complete bootstrap compilation set, shared with the logic test.
@@ -65,7 +60,8 @@ add_custom_command(
         "$<IF:$<CONFIG:Debug>,-O0,-O2>"
         "$<IF:$<CONFIG:Debug>,${fern_debug_flag},-g0>"
         -o "${JOYEER_FERN_EXECUTABLE}" -- ${JOYEER_FERN_SOURCES}
-    DEPENDS JoyeerToolchain joyeer JoyeerBackend JoyeerRuntime
+    DEPENDS JoyeerToolchain JoyeerStandardLibrary joyeer JoyeerBackend JoyeerRuntime
+        "${JOYEER_STDLIB_STAMP}"
         ${JOYEER_FERN_SOURCES}
     COMMENT "Bootstrapping fern with the build-tree Joyeer compiler"
     VERBATIM)

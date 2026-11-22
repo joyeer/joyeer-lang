@@ -11,8 +11,8 @@ A C boundary for the toolchain-controlled runtime context that is accepted on ev
 with designed contracts for native memory before any source syntax is added. This plan does not add
 user FFI.
 
-Related plans: [runtime-in-joyeer](0008-runtime-in-joyeer.md) (the runtime in Joyeer),
-[library](0003-library.md) (`Foundation`, `System`, `Collections`, `Testing`),
+Related: [runtime-in-joyeer](0008-runtime-in-joyeer.md),
+[standard modules](../../specs/12-modules.md#125-standard-modules), and
 [native-link-inputs](0004-native-link-inputs.md) (supplying link inputs).
 
 ## Definition of done

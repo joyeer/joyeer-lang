@@ -3,18 +3,12 @@
 Joyeer uses runtime checks instead of declaration-level contract
 keywords. There is no `requires` / `ensures` / `invariant` syntax in v0.1.
 
-**Implementation status:** this chapter specifies the intended library API.
-The current compiler does not provide `assert`, `precondition`, or
-`fatalError` in its prelude. Compiler-generated arithmetic and bounds traps
-are separate mechanisms. The examples below are draft-library examples, not
-programs supported by the current builtin inventory.
-
 ### 9.1 Contract style in Joyeer
 
 Contract intent is expressed in executable code:
 
 - Preconditions at API boundaries: `precondition(...)`
-- Internal invariants and debug-only checks: `assert(...)`
+- Internal invariants: `assert(...)`
 - Unrecoverable paths: `fatalError(...)`
 
 ```joyeer
@@ -27,19 +21,24 @@ func divide(a: Int, b: Int): Int {
 ### 9.2 Standard checks
 
 ```
-assert(condition: Bool, message: String = "")
-precondition(condition: Bool, message: String = "")
-fatalError(message: String): Never
+func assert(condition: Bool, message: String): Void
+func precondition(condition: Bool, message: String): Void
+func fatalError(message: String): Never
 ```
 
-- `assert`: for development-time validation. Implementations may elide it in
-  optimized builds.
-- `precondition`: for caller obligations that must hold in all builds.
-- `fatalError`: immediately terminates execution and does not return.
+- `assert` checks an invariant; `precondition` checks a caller obligation.
+  Both are active in every build. The condition and message are evaluated
+  once in order, even when the condition is true, as for any ordinary call.
+- The `message:` argument is required and may be empty. No special default
+  argument or overload is supplied for these functions.
+- A failed check calls `fatalError`, which tries to flush standard output,
+  writes `Joyeer runtime error: ` followed by the exact message bytes and a
+  newline to standard error, and ends the process with status 1. Host stream
+  failures can prevent diagnostic output. The failure path does not unwind
+  or run destructors.
 
-Eliding an `assert` does not disable compiler-generated arithmetic or bounds
-checks. Required trapping semantics remain in optimized builds; a redundant
-check may be removed only when observable behavior is preserved.
+Compiler-generated arithmetic and bounds checks are separate. Optimizations
+may remove a redundant check only when observable behavior is preserved.
 
 ### 9.3 Optional-first contract discipline
 
@@ -47,8 +46,11 @@ Uncertainty is modeled with `T?` (Optional), not with nullable-by-default
 references. Code should unwrap explicitly and fail explicitly when required.
 
 ```joyeer
-func parsePort(s: String): Int {
-  let v = parseInt(s: s) ?? fatalError(message: "invalid port")
+func requirePort(parsed: Int?): Int {
+  let v = match parsed {
+    .Some(port) => port,
+    .None => fatalError(message: "invalid port"),
+  }
   precondition(condition: v >= 0 && v <= 65535, message: "port out of range")
   return v
 }
@@ -65,18 +67,17 @@ Postconditions are expressed with local snapshots and `assert`:
 func bumpAndGet(x: inout Int): Int {
   let old = x
   &x = x + 1
-  assert(condition: x == old + 1)
+  assert(condition: x == old + 1, message: "bump must advance by one")
   return x
 }
 ```
 
-### 9.5 Intended compiler treatment
+### 9.5 Compiler treatment
 
-- `assert`, `precondition`, and `fatalError` are ordinary callable symbols
-  to be provided by the prelude / standard library.
-- Once provided, they are type-checked like normal function calls; declaring
-  an ordinary user function with one of these names does not automatically
-  give it checking or termination semantics.
+- These are ordinary callable functions provided by the bundled prelude.
+- They follow ordinary lookup and typing rules. A user function with the
+  same name does not gain checking or termination semantics; divergence
+  follows from the actual callee's `Never` result.
 - The compiler does not perform theorem proving.
 
 ### 9.6 Verification boundary

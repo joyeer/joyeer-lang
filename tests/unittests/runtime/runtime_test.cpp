@@ -23,6 +23,7 @@
 #include <fcntl.h>
 #include <io.h>
 #else
+#include <csignal>
 #include <fcntl.h>
 #include <unistd.h>
 #endif
@@ -1083,6 +1084,21 @@ TEST(RuntimeBlackBoxDeathTest, PanicPrintsTheMessageAndExitsWithFailure) {
                 "Joyeer runtime error: unknown error");
     EXPECT_EXIT(joyeer_panic(""), testing::ExitedWithCode(1), "Joyeer runtime error: \n");
 }
+
+#ifndef _WIN32
+TEST(RuntimeBlackBoxDeathTest, ContractPanicExitsEvenWhenStderrHasNoReader) {
+    EXPECT_EXIT({
+        int ends[2];
+        sigset_t signals;
+        if (pipe(ends) != 0 || close(ends[0]) != 0 ||
+            dup2(ends[1], STDERR_FILENO) < 0 || close(ends[1]) != 0 ||
+            sigemptyset(&signals) != 0 || sigaddset(&signals, SIGPIPE) != 0 ||
+            sigprocmask(SIG_UNBLOCK, &signals, nullptr) != 0 ||
+            std::signal(SIGPIPE, SIG_DFL) == SIG_ERR) _exit(77);
+        joyeer_panic_bytes(reinterpret_cast<const uint8_t*>("err"), 3);
+    }, testing::ExitedWithCode(1), "");
+}
+#endif
 
 TEST(RuntimeBlackBoxTest, StandardOutputIsOneBufferSharedByPrintAndWrite) {
     std::fflush(stdout);

@@ -1,0 +1,33 @@
+private func condition(): Bool {
+    print(value: "condition")
+    return true
+}
+
+private func message(): String {
+    print(value: "message")
+    return ""
+}
+
+struct Guard {
+    let tag: String
+    deinit() { print(value: self.tag) }
+}
+
+func main(args: [String]): Int {
+    let guard = Guard(tag: "unexpected cleanup")
+    let check: (Bool, String): Void = assert
+    check(condition(), message())
+    if args[0] == "assert" {
+        assert(condition: false, message: "assert failed")
+    } else if args[0] == "precondition" {
+        precondition(condition: false, message: "precondition failed")
+    } else {
+        let absent: Int? = nil
+        let data = "before\0" + byteToString(value: 255) + "after"
+        return match absent {
+            .Some(value) => value,
+            .None => fatalError(message: data),
+        }
+    }
+    return 99
+}

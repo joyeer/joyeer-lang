@@ -5,7 +5,7 @@
 - Decisions: none
 - Spec: [§12](../../specs/12-modules.md)
 
-Related: [Library modules](0003-library.md), [native link inputs](0004-native-link-inputs.md),
+Related: [Standard modules](../../specs/12-modules.md#125-standard-modules), [native link inputs](0004-native-link-inputs.md),
 [fern](../impl/fern.md), [Compression](../impl/compression.md).
 
 ## Goal

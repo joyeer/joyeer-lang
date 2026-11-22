@@ -20,7 +20,7 @@ Explanations and plans do not add language rules or implementation guarantees.
 | Use the first local project-manager version | [impl/fern.md](impl/fern.md) |
 | Use the optional miniz-backed ZIP library | [Compression](impl/compression.md) |
 | Disassemble Java classes and JARs with an AI agent | [moss](../tools/moss/README.md) and its [skill](../tools/moss/skills/moss/SKILL.md) |
-| Plan runtime and public-library development | [Runtime in Joyeer](plan/0008-runtime-in-joyeer.md) and [Library modules](plan/0003-library.md) |
+| Track runtime work and see the public library | [Runtime in Joyeer](plan/0008-runtime-in-joyeer.md) and [Standard modules](../specs/12-modules.md#125-standard-modules) |
 | Plan how the compiler finds the standard library | [Toolchain library resolution](plan/0006-toolchain-libraries.md) |
 | See a larger program (a Markdown web server over the provisional [TCP API](../specs/18-host.md#186-tcp-networking)) | [example/](../example/README.md) |
 | Build from source | [building.md](building.md) |
@@ -73,7 +73,6 @@ iteration, a progress log, and deletion once every item is done. Start from the
 |---|---|
 | [0001](plan/0001-package-manager.md) | Package manager: remaining native platform/release gates and future dependency, workspace, cache, and registry contracts |
 | [0002](plan/0002-c-interop.md) | C interoperation: remaining scalar ABI implementation, cross-platform acceptance, and separate memory/alias proposals |
-| [0003](plan/0003-library.md) | Standard modules: remaining Foundation/System work (contract APIs, host detection, environment and time), Collections/Testing, and fern adoption |
 | [0004](plan/0004-native-link-inputs.md) | Linking native libraries by logical name and search path (proposed) |
 | [0005](plan/0005-test-audit.md) | Test coverage gaps: fuzzing, sanitizers, CI, ownership generators, spec traceability |
 | [0006](plan/0006-toolchain-libraries.md) | How the compiler finds standard modules (implemented) and what is left: the runtime in `lib/`, `--sysroot` in fern, precompiled modules |
@@ -118,6 +117,7 @@ in the spec.
 | [0026](decisions/0026-library-array.md) | `Array` as a library struct |
 | [0027](decisions/0027-library-dict.md) | `Dict` as a library struct |
 | [0028](decisions/0028-ir-opcode-set.md) | A smaller IR opcode set described by one table (accepted, in implementation) |
+| [0029](decisions/0029-contracts-and-owned-host-resources.md) | Prelude contracts, host queries and clocks, and noncopyable native resource owners |
 
 ## Conventions
 

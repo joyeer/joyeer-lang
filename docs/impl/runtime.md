@@ -14,10 +14,9 @@ The runtime is not offered as separately selectable `abi`, `core`, or `std`
 profiles. Programs depend on the target's C runtime and startup/link inputs;
 freestanding, kernel, embedded, and no-libc profiles are not supported.
 
-The [runtime plan](../plan/0008-runtime-in-joyeer.md) describes how the whole runtime moves
-into Joyeer behind the existing runtime interfaces; this document
-describes the current C implementation. Public library modules and their
-separate fern workflow are tracked in the [library plan](../plan/0003-library.md).
+The [runtime plan](../plan/0008-runtime-in-joyeer.md) tracks the remaining
+runtime work. The [standard modules](../../specs/12-modules.md#125-standard-modules)
+are distinct from the runtime archive and use the [fern](fern.md) source-module workflow.
 The [C binding implementation](c-interop.md) supports the restricted
 by-value scalar runtime-source boundary of [§19](../../specs/19-c-interop.md).
 It does not replace any production C algorithm or compiler-known runtime
@@ -37,6 +36,13 @@ operation. String byte reads and `count`, concatenation, equality, ordering and 
 functions of the collections prelude ([0028](../decisions/0028-ir-opcode-set.md)); a byte read is an inline bounds
 check and load, and the others call `joyeer_string_concat_abi`, `joyeer_string_equal_abi`,
 `joyeer_string_compare_abi` and the owned-array creation API by their Int signatures.
+
+The [contract functions](../../specs/09-contracts.md#92-standard-checks) are
+ordinary bundled Joyeer functions. They pass a borrowed message to
+`joyeer_panic_bytes` as a pointer and a byte count, so even embedded NUL or
+non-UTF-8 bytes survive. The core panic path allocates nothing, makes a
+best-effort output flush and diagnostic write, and exits without unwinding.
+Compiler-generated traps still use the existing `joyeer_panic` C-string ABI.
 
 Scalar printing includes all integer widths, `Float`, and `Double`. Signed
 integers use the existing 64-bit printer after sign extension; unsigned
@@ -253,17 +259,13 @@ new runtime allocation or destruction API is introduced for unit values.
 
 ## Host operations
 
-File input, the portable filesystem, synchronous processes, standard-error
-writing and standard-input line reading are not part of the C runtime. They are
-ordinary Joyeer functions in the `System` standard module
-([spec §18](../../specs/18-host.md)): `readFile` (legacy), `readFileUtf8`,
-`readFilePrefix`, `writeFileNew`, `createDirectory`, `listDirectory`,
-`fileKind`, `removeFile`, `removeDirectory`, `joinPath`, `runProcess`,
-`writeStderr` and `readStdinLine`. A program writes `import System`. The
-compiler knows no host function; it declares only the error and status
-enumerations they return (`IOError`, `FileSystemError`, `FileKind`,
-`ProcessStatus`, `ProcessError`, `StderrError`, `StdinError`) as prelude types,
-so user code and `System` share one definition.
+The portable filesystem, processes, streams, environment lookup, and clocks
+are ordinary Joyeer functions in the `System` standard module
+([spec §18](../../specs/18-host.md)). A program writes `import System`.
+Host functions are not builtins. The original host error and status
+enumerations (`IOError`, `FileSystemError`, `FileKind`,
+`ProcessStatus`, `ProcessError`, `StderrError`, `StdinError`) remain prelude
+types, so user code and `System` share one definition.
 
 `System` reaches the operating system through `@c_extern` bindings, authorized
 by the module's `native-bindings = true` ([§19](../../specs/19-c-interop.md)): the
@@ -276,6 +278,22 @@ see [decision 0003](../decisions/0003-pure-joyeer-filesystem.md),
 embedded NUL and emptiness before the host is asked, and become UTF-16 on
 Windows and UTF-8 on POSIX. Contents are never validated and remain arbitrary
 bytes.
+
+Owned file and directory APIs use `deinit` to release their native tokens.
+Windows uses non-inheritable handles; Linux uses close-on-exec descriptors.
+On macOS, `openx_np` acquires file descriptors with `O_CLOEXEC`. Readers use
+`fdopen`; writers use descriptor I/O so an interrupted buffered write cannot
+duplicate bytes on retry. `opendir` supplies a close-on-exec directory stream.
+Directory enumeration uses the same cursor for the owned API and
+`listDirectory`. [Process owners](../../specs/18-host.md#183-child-processes)
+are created by the same launcher as `runProcess`; the scoped owner consumes
+and reaps the child on explicit wait or on normal destruction.
+
+Host queries live in `lib/System/queries*.joyeer`. Windows uses wide
+environment and directory APIs, `GetTickCount64`, and `FILETIME`; POSIX
+queries the native environment, directory and `clock_gettime` without a
+host subprocess. Linux uses raw calls and the inherited environment vector,
+not libc. See the [validation record](supported-features.md#standard-library-validation).
 
 What the runtime still provides to them:
 

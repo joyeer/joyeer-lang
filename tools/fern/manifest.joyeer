@@ -4,6 +4,9 @@
 // and 1024 strings per module array. Arrays cannot be nested.
 // Locations are zero-based byte offsets in the original manifest.
 
+import Foundation
+import System
+
 struct ModuleSpec {
     let name: String
     let kind: String
@@ -62,7 +65,7 @@ private func manifestDeviceName(name: String): Bool {
     if manifestAsciiEqual(first: name, second: "conin$") { return true }
     if manifestAsciiEqual(first: name, second: "conout$") { return true }
     if name.count == 4 {
-        let prefix = textSlice(text: name, start: 0, end: 3)
+        let prefix = substring(text: name, start: 0, end: 3)
         let digit = name[3]
         if digit >= b'1' && digit <= b'9' {
             return manifestAsciiEqual(first: prefix, second: "com") ||
@@ -84,7 +87,7 @@ func validPortableName(name: String): Bool {
         }
         index = index + 1
     }
-    if hostWindows() && manifestDeviceName(name: name) { return false }
+    if System.isWindows() && manifestDeviceName(name: name) { return false }
     return true
 }
 
@@ -111,18 +114,15 @@ func validModuleName(name: String): Bool {
     return !componentStart
 }
 
-private func manifestSeparator(byte: UInt8): Bool {
-    return byte == b'/' || (hostWindows() && byte == b'\\')
-}
-
 private func manifestSourcePath(path: String): Bool {
     if path.count == 0 { return false }
-    if manifestSeparator(byte: path[0]) { return false }
+    let windows = System.isWindows()
+    if isPathSeparator(byte: path[0], windows: windows) { return false }
     // Drive-relative and drive-absolute spellings are forbidden on every host.
     if path.count >= 2 {
         if manifestLetter(byte: path[0]) && path[1] == b':' { return false }
     }
-    if manifestSeparator(byte: path[path.count - 1]) { return false }
+    if isPathSeparator(byte: path[path.count - 1], windows: windows) { return false }
     var start = 0
     var index = 0
     while index <= path.count {
@@ -131,8 +131,8 @@ private func manifestSourcePath(path: String): Bool {
             let byte = path[index]
             let value = byteToInt(value: byte)
             if value == 0 { return false }
-            boundary = manifestSeparator(byte: byte)
-            if hostWindows() && !boundary {
+            boundary = isPathSeparator(byte: byte, windows: windows)
+            if windows && !boundary {
                 // Exclude ADS/device syntax and Win32 trimming aliases, which
                 // could otherwise disguise a parent-traversal component.
                 if value < 32 || byte == b':' || byte == b'*' || byte == b'?' ||
@@ -148,7 +148,7 @@ private func manifestSourcePath(path: String): Bool {
             }
             let dot = length == 1 && path[start] == b'.'
             if index == path.count && (length == 0 || dot) { return false }
-            if hostWindows() && length > 0 && !dot {
+            if windows && length > 0 && !dot {
                 let last = path[index - 1]
                 if last == b'.' || last == b' ' { return false }
                 var stemEnd = start
@@ -156,7 +156,7 @@ private func manifestSourcePath(path: String): Bool {
                     if path[stemEnd] == b'.' { break }
                     stemEnd = stemEnd + 1
                 }
-                let stem = textSlice(text: path, start: start, end: stemEnd)
+                let stem = substring(text: path, start: start, end: stemEnd)
                 if manifestDeviceName(name: stem) { return false }
             }
             start = index + 1
@@ -171,26 +171,27 @@ func validArtifactModuleName(name: String): Bool {
 }
 
 func artifactModuleNamesEqual(first: String, second: String): Bool {
-    if hostWindows() { return manifestAsciiEqual(first: first, second: second) }
+    if System.isWindows() { return manifestAsciiEqual(first: first, second: second) }
     return first == second
 }
 
 func manifestSourceKey(path: String): String {
     // A lexical duplicate key only. Physical aliases and Unicode filesystem
     // case folding remain the compiler's authoritative input checks.
+    let windows = System.isWindows()
     let lower = "abcdefghijklmnopqrstuvwxyz"
     var key = ""
     var start = 0
     var index = 0
     while index <= path.count {
         var boundary = index == path.count
-        if index < path.count { boundary = manifestSeparator(byte: path[index]) }
+        if index < path.count { boundary = isPathSeparator(byte: path[index], windows: windows) }
         if boundary {
             let length = index - start
             let dot = length == 1 && path[start] == b'.'
             if length > 0 && !dot {
                 if key.count > 0 { key = key + "/" }
-                if hostWindows() {
+                if windows {
                     var cursor = start
                     while cursor < index {
                         let byte = path[cursor]
@@ -204,7 +205,7 @@ func manifestSourceKey(path: String): String {
                         cursor = cursor + 1
                     }
                 } else {
-                    key = key + textSlice(text: path, start: start, end: index)
+                    key = key + substring(text: path, start: start, end: index)
                 }
             }
             start = index + 1
@@ -306,7 +307,7 @@ private func manifestBareKey(p: inout ManifestCursor): Result<String, ToolError>
     if p.pos == start {
         return .Err(ToolError(message: "expected bare key; quoted and dotted keys are unsupported", pos: start))
     }
-    return .Ok(textSlice(text: p.input, start: start, end: p.pos))
+    return .Ok(substring(text: p.input, start: start, end: p.pos))
 }
 
 private func manifestKey(p: inout ManifestCursor): Result<String, ToolError> {
@@ -362,7 +363,8 @@ private func manifestHex(byte: UInt8): Int {
 }
 
 private func manifestSchemaValue(token: String, expected: Int): Bool {
-    if token == decimal(value: expected) || token == "+" + decimal(value: expected) { return true }
+    let formatted = decimalString(value: expected)
+    if token == formatted || token == "+" + formatted { return true }
     if token.count < 3 { return false }
     if token[0] != b'0' { return false }
     var base = 0
@@ -400,10 +402,10 @@ private func manifestSchema(p: inout ManifestCursor, expected: Int): Result<Void
         }
         manifestAdvance(p: &p)
     }
-    let token = textSlice(text: p.input, start: pos, end: p.pos)
+    let token = substring(text: p.input, start: pos, end: p.pos)
     if !manifestSchemaValue(token: token, expected: expected) {
         return .Err(ToolError(message: "schema-version must be the TOML integer " +
-            decimal(value: expected), pos: pos))
+            decimalString(value: expected), pos: pos))
     }
     return .Ok(())
 }
@@ -533,12 +535,12 @@ private func manifestString(p: inout ManifestCursor): Result<String, ToolError> 
     while p.pos < p.input.count {
         let byte = manifestCurrent(p: p)
         if byte == quote {
-            let tail = textSlice(text: p.input, start: start, end: p.pos)
+            let tail = substring(text: p.input, start: start, end: p.pos)
             manifestAdvance(p: &p)
             return .Ok(text + tail)
         }
         if byte == b'\\' && quote == b'"' {
-            text = text + textSlice(text: p.input, start: start, end: p.pos)
+            text = text + substring(text: p.input, start: start, end: p.pos)
             let escaped = manifestEscape(p: &p)?
             if text.count + escaped.count > 4096 {
                 return .Err(ToolError(message: "decoded string exceeds 4096 bytes", pos: pos))
@@ -685,10 +687,10 @@ private func manifestModuleBody(p: inout ManifestCursor, pos: Int): Result<Modul
             hasNativeLibraries = true
         } else if key == "native-bindings" {
             if hasNativeBindings { return .Err(ToolError(message: "duplicate module.native-bindings", pos: keyPos)) }
-            if textSlice(text: p.input, start: p.pos, end: p.pos + 4) == "true" {
+            if substring(text: p.input, start: p.pos, end: p.pos + 4) == "true" {
                 nativeBindings = true
                 &p.pos = p.pos + 4
-            } else if textSlice(text: p.input, start: p.pos, end: p.pos + 5) == "false" {
+            } else if substring(text: p.input, start: p.pos, end: p.pos + 5) == "false" {
                 &p.pos = p.pos + 5
             } else {
                 return .Err(ToolError(message: "module.native-bindings must be true or false", pos: valuePos))
@@ -745,7 +747,7 @@ private func manifestInput(contents: String): Result<Void, ToolError> {
     if contents.count > 65536 {
         return .Err(ToolError(message: "manifest exceeds 65536 bytes", pos: 65536))
     }
-    if !validUtf8(text: contents) {
+    if !isValidUtf8(text: contents) {
         return .Err(ToolError(message: "manifest contents must be valid UTF-8", pos: 0))
     }
     return .Ok(())

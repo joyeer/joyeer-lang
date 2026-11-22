@@ -134,9 +134,9 @@ private:
     std::optional<ir::DestructionAnalysis> destruction;
     std::vector<Diagnostic> diagnostics;
     std::unordered_map<semantic::SymbolId, ir::FunctionId> functions;
-    // The String role functions of the collections prelude, collected on first use (decision 0028 stage 3).
-    std::unordered_map<semantic::SymbolId, syntax::FunctionDeclSyntax::Ptr> stringRoleDeclarations;
-    std::vector<std::pair<syntax::FunctionDeclSyntax::Ptr, ir::FunctionId>> pendingStringRoles;
+    // String roles and contracts are emitted only when generated code uses them.
+    std::unordered_map<semantic::SymbolId, syntax::FunctionDeclSyntax::Ptr> deferredPreludeFunctions;
+    std::vector<std::pair<syntax::FunctionDeclSyntax::Ptr, ir::FunctionId>> pendingPreludeBodies;
     // Top-level `let` constants, evaluated at compile time. Scalars and strings
     // fold into each use; arrays become shared module constants.
     std::unordered_map<semantic::SymbolId, syntax::BindingDeclSyntax::Ptr> constantDeclarations;
@@ -755,14 +755,16 @@ private:
         const auto& semanticModel = *model->semanticModel();
         const auto& root = semanticModel.compilationRoot();
         if (root == nullptr) return;
+        const auto contractsSource = semanticModel.contractsPreludeSourceId();
         for (const auto& item : root->items) {
             if (item->kind == syntax::Kind::functionDecl) {
                 const auto declaration = std::static_pointer_cast<syntax::FunctionDeclSyntax>(item);
                 // A generic function has no code of its own; each instance is collected below.
                 const auto symbol = semanticModel.declaredSymbol(declaration);
                 if (symbol.has_value() && model->genericParameters(*symbol) != nullptr) continue;
-                if (symbol.has_value() && isStringRoleFunction(*symbol)) {
-                    stringRoleDeclarations.emplace(*symbol, declaration);
+                if (symbol.has_value() &&
+                    (contractsSource == declaration->span.sourceId || isStringRoleFunction(*symbol))) {
+                    deferredPreludeFunctions.emplace(*symbol, declaration);
                     continue;
                 }
                 collectFunction(declaration);
@@ -780,9 +782,8 @@ private:
         collectInstances(*root);
         linkDeinitializers(*root);
         evaluateConstants();
-        // A String role is collected while another function is being lowered; the room reserved here keeps
-        // references to the functions valid.
-        module->functions.reserve(module->functions.size() + stringRoleDeclarations.size());
+        // Lowering can collect more declarations without invalidating references to the functions.
+        module->functions.reserve(module->functions.size() + deferredPreludeFunctions.size());
     }
 
     // The collections prelude's String role functions (decision 0028 stage 3) are collected when a String operation
@@ -796,9 +797,13 @@ private:
     std::optional<ir::FunctionId> stringRoleFunction(semantic::LibraryRole role) {
         const auto symbol = model->stringRoleFunction(role);
         if (!symbol.has_value()) return std::nullopt;
-        if (const auto found = functions.find(*symbol); found != functions.end()) return found->second;
-        const auto declaration = stringRoleDeclarations.find(*symbol);
-        if (declaration == stringRoleDeclarations.end()) return std::nullopt;
+        return demandFunction(*symbol);
+    }
+
+    std::optional<ir::FunctionId> demandFunction(semantic::SymbolId symbol) {
+        if (const auto found = functions.find(symbol); found != functions.end()) return found->second;
+        const auto declaration = deferredPreludeFunctions.find(symbol);
+        if (declaration == deferredPreludeFunctions.end()) return std::nullopt;
         // A non-generic function: collected outside the instance being lowered, if any.
         const auto* instance = currentInstance;
         const auto instanceIndex = currentInstanceIndex;
@@ -811,8 +816,9 @@ private:
         currentInstance = instance;
         currentInstanceIndex = instanceIndex;
         if (module->functions.size() == before) return std::nullopt;
-        pendingStringRoles.emplace_back(declaration->second, static_cast<ir::FunctionId>(before));
-        return static_cast<ir::FunctionId>(before);
+        const auto id = static_cast<ir::FunctionId>(before);
+        if (!module->functions[id].isExternal) pendingPreludeBodies.emplace_back(declaration->second, id);
+        return id;
     }
 
     // One IR function per instance of a generic function (decision 0021), named for its type
@@ -1267,8 +1273,7 @@ private:
             if (item->kind != syntax::Kind::functionDecl) continue;
             const auto declaration = std::static_pointer_cast<syntax::FunctionDeclSyntax>(item);
             const auto symbol = semanticModel.declaredSymbol(declaration);
-            // A String role collected by now is lowered with the others below.
-            if (!symbol.has_value() || stringRoleDeclarations.contains(*symbol)) continue;
+            if (!symbol.has_value() || deferredPreludeFunctions.contains(*symbol)) continue;
             const auto found = functions.find(*symbol);
             if (found != functions.end() && !module->functions[found->second].isExternal) {
                 lowerFunction(declaration, found->second);
@@ -1288,8 +1293,8 @@ private:
             lowerFunction(declaration, instanceFunctions[index]);
             leaveInstance();
         }
-        for (size_t index = 0; index < pendingStringRoles.size(); ++index) {
-            const auto [declaration, id] = pendingStringRoles[index];
+        for (size_t index = 0; index < pendingPreludeBodies.size(); ++index) {
+            const auto [declaration, id] = pendingPreludeBodies[index];
             lowerFunction(declaration, id);
         }
     }
@@ -1629,13 +1634,14 @@ private:
     // A function named where it is not called (spec 5.6.1).
     std::optional<ir::Value> lowerFunctionAddress(semantic::SymbolId symbol, const syntax::NodePtr& expression) {
         const auto type = typeOf(expression);
-        if (!functions.contains(symbol) || !type.has_value()) {
+        const auto function = demandFunction(symbol);
+        if (!function.has_value() || !type.has_value()) {
             report(DiagnosticId::missingSymbol, expression->span,
                    "function value has no IR function declaration");
             return std::nullopt;
         }
         auto instruction = makeInstruction(ir::Opcode::functionAddress, expression->span);
-        instruction.callee = functions.at(symbol);
+        instruction.callee = *function;
         instruction.result = makeValue(*type, ir::ValueCategory::value);
         const auto result = *instruction.result;
         emit(std::move(instruction));
@@ -3597,9 +3603,7 @@ private:
             if (found == functions.end()) return std::nullopt;
             return found->second;
         }
-        const auto found = functions.find(target);
-        if (found == functions.end()) return std::nullopt;
-        return found->second;
+        return demandFunction(target);
     }
 
     // One argument of a call: an address for `inout` and `initializing`, a moved value for `consuming`,

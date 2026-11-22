@@ -4754,6 +4754,7 @@ private:
                            : std::optional<std::string>("call it, or use a top-level Joyeer function"));
             return model->typeContext.errorType();
         }
+        recordProcessLaunchUse(symbol, expression->span);
         std::vector<syntax::AccessEffect> effects;
         for (const auto& parameter : symbol->callable->parameters) effects.push_back(parameter.access);
         return model->typeContext.functionType(signature->parameters, effects, signature->result);
@@ -5240,11 +5241,7 @@ private:
         const auto* semanticTarget = target.has_value()
                 ? model->semanticModelValue->symbol(*target)
                 : nullptr;
-        if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::function &&
-            semanticTarget->name == "runProcess" && !semanticTarget->isRootModule) {
-            const auto* module = model->semanticModelValue->moduleName(semanticTarget->moduleId);
-            if (module != nullptr && *module == "System") model->runProcessCallSpans.push_back(expression->span);
-        }
+        recordProcessLaunchUse(semanticTarget, expression->span);
         if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::builtinFunction &&
             semanticTarget->name == "print"
  && model->semanticModelValue->isCoreSource(expression->span)) {
@@ -5482,6 +5479,13 @@ private:
         }
         return receiverResultType.value_or(
                 signature == nullptr ? model->typeContext.errorType() : signature->result);
+    }
+
+    void recordProcessLaunchUse(const semantic::Symbol* symbol, SourceSpan span) {
+        if (symbol == nullptr || symbol->kind != semantic::SymbolKind::function ||
+            (symbol->name != "runProcess" && symbol->name != "startProcess")) return;
+        const auto* module = model->semanticModelValue->moduleName(symbol->moduleId);
+        if (module != nullptr && *module == "System") model->processLaunchUseSpans.push_back(span);
     }
 
     TypeId checkCallbackAddress(const syntax::CallExprSyntax::Ptr& expression) {

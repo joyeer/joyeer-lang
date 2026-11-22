@@ -15,7 +15,6 @@ import Foundation
 // intrinsics of spec §19.4.5; both buffers outlive the call.
 
 private let interrupted: Int = 4
-private let rangeError: Int = 34
 private let noChild: Int = 10
 private let closeOnExec: Int = 524288
 private let childSignal: Int = 17
@@ -35,35 +34,6 @@ private func wordAt(bytes: [UInt8], offset: Int, width: Int): Int {
         value = (value << 8) | byteToInt(value: bytes[offset + index])
     }
     return value
-}
-
-// A relative path becomes absolute against the current directory, so the
-// executable is resolved before the child changes directory.
-@platform(linux)
-private func absolute(text: String): Result<String, ProcessError> {
-    if text[0] == b'/' { return .Ok(text) }
-    var size = 256
-    var outcome: Result<String, ProcessError> = .Err(.LaunchFailed(rangeError))
-    var searching = true
-    while searching {
-        var buffer = zeroBuffer(count: size)
-        // getcwd returns the length of the path including its NUL.
-        let length = linuxCall(x86: 79, arm: 17, first: addressOfBytes(bytes: &buffer), second: size,
-            third: 0, fourth: 0, fifth: 0, sixth: 0)
-        if kernelFailed(outcome: length) {
-            if length == 0 - rangeError {
-                size = size * 2
-            } else {
-                outcome = .Err(classifyProcessError(code: 0 - length))
-                searching = false
-            }
-        } else {
-            let base = stringFromBytes(bytes: buffer, count: length - 1)
-            outcome = .Ok(base + "/" + text)
-            searching = false
-        }
-    }
-    return outcome
 }
 
 // Appends `text` and a NUL; returns the offset it starts at.
@@ -101,34 +71,36 @@ private func runChild(directory: Int, path: Int, argv: Int, writeEnd: Int, repor
     // The buffer was allocated before the fork: another thread may have held the allocator lock
     // when it happened, and a child that allocated would wait for a lock nobody will release.
     store64(address: reportAddress, value: code as UInt64)
-    linuxCall(x86: 1, arm: 64, first: writeEnd, second: reportAddress, third: reportBytes,
-        fourth: 0, fifth: 0, sixth: 0)
+    var written = 0 - interrupted
+    while written == 0 - interrupted {
+        written = linuxCall(x86: 1, arm: 64, first: writeEnd, second: reportAddress, third: reportBytes,
+            fourth: 0, fifth: 0, sixth: 0)
+    }
     linuxCall(x86: 231, arm: 94, first: 127, second: 0, third: 0, fourth: 0, fifth: 0, sixth: 0)
     return code
 }
 
-// wait4's status word: the low seven bits are the terminating signal (zero for a normal
-// exit, 0x7f for a stopped child), the next byte the exit code.
 @platform(linux)
-private func waitForChild(pid: Int): Result<ProcessStatus, ProcessError> {
+func nativeWait(child: Int, emergency: Bool): Result<ProcessStatus, ProcessError> {
     var status = zeroBuffer(count: 4)
     let address = addressOfBytes(bytes: &status)
-    var waited = 0 - interrupted
-    while waited == 0 - interrupted {
-        waited = linuxCall(x86: 61, arm: 260, first: pid, second: address, third: 0, fourth: 0, fifth: 0,
+    while true {
+        let waited = linuxCall(x86: 61, arm: 260, first: child, second: address, third: 0, fourth: 0, fifth: 0,
             sixth: 0)
+        if waited == 0 - interrupted { continue }
+        if waited == 0 - noChild { return .Err(.WaitFailed(noChild)) }
+        if waited < 0 { fatalError(message: "could not reap owned child process") }
+        match terminalStatus(word: wordAt(bytes: status, offset: 0, width: 4)) {
+            .Some(completion) => { return .Ok(completion) },
+            .None => {},
+        }
     }
-    if kernelFailed(outcome: waited) { return .Err(.WaitFailed(0 - waited)) }
-    let word = wordAt(bytes: status, offset: 0, width: 4)
-    let signal = word & 127
-    if signal == 0 { return .Ok(.Exited((word >> 8) & 255)) }
-    if signal != 127 { return .Ok(.Signaled(signal)) }
-    return .Err(.WaitFailed(noChild))
+    fatalError(message: "child wait returned without status")
 }
 
 @platform(linux)
-func nativeRun(executable: String, arguments: [String], workingDirectory: String): Result<ProcessStatus, ProcessError> {
-    let fullExecutable = absolute(text: executable)?
+func nativeStart(executable: String, arguments: [String], workingDirectory: String): Result<Int, ProcessError> {
+    let fullExecutable = absolutePosix(text: executable)?
     var block: [UInt8] = []
     var offsets: [Int] = []
     &offsets.append(element: appendTerminated(block: &block, text: fullExecutable))
@@ -186,8 +158,14 @@ func nativeRun(executable: String, arguments: [String], workingDirectory: String
     closeDescriptor(descriptor: readEnd)
     if got == reportBytes {
         // The child failed and has exited; collect it.
-        waitForChild(pid: pid)
+        nativeWait(child: pid, emergency: false)
         return .Err(classifyProcessError(code: wordAt(bytes: report, offset: 0, width: 4)))
     }
-    return waitForChild(pid: pid)
+    if got != 0 {
+        // A broken handshake cannot transfer ownership; reap before reporting it.
+        nativeWait(child: pid, emergency: false)
+        let code = if got < 0 { 0 - got } else { writeFaultCode() }
+        return .Err(.LaunchFailed(code))
+    }
+    return .Ok(pid)
 }

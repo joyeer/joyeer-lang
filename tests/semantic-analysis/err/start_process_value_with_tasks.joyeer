@@ -1,0 +1,10 @@
+import System
+
+func work(value: consuming Int): Int { return value }
+
+func main() {
+    let launch = System.startProcess
+    let taskHandle = spawn(function: work, input: consume 1)
+    let value = consume taskHandle.join()
+    print(value: value)
+}

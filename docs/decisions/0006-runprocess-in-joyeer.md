@@ -3,7 +3,7 @@
 - Status: accepted and implemented (decided and built 2026-11-07). Verified on
   Windows x64 Debug and Release; the POSIX variant type-checks for Linux and
   macOS and has not run.
-- Spec: [§18.3](../../specs/18-host.md#183-synchronous-processes), unchanged. The
+- Spec: [§18.3](../../specs/18-host.md#183-child-processes), unchanged for `runProcess`. The
   Joyeer function keeps every documented behavior.
 
 ## Context

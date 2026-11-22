@@ -1,7 +1,7 @@
 ## §18 Portable host operations
 
-This chapter defines the accepted first filesystem, synchronous-process,
-standard-error, and standard-input contracts, and the provisional TCP
+This chapter defines filesystem, process, standard-stream, host-query,
+clock, and owned-resource contracts, and the provisional TCP
 networking contract (§18.6). See [the implemented surface](../docs/impl/supported-features.md) for
 implementation status. These operations are functions of the `System` standard
 module (`import System`, §12.5); they are not compiler-known and do not introduce
@@ -21,9 +21,14 @@ process's current directory, not the program's installation directory.
 Path syntax otherwise follows the host: UTF-8 encoding does not make Windows
 drive paths meaningful on POSIX. Empty individual process arguments are valid.
 
-Inputs are borrowed and evaluated once in declaration order. Successful
+Inputs are borrowed unless marked `inout` or `consuming`, and evaluated once
+in declaration order. Successful
 strings and arrays are independently owned values with ordinary deterministic
 cleanup. None of these operations changes the parent's working directory.
+
+`System.isWindows(): Bool` returns whether the compilation target is Windows.
+It performs no runtime host lookup. Lexical path helpers with a `windows: Bool`
+argument still use the caller's choice of path syntax.
 
 ### 18.2 Filesystem operations
 
@@ -107,8 +112,8 @@ Recursive cleanup is not exposed in this first interface. A future cleanup
 operation for tool-owned outputs must anchor traversal and not follow links;
 an unsafe check-then-recurse substitute is not part of this contract.
 
-Replacement, atomic replacement, canonicalization, streaming, arbitrary-byte
-POSIX paths, and recursive cleanup are explicitly deferred.
+Replacement, atomic replacement, canonicalization, arbitrary-byte POSIX paths,
+and recursive cleanup are deferred. See §18.9 for sequential owned handles.
 
 #### Compatibility
 
@@ -118,7 +123,7 @@ no cases are added to `IOError`, preserving existing exhaustive matches.
 Adapters and error wrapping use explicit `match`; `?` does not implicitly
 convert between these error types.
 
-### 18.3 Synchronous processes
+### 18.3 Child processes
 
 ```joyeer
 enum ProcessStatus {
@@ -139,11 +144,19 @@ func runProcess(
     arguments: [String],
     workingDirectory: String
 ): Result<ProcessStatus, ProcessError>
+func startProcess(
+    executable: String,
+    arguments: [String],
+    workingDirectory: String
+): Result<ChildProcess, ProcessError>
+func waitProcess(child: consuming ChildProcess): Result<ProcessStatus, ProcessError>
 ```
 
-`arguments` excludes the executable name. The operation launches one child
-and waits for completion before returning. It inherits the parent's
-environment and standard input, output, and error.
+`arguments` excludes the executable name. `runProcess` launches one child
+and waits for completion before returning. `startProcess` uses the same
+launch rules and returns an owned `ChildProcess` once launch succeeds,
+without waiting for completion. The child inherits the parent's environment
+and standard input, output, and error.
 
 An explicit executable path is resolved relative to the parent's working
 directory before changing the child's directory. Executable lookup on PATH
@@ -166,10 +179,20 @@ platform code. If the operation must return an error after creating a child,
 it must clean up the child and native resources rather than leave an
 unreported orphan or zombie.
 
-There is no cancellation API in this first synchronous interface. Native
-signal and console-control behavior applies; cleanup after external forced
-termination is not guaranteed. Pipes, output capture, timeout policies,
-asynchronous handles, and shell-script interpretation are deferred.
+`waitProcess` consumes the owner and blocks until the child finishes; it
+returns the same status as `runProcess`. Interrupted POSIX waits are retried.
+Dropping a `ChildProcess` on normal destruction also waits and reaps, ignoring
+its status. This can block indefinitely, including if the child needs work
+from the parent; prefer an explicit wait. Neither action implicitly kills or
+detaches the child. An error may be returned when there is no remaining
+ownership obligation. Failure to discharge a live child's ownership during
+wait is a fatal invariant failure, not a way to detach it. External reaping
+or auto-reaping of the owned child is outside this contract.
+
+There is no polling, cancellation, or detach API. Native signal and
+console-control behavior applies; cleanup after a trap or external forced
+termination is not guaranteed. Pipes, output capture, timeouts, and
+shell-script interpretation remain deferred. See §21.6 for the task restriction.
 
 #### Project-manager status policy
 
@@ -373,8 +396,8 @@ peer's address is not reported in this version.
 - A wait interrupted by a signal restarts with its full timeout.
 
 The limit bounds one wait, not a sequence of calls: a peer that sends a byte just
-before each timeout still holds a connection that the caller keeps reading. A
-total deadline needs a clock that `System` does not yet provide. `tcpSend` and
+before each timeout still holds a connection that the caller keeps reading.
+Callers can track a total deadline with the monotonic clock (§18.8). `tcpSend` and
 `tcpConnect` have no timeout, because bounding them needs non-blocking sockets.
 
 #### Receiving
@@ -464,3 +487,90 @@ over several handles, or thread. There is no one-directional
 options, no host-name resolution, no IPv6, no UDP, no Unix-domain sockets, and
 no TLS. Binding `"0.0.0.0"` exposes the program to the network; these
 operations are not a sandbox and add no authentication or rate limiting.
+
+### 18.7 Process environment and current directory
+
+```joyeer
+public enum HostQueryError {
+    InvalidInput(Int),
+    InvalidEncoding(Int),
+    QueryFailed(Int),
+    OutOfRange(Int),
+}
+
+public func environmentVariable(name: String): Result<String?, HostQueryError>
+public func currentDirectory(): Result<String, HostQueryError>
+```
+
+Lookups do not mutate process state. An environment name is nonempty, valid
+UTF-8, and contains neither NUL nor `=`. Lookup follows native case rules
+(byte-exact on POSIX and case-insensitive on Windows). `.Ok(nil)` means absent;
+an existing empty value is `.Ok(.Some(""))`. Returned strings are owned and
+must be valid UTF-8. On Windows, unpaired UTF-16 surrogates cause an encoding
+error, not replacement. Concurrent foreign environment mutation is outside
+the contract; Linux looks up the environment inherited at startup.
+
+`currentDirectory` returns the process's absolute host path, not the `PWD`
+environment variable. It can fail if the current directory cannot be named.
+Results are not guaranteed stable across calls, and they neither resolve
+arbitrary paths nor establish filesystem confinement.
+
+The error cases preserve native codes: `InvalidInput` uses `EINVAL` or
+`ERROR_INVALID_PARAMETER`, `InvalidEncoding` uses `EILSEQ` or
+`ERROR_NO_UNICODE_TRANSLATION`, and `QueryFailed` carries the original query
+failure code. `OutOfRange` uses `EOVERFLOW` or `ERROR_ARITHMETIC_OVERFLOW`.
+
+### 18.8 Clocks
+
+```joyeer
+public func monotonicMilliseconds(): Result<Int, HostQueryError>
+public func wallClockMilliseconds(): Result<Int, HostQueryError>
+```
+
+The monotonic clock has an unspecified origin. Nonoverlapping calls in one
+process return nondecreasing readings, which can repeat at host resolution.
+Use differences for elapsed time; the readings are not absolute timestamps.
+Whether time during system suspend is included is unspecified.
+
+Wall time is signed milliseconds since the Unix epoch, rounded down, and can
+move backward. Neither clock promises millisecond precision. Native query
+failures and unrepresentable readings are reported rather than wrapped.
+
+### 18.9 Owned sequential files and directories
+
+```joyeer
+public func openFileRead(path: String): Result<FileReader, FileSystemError>
+public func openFileNew(path: String): Result<FileWriter, FileSystemError>
+public func readFileChunk(file: inout FileReader, maximumBytes: Int): Result<String, FileSystemError>
+public func writeFileChunk(file: inout FileWriter, contents: String): Result<Void, FileSystemError>
+public func closeFileReader(file: consuming FileReader): Result<Void, FileSystemError>
+public func closeFileWriter(file: consuming FileWriter): Result<Void, FileSystemError>
+
+public func openDirectory(path: String): Result<DirectoryReader, FileSystemError>
+public func nextDirectoryEntry(directory: inout DirectoryReader): Result<String?, FileSystemError>
+public func closeDirectory(directory: consuming DirectoryReader): Result<Void, FileSystemError>
+```
+
+These types and `ChildProcess` are noncopyable owners with no public native
+token or constructor. Native file and directory handles are non-inheritable.
+Normal destruction releases the resource exactly once; close errors are
+ignored in `deinit`. Use explicit consuming close to report release and flush
+errors. On error the caller still loses ownership; close is not retried on a
+possibly recycled token.
+
+The file operations follow §18.2's path encoding, byte preservation, and
+exclusive-create rules. A reader starts at offset zero. Each read requests
+from 1 through 65,536 bytes; an invalid size reports `.Other` with the native
+invalid-argument code and does not advance the cursor. A read may return fewer
+bytes than requested. An empty successful chunk indicates EOF, which is sticky.
+A directory may fail either at open or at the first positive read. Writes
+append sequentially, completing the entire chunk on success; data can be
+buffered until close. An error may follow partial progress, and there is no
+rollback or durability promise. After an I/O failure, further I/O reports
+the same error; the owner remains closeable.
+
+Directory iteration returns names as in `listDirectory`, one at a time in
+unspecified order. `.Ok(nil)` means end, stays at end, and is distinct from
+invalid encoding or other errors. Errors are sticky until close. An empty
+iterator may own no native token. Neither iteration nor any file open is
+a confinement check. This interface does not provide seeking or asynchronous I/O.

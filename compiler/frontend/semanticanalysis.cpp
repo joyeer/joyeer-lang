@@ -2012,15 +2012,15 @@ Result Analyzer::analyze(const typing::TypeCheckedModel::Ptr& model) const {
             result.diagnostics.end(),
             usage.diagnostics.begin(),
             usage.diagnostics.end());
-    // `runProcess` forks on Linux, and a task program has other threads (spec 21.6). The test is
-    // textual over the whole program: any `spawn` and any System `runProcess`, reachable or not.
+    // Both System launchers fork on Linux. A reference as a function value
+    // is subject to the same whole-program rule as a direct call (spec 21.6).
     if (!model->spawnCalls().empty()) {
-        for (const auto& span : model->runProcessCalls()) {
+        for (const auto& span : model->processLaunchUses()) {
             result.diagnostics.push_back(Diagnostic {
                 DiagnosticId::runProcessWithTasks,
                 Severity::error,
                 span,
-                "'runProcess' cannot be used in a program that starts tasks",
+                "System process launch cannot be used in a program that starts tasks",
                 std::string("this program also calls spawn; start child processes from a program that does not use tasks"),
             });
         }

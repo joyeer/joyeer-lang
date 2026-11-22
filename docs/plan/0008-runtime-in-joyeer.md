@@ -102,8 +102,8 @@ state, and the change is its own phase (R12).
 | Item | Where it is tracked | How it touches the runtime |
 |---|---|---|
 | Spec text for the runtime-only capabilities | [§19.4.6](../../specs/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point) (proposed) | Each capability becomes accepted spec text when its decision lands |
-| `assert`, `precondition`, `fatalError` | [library plan](0003-library.md#library) | Built on `joyeer_panic` (R2); `fatalError` needs a `Never` result |
-| `deinit` and noncopyable types | not planned yet (§3.7, §4.7 of the spec) | Needed for owned OS resources in `System`, not by the core runtime |
+| `assert`, `precondition`, `fatalError` | [§9](../../specs/09-contracts.md) | Implemented as a bundled prelude over `joyeer_panic_bytes`; existing traps keep `joyeer_panic` |
+| `deinit` and noncopyable types | [decision 0015](../decisions/0015-noncopyable-and-linear-types.md) | Used by [owned OS resources in `System`](../../specs/18-host.md#189-owned-sequential-files-and-directories), not by the core runtime |
 | User generics | [§20](../../specs/20-protocols.md) (proposed) | Lets D2 move to compiler-specialized containers |
 | Runtime archive in `lib/` | [toolchain libraries](0006-toolchain-libraries.md#todo) | Do it with R9, when the compiler builds the archive |
 | Sanitizer builds | [test audit](0005-test-audit.md) item 3 | The main safety net for unchecked address code |
@@ -369,7 +369,7 @@ FFI or a user-visible `unsafe`; GC, ARC or copy-on-write; enforcing UTF-8 on
 - Replace the type-erased array and dictionary helpers with compiler-specialized
   code when generics or an internal type-operation mechanism exist.
 - Owned OS resources, after custom destruction and noncopyability.
-- Source standard library: see [library](0003-library.md).
+- Source standard library: see [§12.5](../../specs/12-modules.md#125-standard-modules).
 
 Update [runtime](../impl/runtime.md), [strings](../impl/string.md),
 [backend](../impl/backend.md), [C interop](../impl/c-interop.md),
@@ -471,8 +471,9 @@ The §8 performance gate compares against these rows on the same machine.
 
 Finding: the symbol gate caught that a `[UInt8]` constant passed to a `pointer:`
 parameter makes a Debug build import the runtime's array clone and destroy. Core
-units must use scalars and addresses only (D3). The runtime therefore has no way
-yet to hand `joyeer_panic` a message from Joyeer; see D7 and §6 item 9.
+units must use scalars and addresses only (D3). The later prelude contract
+functions borrow a Joyeer message as an address and length instead, preserving
+this core boundary ([decision 0029](../decisions/0029-contracts-and-owned-host-resources.md)).
 
 ### Stage 2: Spikes and decisions, done
 
@@ -627,6 +628,9 @@ Start any time after 5.3.
 
 ## Progress log
 
+- 2026-11-22: Retired the standard-library plan after
+  [validation](../impl/supported-features.md#standard-library-validation).
+  The new length-aware contract panic entry leaves the generated-trap ABI unchanged.
 - 2026-11-22: Retired the host-operations plan after macOS ARM64 validation and reader
   allocation measurements. Kept remaining Windows and Linux platform evidence under 9.4;
   the separate macOS no-stdio gate (10.7) remains open.

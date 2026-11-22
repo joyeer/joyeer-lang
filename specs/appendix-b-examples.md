@@ -14,7 +14,7 @@ func medianOfThree(a: Int, b: Int, c: Int): Int {
   } else {
     r = c
   }
-  assert(condition: r == a || r == b || r == c)
+  assert(condition: r == a || r == b || r == c, message: "median not in input")
   return r
 }
 
@@ -25,7 +25,7 @@ func swap(a: inout Int, b: inout Int) {
 }
 
 func partition(array: inout [Int], lo: Int, hi: Int): Int {
-  precondition(condition: 0 <= lo && lo <= hi && hi < array.count)
+  precondition(condition: 0 <= lo && lo <= hi && hi < array.count, message: "invalid range")
   let pivot = medianOfThree(
     a: array[lo],
     b: array[(lo + hi) / 2],
@@ -42,12 +42,12 @@ func partition(array: inout [Int], lo: Int, hi: Int): Int {
       j -= 1
     }
   }
-  assert(condition: lo <= j && j <= hi)
+  assert(condition: lo <= j && j <= hi, message: "partition outside range")
   return j
 }
 
 func quickSortRange(array: inout [Int], lo: Int, hi: Int) {
-  precondition(condition: hi < array.count)
+  precondition(condition: hi < array.count, message: "upper bound outside array")
   if lo < hi {
     let p = partition(array: &array, lo: lo, hi: hi)
     quickSortRange(array: &array, lo: lo,    hi: p)
@@ -60,7 +60,7 @@ public func quickSort(input: consuming [Int]): [Int] {
   if arr.count > 1 {
     quickSortRange(array: &arr, lo: 0, hi: arr.count - 1)
   }
-  assert(condition: arr.count == input.count)
+  assert(condition: arr.count == input.count, message: "sort changed size")
   return arr
 }
 
@@ -106,12 +106,12 @@ func peek(p: Parser): UInt8? {
 func advance(p: inout Parser): UInt8? {
   let oldPos = p.pos
   if p.pos >= p.input.count {
-    assert(condition: p.pos == oldPos)
+    assert(condition: p.pos == oldPos, message: "failed parse advanced")
     return nil
   }
   let c = p.input[p.pos]
   &p.pos += 1
-  assert(condition: p.pos == oldPos + 1)
+  assert(condition: p.pos == oldPos + 1, message: "parse did not advance")
   return c
 }
 

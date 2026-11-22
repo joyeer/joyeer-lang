@@ -169,11 +169,11 @@ size differs, 8 MiB on Linux and 1 MiB on Windows).
 
 ### 21.6 Restrictions
 
-- **`runProcess`** and `spawn` cannot appear in the same program: the compiler reports
-  `semantic-analysis.run-process-with-tasks` at the `runProcess` call, citing a `spawn`. "The program"
-  is the root module and every source dependency; the test is whether a call to the prelude `spawn` and a
-  call to System's `runProcess` both occur, not whether one can reach the other. It is not modular: a
-  library that calls `runProcess` stops compiling in a program that spawns a task. (The Linux fork child
+- System's **`runProcess` and `startProcess`** cannot be used in a program that calls prelude `spawn`.
+  The compiler reports `semantic-analysis.run-process-with-tasks` at a call or a reference to either
+  function as a value, explaining that the program also calls `spawn`. "The program" is the root
+  module and every source dependency;
+  reachability does not matter. Merely importing `System` is allowed. (The Linux fork child
   no longer allocates before `execve`, so the rule is conservative, and its removal is an open question
   in decision 0018.)
 - A task may call `System` operations; their shared state needs no guard (decision 0018, audit).
@@ -199,7 +199,7 @@ Type checking unless noted.
 | `linear-collection-element`, `linear-top-level-binding`, `linear-in-deinit-type` | a handle in a `Dict` or `for-in`, a top-level `let`, or a `deinit` type |
 | `semantic-analysis.linear-not-consumed` | a path leaves a handle unjoined |
 | `semantic-analysis.linear-overwrite`, `linear-result-dropped`, `use-after-consume` | overwriting a live handle; dropping an owned one; using a moved input |
-| `semantic-analysis.run-process-with-tasks` | `runProcess` in a program that calls `spawn` |
+| `semantic-analysis.run-process-with-tasks` | use of System's `runProcess` or `startProcess` in a program that calls `spawn` |
 
 An unknown `function:` name is name resolution's ordinary unknown-name diagnostic.
 

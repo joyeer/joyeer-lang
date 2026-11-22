@@ -1,0 +1,5 @@
+import System
+
+func main() {
+    let reader = FileReader(handle: 0, state: 0)
+}

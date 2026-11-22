@@ -1,6 +1,6 @@
 import Foundation
 
-// POSIX (Linux and macOS) process launch for process.joyeer, over posix_spawn.
+// macOS process launch for process.joyeer, over posix_spawn.
 // The child inherits the environment and every open descriptor. The working
 // directory is set by a spawn file action, so a bad directory or executable is
 // reported by posix_spawn itself, as the errno of the failed step.
@@ -10,13 +10,8 @@ import Foundation
 // runtime-only intrinsics of spec §19.4.5; both buffers outlive the call.
 
 private let interrupted: Int = 4
-private let rangeError: Int = 34
 private let noChild: Int = 10
 private let actionsSize: Int = 256
-
-@platform(macos)
-@c_extern(symbol: "getcwd", pointer: "buffer")
-private func getcwdSpawn(buffer: inout [UInt8], size: Int): Int
 
 @platform(macos)
 @c_extern(symbol: "posix_spawn_file_actions_init", pointer: "actions")
@@ -37,7 +32,7 @@ private func spawnProcess(pid: inout [UInt8], path: [UInt8], actions: [UInt8], a
 
 @platform(macos)
 @c_extern(symbol: "waitpid", pointer: "status")
-private func waitProcess(pid: Int32, status: inout [UInt8], options: Int32): Int32
+private func waitPidP(pid: Int32, status: inout [UInt8], options: Int32): Int32
 
 @platform(macos)
 @c_extern(symbol: "joyeer_intrinsic_address_of", pointer: "bytes")
@@ -66,31 +61,18 @@ private func readInteger(bytes: [UInt8], offset: Int, width: Int): Int {
 
 // A relative path becomes absolute against the current directory, so the
 // executable is resolved before the child changes directory.
-@platform(macos)
-private func absolute(text: String): Result<String, ProcessError> {
+@platform(posix)
+func absolutePosix(text: String): Result<String, ProcessError> {
     if text[0] == b'/' { return .Ok(text) }
-    var size = 256
-    var outcome: Result<String, ProcessError> = .Err(.LaunchFailed(rangeError))
-    var searching = true
-    while searching {
-        var buffer = zeroBuffer(count: size)
-        if getcwdSpawn(buffer: &buffer, size: size) != 0 {
-            var length = 0
-            while buffer[length] != 0 { length = length + 1 }
-            let base = stringFromBytes(bytes: buffer, count: length)
-            outcome = .Ok(base + "/" + text)
-            searching = false
-        } else {
-            let code = cErrno() as Int
-            if code == rangeError {
-                size = size * 2
-            } else {
-                outcome = .Err(classifyProcessError(code: code))
-                searching = false
-            }
-        }
+    return match nativeCurrentDirectory() {
+        .Ok(base) => .Ok(base + "/" + text),
+        .Err(error) => match error {
+            .QueryFailed(code) => .Err(classifyProcessError(code: code)),
+            .InvalidInput(code) => .Err(.InvalidInput(code)),
+            .InvalidEncoding(code) => .Err(.InvalidInput(code)),
+            .OutOfRange(code) => .Err(.LaunchFailed(code)),
+        },
     }
-    return outcome
 }
 
 // Appends `text` and a NUL; returns the offset it starts at.
@@ -106,8 +88,8 @@ private func appendCString(block: inout [UInt8], text: String): Int {
 }
 
 @platform(macos)
-func nativeRun(executable: String, arguments: [String], workingDirectory: String): Result<ProcessStatus, ProcessError> {
-    let fullExecutable = absolute(text: executable)?
+func nativeStart(executable: String, arguments: [String], workingDirectory: String): Result<Int, ProcessError> {
+    let fullExecutable = absolutePosix(text: executable)?
     var block: [UInt8] = []
     var offsets: [Int] = []
     &offsets.append(element: appendCString(block: &block, text: fullExecutable))
@@ -133,30 +115,39 @@ func nativeRun(executable: String, arguments: [String], workingDirectory: String
         return .Err(classifyProcessError(code: chdir))
     }
     var pid = zeroBuffer(count: 4)
-    let spawned = spawnProcess(pid: &pid, path: nativePathBytes(text: fullExecutable), actions: actions,
+    let path = nativePathBytes(text: fullExecutable)
+    let spawned = spawnProcess(pid: &pid, path: path, actions: actions,
         attributes: 0, argv: tableAddress, environment: cEnvironment()) as Int
     actionsDestroy(actions: &actions)
     if spawned != 0 { return .Err(classifyProcessError(code: spawned)) }
-    return waitForChild(pid: readInteger(bytes: pid, offset: 0, width: 4))
+    return .Ok(readInteger(bytes: pid, offset: 0, width: 4))
 }
 
-// waitpid's status word: the low seven bits are the terminating signal (zero
-// for a normal exit, 0x7f for a stopped child), the next byte the exit code.
 @platform(macos)
-private func waitForChild(pid: Int): Result<ProcessStatus, ProcessError> {
+func nativeWait(child: Int, emergency: Bool): Result<ProcessStatus, ProcessError> {
     var status = zeroBuffer(count: 4)
-    var waited = -1
-    var code = 0
-    var again = true
-    while again {
-        waited = waitProcess(pid: pid as Int32, status: &status, options: 0) as Int
-        code = cErrno() as Int
-        again = waited < 0 && code == interrupted
+    while true {
+        let waited = waitPidP(pid: child as Int32, status: &status, options: 0)
+        if waited < 0 {
+            let code = cErrno() as Int
+            if code == interrupted { continue }
+            if code == noChild { return .Err(.WaitFailed(code)) }
+            fatalError(message: "could not reap owned child process")
+        }
+        match terminalStatus(word: readInteger(bytes: status, offset: 0, width: 4)) {
+            .Some(completion) => { return .Ok(completion) },
+            .None => {},
+        }
     }
-    if waited < 0 { return .Err(.WaitFailed(code)) }
-    let word = readInteger(bytes: status, offset: 0, width: 4)
+    fatalError(message: "child wait returned without status")
+}
+
+// waitpid/wait4 may report a stopped child under a tracer. Only an exit or
+// a terminating signal discharges the owner's obligation to wait.
+@platform(posix)
+func terminalStatus(word: Int): ProcessStatus? {
     let signal = word & 127
-    if signal == 0 { return .Ok(.Exited((word >> 8) & 255)) }
-    if signal != 127 { return .Ok(.Signaled(signal)) }
-    return .Err(.WaitFailed(noChild))
+    if signal == 0 { return .Some(.Exited((word >> 8) & 255)) }
+    if signal == 127 { return nil }
+    return .Some(.Signaled(signal))
 }

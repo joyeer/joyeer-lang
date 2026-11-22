@@ -466,7 +466,7 @@ public:
     [[nodiscard]] std::string functionDisplayName(semantic::SymbolId function) const;
     // Where the program starts a task and where it calls System's `runProcess` (spec 21.6).
     [[nodiscard]] const std::vector<SourceSpan>& spawnCalls() const { return spawnCallSpans; }
-    [[nodiscard]] const std::vector<SourceSpan>& runProcessCalls() const { return runProcessCallSpans; }
+    [[nodiscard]] const std::vector<SourceSpan>& processLaunchUses() const { return processLaunchUseSpans; }
 
 private:
     [[nodiscard]] syntax::StructDeclSyntax::Ptr structureDeclaration(TypeId type) const;
@@ -484,7 +484,7 @@ private:
     mutable TypeContext typeContext;
     // Where the program starts a task and calls System's `runProcess`; the two cannot meet (spec 21.6).
     std::vector<SourceSpan> spawnCallSpans;
-    std::vector<SourceSpan> runProcessCallSpans;
+    std::vector<SourceSpan> processLaunchUseSpans;
     std::unordered_map<semantic::NodeId, TypeId> nodeTypes;
     std::unordered_map<semantic::SymbolId, TypeId> symbolTypes;
     std::unordered_map<semantic::SymbolId, TypedCallableSignature> callables;

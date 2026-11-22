@@ -1617,6 +1617,24 @@ abcdabcd
     endfunction()
     add_joyeer_native_checked_trap(
             E2EUnitArrayBounds unit_array_bounds "array index out of bounds")
+    foreach(level IN ITEMS 0 2)
+        add_test(NAME E2EContractsO${level}
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/stdlib/contracts.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/contracts-O${level}${CMAKE_EXECUTABLE_SUFFIX}
+                        -DOPTIMIZATION=-O${level}
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyContracts.cmake)
+        set_tests_properties(E2EContractsO${level} PROPERTIES LABELS "e2e;runtime;safety" TIMEOUT 60)
+        add_test(NAME E2ESystemQueriesO${level}
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/stdlib/system_queries.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/system-queries-O${level}${CMAKE_EXECUTABLE_SUFFIX}
+                        -DOPTIMIZATION=-O${level}
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifySystemQueries.cmake)
+        set_tests_properties(E2ESystemQueriesO${level} PROPERTIES LABELS "e2e;runtime;system" TIMEOUT 60)
+    endforeach()
     add_joyeer_native_checked_trap(
             E2EArrayConsumeEmptyTrap array_consume_empty_trap "array not empty")
     # The index operand is evaluated, then the access traps before the later argument: 7 is printed, 20 is not.
@@ -1768,6 +1786,12 @@ add_joyeer_rejected_regression(TypeGenericTypesRejectExpandingRecursion type-che
         generic_type_recursion type-checking.expanding-generic-recursion)
 add_joyeer_rejected_regression(TypeGenericTypesRejectExpandingRecursionWithUse type-checking
         generic_type_recursion_use type-checking.expanding-generic-recursion)
+add_joyeer_rejected_regression(DiagnosticsCliRejectsStartProcessValueWithTasks semantic-analysis
+        start_process_value_with_tasks semantic-analysis.run-process-with-tasks)
+add_joyeer_rejected_regression(NameResolutionRejectsFabricatedFileOwner name-resolution
+        construct_file_owner name-resolution.inaccessible-declaration)
+add_joyeer_rejected_regression(SemanticAnalysisRejectsReuseOfClosedFileOwner semantic-analysis
+        reuse_closed_file_owner semantic-analysis.use-after-consume)
 
 add_test(NAME GenericsInstantiationReport
         COMMAND ${CMAKE_COMMAND}

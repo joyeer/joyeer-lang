@@ -3,6 +3,15 @@ import System
 @c_extern(symbol: "system_macos_retries_observed")
 private func retriesObserved(): Int32
 
+@c_extern(symbol: "system_macos_clock_sample")
+private func clockSample(sample: Int32): Void
+
+private func writeOwned(): Result<Void, FileSystemError> {
+    var file = openFileNew(path: "owned-interrupted-write")?
+    writeFileChunk(file: &file, contents: "retry-data")?
+    return closeFileWriter(file: consume file)
+}
+
 func main(args: [String]): Int {
     let read = match System.readFileUtf8(path: "interrupted-read") {
         .Ok(text) => text == "retry-data",
@@ -22,7 +31,14 @@ func main(args: [String]): Int {
         .Err(_) => false,
     }
     if !waited { return 3 }
+    if !match writeOwned() { .Ok(_) => true, .Err(_) => false, } { return 4 }
     if retriesObserved() != 1 { return 4 }
+    clockSample(sample: 1)
+    if !match wallClockMilliseconds() { .Ok(value) => value == -1, _ => false, } { return 5 }
+    clockSample(sample: 2)
+    if !match wallClockMilliseconds() { .Err(.OutOfRange(code)) => code == 84, _ => false, } { return 6 }
+    clockSample(sample: 0)
+    if !match wallClockMilliseconds() { .Err(.QueryFailed(code)) => code == 22, _ => false, } { return 7 }
     print(value: "macOS interrupted calls retried")
     return 0
 }

@@ -193,6 +193,7 @@ public:
     [[nodiscard]] const syntax::SourceFileSyntax::Ptr& compilationRoot() const;
     // The bundled prelude sources in source-identity order (each is one past the previous).
     [[nodiscard]] const std::vector<std::shared_ptr<SourceFile>>& preludeSources() const;
+    [[nodiscard]] std::optional<uint32_t> contractsPreludeSourceId() const { return contractsPreludeSourceId_; }
     [[nodiscard]] ScopeId preludeScope() const;
     // The prelude enum bound to `optional` or `result` (decision 0024); empty until the role prelude
     // is collected, and when the bundle lacks it.
@@ -238,6 +239,7 @@ private:
     syntax::SourceFileSyntax::Ptr root_;
     syntax::SourceFileSyntax::Ptr compilationRoot_;
     std::vector<std::shared_ptr<SourceFile>> preludeSourceFiles_;
+    std::optional<uint32_t> contractsPreludeSourceId_;
     ScopeId preludeScope_ = invalidScopeId;
     std::optional<SymbolId> optionalSymbol_;
     std::optional<SymbolId> resultSymbol_;

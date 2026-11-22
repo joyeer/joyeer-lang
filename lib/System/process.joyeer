@@ -1,9 +1,12 @@
 import Foundation
 
-// Synchronous child processes (spec §18.3), written in Joyeer. The portable
-// part validates the text arguments exactly as the host does; process_windows
-// and process_posix launch the child and wait for it through the operating
-// system's own interfaces.
+public struct ChildProcess {
+    var handle: Int
+
+    deinit() {
+        if self.handle >= 0 { nativeWait(child: self.handle, emergency: false) }
+    }
+}
 
 // 0 when `text` can be passed to the host, otherwise the platform error code:
 // an empty or NUL-containing value is invalid input, malformed UTF-8 is an
@@ -22,11 +25,7 @@ func textProblem(text: String, allowEmpty: Bool): Int {
     return 0
 }
 
-public func runProcess(
-    executable: String,
-    arguments: [String],
-    workingDirectory: String
-): Result<ProcessStatus, ProcessError> {
+private func launch(executable: String, arguments: [String], workingDirectory: String): Result<Int, ProcessError> {
     var code = textProblem(text: executable, allowEmpty: false)
     if code == 0 { code = textProblem(text: workingDirectory, allowEmpty: false) }
     var index = 0
@@ -35,5 +34,29 @@ public func runProcess(
         index = index + 1
     }
     if code != 0 { return .Err(.InvalidInput(code)) }
-    return nativeRun(executable: executable, arguments: arguments, workingDirectory: workingDirectory)
+    return nativeStart(executable: executable, arguments: arguments, workingDirectory: workingDirectory)
+}
+
+public func runProcess(
+    executable: String,
+    arguments: [String],
+    workingDirectory: String
+): Result<ProcessStatus, ProcessError> {
+    let handle = launch(executable: executable, arguments: arguments, workingDirectory: workingDirectory)?
+    return nativeWait(child: handle, emergency: true)
+}
+
+public func startProcess(
+    executable: String,
+    arguments: [String],
+    workingDirectory: String
+): Result<ChildProcess, ProcessError> {
+    let handle = launch(executable: executable, arguments: arguments, workingDirectory: workingDirectory)?
+    return .Ok(ChildProcess(handle: handle))
+}
+
+public func waitProcess(child: consuming ChildProcess): Result<ProcessStatus, ProcessError> {
+    let handle = child.handle
+    &child.handle = -1
+    return nativeWait(child: handle, emergency: false)
 }

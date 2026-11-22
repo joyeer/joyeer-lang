@@ -101,7 +101,7 @@ TEST_F(ModuleServiceTest, CompilesExplicitSourcesAcrossDirectoriesWithoutDiscove
     ASSERT_NE(result, nullptr);
     EXPECT_EQ(result->content, firstText);
     ASSERT_NE(result->joyeerIR, nullptr);
-    ASSERT_EQ(result->joyeerIR->sourceFiles.size(), 5u);
+    ASSERT_EQ(result->joyeerIR->sourceFiles.size(), 6u);
     EXPECT_EQ(result->joyeerIR->sourceFiles[0].fileName, "a.joyeer");
     EXPECT_EQ(result->joyeerIR->sourceFiles[1].fileName, "z.joyeer");
     EXPECT_EQ(result->joyeerIR->sourceFiles[2].fileName, "concurrency.joyeer");
@@ -125,7 +125,7 @@ TEST_F(ModuleServiceTest, DistinctModulesMayUseFilesFromTheSameDirectory) {
     CompilerService compiler(&diagnostics, options);
     compiler.compile();
     ASSERT_FALSE(diagnostics.hasFailure()) << errors();
-    EXPECT_EQ(compiler.getLastCompiledSourceFile()->joyeerIR->sourceFiles.size(), 6u);
+    EXPECT_EQ(compiler.getLastCompiledSourceFile()->joyeerIR->sourceFiles.size(), 7u);
 }
 
 TEST_F(ModuleServiceTest, ModuleNamesDoNotImplyParentModulesOrDirectories) {
@@ -134,7 +134,7 @@ TEST_F(ModuleServiceTest, ModuleNamesDoNotImplyParentModulesOrDirectories) {
     CompilerService compiler(&diagnostics, options);
     compiler.compile();
     ASSERT_FALSE(diagnostics.hasFailure()) << errors();
-    EXPECT_EQ(compiler.getLastCompiledSourceFile()->joyeerIR->sourceFiles.size(), 5u);
+    EXPECT_EQ(compiler.getLastCompiledSourceFile()->joyeerIR->sourceFiles.size(), 6u);
 }
 
 TEST_F(ModuleServiceTest, CompilesPublicShortNamesWithoutMergingModuleIdentities) {
@@ -150,7 +150,7 @@ TEST_F(ModuleServiceTest, CompilesPublicShortNamesWithoutMergingModuleIdentities
     const auto& compiled = compiler.getLastCompiledSourceFile();
     ASSERT_NE(compiled->joyeerIR, nullptr);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*compiled->joyeerIR).succeeded());
-    EXPECT_EQ(compiled->joyeerIR->sourceFiles.size(), 5u);
+    EXPECT_EQ(compiled->joyeerIR->sourceFiles.size(), 6u);
     EXPECT_TRUE(compiled->llvmHasEntryPoint);
 }
 
@@ -179,7 +179,7 @@ TEST_F(ModuleServiceTest, CompilesReachableGraphWithoutParsingUnusedSources) {
     CompilerService compiler(&diagnostics, options);
     compiler.compile();
     ASSERT_FALSE(diagnostics.hasFailure()) << errors();
-    EXPECT_EQ(compiler.getLastCompiledSourceFile()->joyeerIR->sourceFiles.size(), 6u);
+    EXPECT_EQ(compiler.getLastCompiledSourceFile()->joyeerIR->sourceFiles.size(), 7u);
 }
 
 TEST_F(ModuleServiceTest, ResolvesRelativeFilePathsAgainstExplicitWorkingDirectory) {
@@ -598,6 +598,49 @@ TEST_F(ModuleServiceTest, PlatformVariantsInADependencyAreSelectedForTheImporter
     }
 }
 
+TEST_F(ModuleServiceTest, ContractsAreOrdinaryPreludeFunctions) {
+    root("main.joyeer",
+         "func fatalError(message: String): Int { return message.count }\n"
+         "func take(value: Int?): Int { return match value { .Some(n) => n, .None => fatalError(message: \"ordinary\"), } }\n"
+         "func main() { assert(condition: take(value: nil) == 8, message: \"shadowing\") }\n");
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile();
+    EXPECT_FALSE(diagnostics.hasFailure()) << errors();
+}
+
+TEST_F(ModuleServiceTest, ProcessLaunchRestrictionIncludesSystemAsTheRoot) {
+    options.moduleName = "System";
+    root("main.joyeer",
+         "func startProcess() { }\n"
+         "func work(value: consuming Int): Int { return value }\n"
+         "func main() {\n"
+         "    let launch = startProcess\n"
+         "    let handle = spawn(function: work, input: consume 1)\n"
+         "    let value = consume handle.join()\n"
+         "    print(value: value)\n"
+         "}\n");
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile();
+    EXPECT_TRUE(hasCode("semantic-analysis.run-process-with-tasks")) << errors();
+}
+
+TEST_F(ModuleServiceTest, ImportingSystemDoesNotRestrictSameNamedLocalFunctions) {
+    dependency("System", "process.joyeer", "public func startProcess() { }\n");
+    root("main.joyeer",
+         "import System\n"
+         "func startProcess() { }\n"
+         "func work(value: consuming Int): Int { return value }\n"
+         "func main() {\n"
+         "    let handle = spawn(function: work, input: consume 1)\n"
+         "    startProcess()\n"
+         "    let value = consume handle.join()\n"
+         "    print(value: value)\n"
+         "}\n");
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile();
+    EXPECT_FALSE(diagnostics.hasFailure()) << errors();
+}
+
 // The System filesystem is Joyeer code with one variant per platform. Only the
 // host's variant runs here, so compile the real library sources for every
 // target: this type-checks the others' bindings, signatures, and bodies.
@@ -605,6 +648,7 @@ TEST_F(ModuleServiceTest, TheSystemLibraryChecksForEveryTargetPlatform) {
     const std::filesystem::path library = JOYEER_LIBRARY_SOURCES;
     root("main.joyeer",
          "import System\nfunc main() {\n"
+         "    print(value: System.pathDirectory(path: \"C:\\\\dir\\\\file\", windows: System.isWindows()))\n"
          "    match System.fileKind(path: \".\") {\n"
          "        .Ok(kind) => print(value: 1),\n"
          "        .Err(error) => print(value: 0),\n"
@@ -616,11 +660,19 @@ TEST_F(ModuleServiceTest, TheSystemLibraryChecksForEveryTargetPlatform) {
          "    match System.readStdinLine(maximumBytes: 8) {\n"
          "        .Ok(line) => print(value: line),\n"
          "        .Err(error) => print(value: 0),\n"
-         "    }\n}\n");
+         "    }\n"
+         "    System.environmentVariable(name: \"PATH\")\n"
+         "    System.currentDirectory()\n"
+         "    System.monotonicMilliseconds()\n"
+         "    System.wallClockMilliseconds()\n"
+         "    System.openFileRead(path: \"data\")\n"
+         "    System.openFileNew(path: \"data\")\n"
+         "    System.openDirectory(path: \".\")\n"
+         "    System.startProcess(executable: \"tool\", arguments: [], workingDirectory: \".\")\n}\n");
     options.modules.push_back({"Foundation",
             {library / "Foundation" / "text.joyeer", library / "Foundation" / "checksum.joyeer"}});
     options.modules.push_back({"System", {
-            library / "System" / "path.joyeer", library / "System" / "messages.joyeer",
+            library / "System" / "path.joyeer", library / "System" / "messages.joyeer", library / "System" / "owned_files.joyeer",
             library / "System" / "filesystem.joyeer", library / "System" / "filesystem_windows.joyeer",
             library / "System" / "filesystem_posix.joyeer", library / "System" / "filesystem_linux.joyeer",
             library / "System" / "legacy_file.joyeer",
@@ -629,7 +681,9 @@ TEST_F(ModuleServiceTest, TheSystemLibraryChecksForEveryTargetPlatform) {
             library / "System" / "stdio.joyeer",
             library / "System" / "network.joyeer", library / "System" / "network_windows.joyeer", library / "System" / "network_linux.joyeer",
             library / "System" / "network_posix.joyeer",
-            library / "System" / "cruntime.joyeer"}});
+            library / "System" / "cruntime.joyeer",
+            library / "System" / "queries.joyeer", library / "System" / "queries_posix.joyeer",
+            library / "System" / "queries_windows.joyeer"}});
     options.runtimeModules = {"System"};
     for (const auto target : {joyeer::semantic::TargetPlatform::windows, joyeer::semantic::TargetPlatform::linux,
                               joyeer::semantic::TargetPlatform::macos}) {

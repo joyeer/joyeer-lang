@@ -7,4 +7,4 @@ output = 'fern'
 sources = [
 @JOYEER_FERN_PROJECT_SOURCES@
 ]
-dependencies = []
+dependencies = ['Foundation', 'System']
