@@ -435,7 +435,7 @@ if(JOYEER_CLANG_EXECUTABLE)
             COMMAND ${CMAKE_COMMAND}
                     -DBUILD_DIR=${CMAKE_BINARY_DIR}
                     -DSTAGING_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed-compiler
-                    -DRUNTIME_ARCHIVE_NAME=${CMAKE_STATIC_LIBRARY_PREFIX}JoyeerRuntime${CMAKE_STATIC_LIBRARY_SUFFIX}
+                    "-DRUNTIME_ARCHIVE_NAME=$<TARGET_FILE_NAME:JoyeerRuntime>"
                     -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                     -DEXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
                     -DEXPECTED_OUTPUT=42\nnative\n8\n42\n

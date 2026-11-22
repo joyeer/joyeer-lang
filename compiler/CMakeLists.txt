@@ -91,7 +91,7 @@ target_include_directories(JoyeerCompilerCore PUBLIC ${JOYEER_SOURCE_DIR} ${JOYE
 target_include_directories(JoyeerCompilerCore PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(JoyeerCompilerCore PRIVATE JoyeerBackend)
 target_compile_definitions(JoyeerCompilerCore PRIVATE
-	JOYEER_RUNTIME_PATH="$<TARGET_FILE_NAME:JoyeerRuntime>"
+	JOYEER_RUNTIME_PATH="lib/$<TARGET_FILE_NAME:JoyeerRuntime>"
 	JOYEER_TOOLCHAIN_VERSION="${JOYEER_TOOLCHAIN_VERSION}"
 	JOYEER_TOOLCHAIN_TARGET="${JOYEER_TOOLCHAIN_TARGET}"
 	JOYEER_TOOLCHAIN_CONFIG="$<LOWER_CASE:$<CONFIG>>"

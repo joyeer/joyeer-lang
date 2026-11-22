@@ -60,8 +60,9 @@ Replace `x64-debug` in all three commands with your preset. Builds go under
 for each architecture; in-source builds are not supported.
 
 Use the default build, not just `--target joyeer`: the compiler alone does
-not stage the runtime needed to link programs. Unit tests, fern, and
-Compression are enabled by default. Keep them enabled for acceptance;
+not stage the runtime archive under `bin/lib/`, where the compiler looks for
+it when linking programs. Unit tests, fern, and Compression are enabled by
+default. Keep them enabled for acceptance;
 filtered CTest runs are only for focused iteration.
 
 The Debug presets also set `JOYEER_BACKEND_TEST_HOOKS=ON`: the backend verifies
@@ -154,15 +155,17 @@ cmake --install out/build/<release-preset> --prefix out/package/joyeer
 `INSTALL_GTEST=OFF` excludes GoogleTest from installation, not testing.
 Keep LLVM SDKs and test tools out of product packages.
 
-- `JoyeerRuntime` installs the compiler, backend, runtime, and Joyeer license.
+- `JoyeerRuntime` installs the compiler and backend at the prefix, the static
+  runtime archive under `<prefix>/lib/`, and the Joyeer license.
 - `PRODUCT` and `Moss` install fern and moss respectively when enabled.
 - `StandardLibrary` installs standard modules, including Compression when enabled.
 - `NativeDevelopment` provides optional C adapter headers and must be selected
   explicitly.
 
-Keep the compiler, backend, and runtime together, with matching architectures.
+Keep the compiler, backend, and runtime in this layout, with matching architectures.
+Stage releases into a clean prefix so unused artifacts from an earlier layout aren't packaged.
 The concurrency, enum-role and collections preludes (`lib/Runtime/{concurrency,roles,collections}.joyeer`)
-are embedded in that compiler. No separate source-prelude installation or runtime file lookup is required.
+are embedded in that compiler and aren't installed as separate source files.
 Before redistribution, assemble applicable LLVM/LLD, support-library,
 Windows LibXml2, Linux Clang, and other dependency notices.
 

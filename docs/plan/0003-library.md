@@ -88,7 +88,7 @@ self-build manifests together. Fern must not depend on a previously installed to
 
 ## Out of scope
 
-Installed-library follow-ups (the runtime archive in `lib/`, fern and `--sysroot`, Compression by
+Installed-library follow-ups (fern and `--sysroot`, Compression by
 default, precompiled modules, cross-compilation) are in [toolchain libraries](0006-toolchain-libraries.md).
 Registry packages and a binary-library ABI are in [package manager](0001-package-manager.md).
 

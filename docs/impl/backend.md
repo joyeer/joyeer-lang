@@ -174,10 +174,12 @@ The C object-emission API still accepts textual LLVM IR when no module handle
 is supplied, for standalone tests and explicit IR tooling. Only this fallback
 uses LLVM's assembly parser; it is not the compiler's native build path.
 
-The DLL discovers MSVC, the Universal CRT, and Windows SDK library directories
-through LLVM's Visual Studio Setup Configuration and registry helpers. It then
-links the generated object with the sibling `JoyeerRuntime.lib`. The
-release package keeps the DLL, runtime archive, and `joyeer.exe` together.
+The compiler passes the runtime archive from its own `lib/` directory to the
+backend: `lib/JoyeerRuntime.lib` on Windows and `lib/libJoyeerRuntime.a` on
+macOS and Linux. `--sysroot` changes standard-module lookup, not this archive.
+On Windows, the backend DLL stays next to `joyeer.exe` and discovers MSVC,
+Universal CRT, and Windows SDK libraries through LLVM's Visual Studio Setup
+Configuration and registry helpers.
 
 Windows supports native x64 and ARM64 builds. The compiled backend architecture
 selects the MSVC/UCRT/Windows SDK library directories and the COFF machine
