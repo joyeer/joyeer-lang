@@ -98,7 +98,7 @@ enum class LibraryRole {
     stringOrder,
     stringUtf8,
     // The prelude protocol `Equatable` that `==` and `!=` bind to, and the collections prelude's generic function that
-    // is the witness of `[X]` (decision 0029, spec 20.13).
+    // is the witness of `[X]` (decision 0031, spec 20.13).
     equatable,
     arrayEqual,
 };

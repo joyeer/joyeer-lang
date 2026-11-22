@@ -550,7 +550,7 @@ verification guarantees:
   full lexical-scope/variable/type metadata with DWARF 4 or CodeView module
   flags; compiler-generated cleanup/plumbing is suppressed from line rows, but a derived `Equatable` witness
   (`Type.equals`) is an ordinary subprogram whose rows are on the type's declaration line, without
-  `FlagArtificial` (its calls need locations; decision 0029);
+  `FlagArtificial` (its calls need locations; decision 0031);
 - aggregate debug metadata currently supplies names and sizes with empty
   member lists, not field/payload debugger structure or optimized-value
   location tracking.

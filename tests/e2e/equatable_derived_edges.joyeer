@@ -1,4 +1,4 @@
-// Edge cases of derived `Equatable` conformances (decision 0029, spec 20.13.5): an empty struct, single-case enums,
+// Edge cases of derived `Equatable` conformances (decision 0031, spec 20.13.5): an empty struct, single-case enums,
 // `Void` members, a `deinit` struct with several fields (its hidden live flag is not a member), a noncopyable payload
 // compared by borrowing, a `String` payload whose comparison is the program's only `String ==`, a generic hand-written
 // member, a requirement call on a derived conformer, and `==` in a stored-field default.

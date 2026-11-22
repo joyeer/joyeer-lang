@@ -1,4 +1,4 @@
-"""Build and compare the equality performance fixtures (decision 0029, plan 0012 phase 4) on one machine.
+"""Build and compare the equality performance fixtures (decision 0031, plan 0012 phase 4) on one machine.
 
 Scalar and String equality compile the same program with both compilers. A compiler from before `Equatable` has no
 array `==` and no derived conformances, so for those two workloads it compiles a hand-written twin

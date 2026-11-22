@@ -1,4 +1,4 @@
-// Ownership of equality (decision 0029, spec 20.13.2, 20.13.4): comparing arrays of a noncopyable type borrows the
+// Ownership of equality (decision 0031, spec 20.13.2, 20.13.4): comparing arrays of a noncopyable type borrows the
 // elements, so each is destroyed once, when its array is; a temporary optional compared with `nil` is destroyed once.
 // `deinit` prints the id, so a copy or a double destroy would change the output; an array destroys its elements in
 // reverse order, `right` before `left`.

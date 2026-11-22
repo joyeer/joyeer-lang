@@ -1,4 +1,4 @@
-// Derived struct equality (decision 0029, plan 0012 phase 4): `==` and `!=` on a struct with a derived `Equatable`
+// Derived struct equality (decision 0031, plan 0012 phase 4): `==` and `!=` on a struct with a derived `Equatable`
 // conformance, a generated `Point.equals`. The baseline compiler compiles `equality_derived_fields.joyeer`, the same
 // comparison written field by field. Not a test; see README.md.
 struct Point {

@@ -1,4 +1,4 @@
-// Equality through `Equatable` (decision 0029, spec 20.13): the builtin conformers, a hand-written witness on a
+// Equality through `Equatable` (decision 0031, spec 20.13): the builtin conformers, a hand-written witness on a
 // copyable and on a noncopyable struct, and `==`, `!=` and the requirement call in generic code.
 struct Money {
     var cents: Int

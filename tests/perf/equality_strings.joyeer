@@ -1,4 +1,4 @@
-// String equality (decision 0029, plan 0012 phase 4): `==` and `!=` on `String`, the collections prelude's inlined
+// String equality (decision 0031, plan 0012 phase 4): `==` and `!=` on `String`, the collections prelude's inlined
 // comparison before and after `Equatable`. The same program is compiled by both compilers. Not a test; see README.md.
 func main() {
     let first = "alpha-beta-gamma"

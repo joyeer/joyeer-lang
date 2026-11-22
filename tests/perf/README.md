@@ -45,7 +45,7 @@ be compared against a baseline on the same machine and configuration.
   `benchmark_arrays.py`; each program prints one checksum computed independently in Python. The baseline is a
   compiler from before stage 3, whose String operations were IR opcodes.
 
-- `equality_*.joyeer` and `benchmark_equality.py` (decision 0029, plan 0012 phase 4): scalar and `String` `==`/`!=`
+- `equality_*.joyeer` and `benchmark_equality.py` (decision 0031, plan 0012 phase 4): scalar and `String` `==`/`!=`
   (the same program for both compilers), array `==` through `arrayEqual`, and derived struct `==`. A compiler from
   before `Equatable` cannot express the last two, so `build --variant baseline` compiles their hand-written twins
   (`equality_arrays_loop.joyeer`, `equality_derived_fields.joyeer`); `build --variant candidate` compiles the

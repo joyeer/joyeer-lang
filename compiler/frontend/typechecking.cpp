@@ -1352,7 +1352,7 @@ private:
         }
     }
 
-    // The `equatable` role (decision 0029): exactly one role-prelude protocol, whose one requirement is
+    // The `equatable` role (decision 0031): exactly one role-prelude protocol, whose one requirement is
     // `func equals(other: Self): Bool` with a borrowing receiver and argument.
     void validateEquatableRole() {
         std::vector<const semantic::Symbol*> protocols;
@@ -1843,7 +1843,7 @@ private:
                     break;
                 }
                 case semantic::LibraryRole::arrayEqual: {
-                    // `private func name<T: Equatable>(left: [T], right: [T]): Bool` with a body (decision 0029).
+                    // `private func name<T: Equatable>(left: [T], right: [T]): Bool` with a body (decision 0031).
                     const auto* parameters = model->genericParameters(symbol.id);
                     const auto* signature = model->callable(symbol.id);
                     const auto function = symbol.kind == semantic::SymbolKind::function && node != nullptr &&
@@ -3477,7 +3477,7 @@ private:
         for (const auto* call : roots) {
             if (!require(*call, call->arguments, std::nullopt)) return;
         }
-        // The witness `==` needs on a concrete type (decision 0029): an instance of a generic hand-written witness,
+        // The witness `==` needs on a concrete type (decision 0031): an instance of a generic hand-written witness,
         // or a derived witness, which needs its members' witnesses in turn.
         const auto equatableRequirement = model->equatableRequirement();
         std::function<bool(TypeId, std::optional<semantic::SymbolId>, SourceSpan, std::optional<size_t>)>
@@ -4037,7 +4037,7 @@ private:
         const auto owner = model->semanticModelValue->referencedSymbol(declaration->extendedType);
         if (!owner.has_value()) return;
         const auto* ownerSymbol = symbolOf(*owner);
-        // The one extension the role enums admit is the empty `Equatable` conformance (decision 0029, amending 0024).
+        // The one extension the role enums admit is the empty `Equatable` conformance (decision 0031, amending 0024).
         const auto onlyEquatable = [&]() {
             const auto equatable = model->equatableProtocol();
             if (!equatable.has_value() || !declaration->methods.empty() || declaration->conformances.size() != 1) {
@@ -5031,7 +5031,7 @@ private:
                 break;
             case equalEqual:
             case notEqual:
-                // Equality is defined through `Equatable` (decision 0029, spec 20.13): both operands have one
+                // Equality is defined through `Equatable` (decision 0031, spec 20.13): both operands have one
                 // type that conforms. Equality only borrows, so a noncopyable conformer compares too.
                 if (left == right && isEquatable(left)) return model->typeContext.boolType();
                 break;
@@ -5225,7 +5225,7 @@ private:
                 std::static_pointer_cast<syntax::LiteralExprSyntax>(expression)->literal->kind == floatLiteral;
     }
 
-    // `a == b` reaches the witness as `a.equals(other: b)` would (decision 0029), so the witness's instance is
+    // `a == b` reaches the witness as `a.equals(other: b)` would (decision 0031), so the witness's instance is
     // required in the same way: through a requirement call when the operand type mentions a type parameter, else
     // through a call of the generic witness with the operand's type arguments.
     void requireEqualityWitness(const syntax::BinaryExprSyntax::Ptr& expression, TypeId operand) {

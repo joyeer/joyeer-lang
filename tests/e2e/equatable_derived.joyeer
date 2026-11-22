@@ -1,4 +1,4 @@
-// Derived `Equatable` conformances (decision 0029, spec 20.13.5): structs compare fields in declaration order and
+// Derived `Equatable` conformances (decision 0031, spec 20.13.5): structs compare fields in declaration order and
 // stop at the first that differs, enums compare tags and then payloads, generic types derive per instance, and
 // floating-point fields keep IEEE equality. Recursive types need arrays, which conform in plan 0012 phase 4.
 struct Point {

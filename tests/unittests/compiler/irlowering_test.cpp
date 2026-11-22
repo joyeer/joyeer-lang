@@ -2805,7 +2805,7 @@ TEST_F(NewOpcodeVerifierTest, FunctionTypesNeedOneValidEffectPerParameter) {
     EXPECT_FALSE(joyeer::ir::Verifier().verify(strayEffects).succeeded());
 }
 
-// Equality through `Equatable` (decision 0029, spec 20.13.6), plan 0012 phase 2: a builtin conformer compiles as it
+// Equality through `Equatable` (decision 0031, spec 20.13.6), plan 0012 phase 2: a builtin conformer compiles as it
 // did before, with no call; a hand-written conformance calls its witness with both operands borrowed; `!=` negates
 // with `compare eq` against false; and each generic instance calls its own type's equality.
 TEST_F(IRLoweringTest, LowersEqualityToTheBuiltinOperationOrTheWitness) {
@@ -2857,7 +2857,7 @@ func main() {
 }
 
 // `==` on a generic type whose `equals` is hand-written needs that witness's instance even when no call names it
-// (decision 0029): from concrete code, from a generic function and from a method of the type. An owned temporary
+// (decision 0031): from concrete code, from a generic function and from a method of the type. An owned temporary
 // operand is destroyed once, after the witness call, and the borrowed place is neither copied nor destroyed.
 TEST_F(IRLoweringTest, EqualityReachesGenericWitnessInstancesAndDestroysTemporariesAfterTheCall) {
     ASSERT_NO_FATAL_FAILURE(lower(R"JOYEER(struct Box<T: Equatable> {
@@ -2904,7 +2904,7 @@ func main() {
     EXPECT_TRUE(destroyedAfterCall);
 }
 
-// A derived conformance (decision 0029, spec 20.13.5) is a generated function per concrete type: `==` calls it; a
+// A derived conformance (decision 0031, spec 20.13.5) is a generated function per concrete type: `==` calls it; a
 // struct's compares its fields in order and stops at the first that differs; an enum's dispatches on both tags and
 // compares the payloads of equal tags; a generic instance gets its own.
 TEST_F(IRLoweringTest, DerivedEqualityIsAGeneratedFunctionPerConcreteType) {
@@ -2997,7 +2997,7 @@ func main() {
 }
 
 // Plan 0012 phase 4: `Optional` equality calls its derived witness, `[X]` equality the `array_equal` instance, and a
-// presence test is a tag test with no call (decision 0029, spec 20.13.4).
+// presence test is a tag test with no call (decision 0031, spec 20.13.4).
 TEST_F(IRLoweringTest, LowersContainerEqualityAndPresenceTests) {
     ASSERT_NO_FATAL_FAILURE(lower(R"JOYEER(func square(value: Int): Int { return value }
 func optionals(a: Int?, b: Int?): Bool { return a == b }

@@ -2292,7 +2292,7 @@ TEST_F(CollectionRoleTest, ExpandingRecursionThroughARoleArrayIsRejected) {
 
 namespace {
 
-// The `array_equal` role (decision 0029) is `private func name<T: Equatable>(left: [T], right: [T]): Bool` with a
+// The `array_equal` role (decision 0031) is `private func name<T: Equatable>(left: [T], right: [T]): Bool` with a
 // body, declared once (plan 0012 phase 2).
 std::string arrayEqualDeclaration(const std::string& head, const std::string& body = "return true") {
     return "\n@compiler_role(array_equal)\n" + head + " {\n    " + body + "\n}\n";

@@ -1,4 +1,4 @@
-// Equality of `Optional`, `Result` and arrays (decision 0029, spec 20.13.3 items 3 and 4), the `== nil` presence
+// Equality of `Optional`, `Result` and arrays (decision 0031, spec 20.13.3 items 3 and 4), the `== nil` presence
 // test on any optional (spec 20.13.4), recursive types through arrays, a noncopyable payload compared by borrowing,
 // and NaN elements with no identity shortcut.
 struct Point {

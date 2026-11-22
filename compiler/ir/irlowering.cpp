@@ -137,7 +137,7 @@ private:
     // String roles and contracts are emitted only when generated code uses them.
     std::unordered_map<semantic::SymbolId, syntax::FunctionDeclSyntax::Ptr> deferredPreludeFunctions;
     std::vector<std::pair<syntax::FunctionDeclSyntax::Ptr, ir::FunctionId>> pendingPreludeBodies;
-    // The generated witness of each derived `Equatable` conformance the program needs (decision 0029).
+    // The generated witness of each derived `Equatable` conformance the program needs (decision 0031).
     std::unordered_map<typing::TypeId, ir::FunctionId> derivedEqualityFunctions;
     // Top-level `let` constants, evaluated at compile time. Scalars and strings
     // fold into each use; arrays become shared module constants.
@@ -1307,7 +1307,7 @@ private:
         }
     }
 
-    // One generated function per concrete type with a derived `Equatable` conformance (decision 0029, spec
+    // One generated function per concrete type with a derived `Equatable` conformance (decision 0031, spec
     // 20.13.5), named `Type.equals` and taking both values borrowed. It is not a member: only `==` reaches it.
     void collectDerivedEqualities() {
         for (const auto type : model->derivedEqualities()) {
@@ -1326,7 +1326,7 @@ private:
                 continue;
             }
             // Every instruction of the body is located at the type's declaration, in the function's own root scope
-            // (a type introduces no debug scope), so each call carries a location (decision 0029).
+            // (a type introduces no debug scope), so each call carries a location (decision 0031).
             const auto span = declaration->span;
             if (module->sourceFile(0) != nullptr) {
                 function.debugScope = std::nullopt;
@@ -2033,7 +2033,7 @@ private:
                                      expression->op->kind == equalEqual, expression->span);
         }
         if (expression->op->kind == equalEqual || expression->op->kind == notEqual) {
-            // A conformer other than a builtin compares through its `Equatable` witness (decision 0029).
+            // A conformer other than a builtin compares through its `Equatable` witness (decision 0031).
             const auto operandType = typeOf(expression->left);
             if (operandType.has_value() && !model->isBuiltinEquatable(*operandType)) {
                 return lowerWitnessEquality(expression->left, expression->right, *operandType,
@@ -2136,7 +2136,7 @@ private:
         return result;
     }
 
-    // `left == right` on a hand-written conformance (decision 0029, spec 20.13.2): a call of the witness with both
+    // `left == right` on a hand-written conformance (decision 0031, spec 20.13.2): a call of the witness with both
     // operands borrowed; `!=` compares the result with `false`.
     std::optional<ir::Value> lowerWitnessEquality(
             const syntax::ExprPtr& leftOperand, const syntax::ExprPtr& rightOperand, typing::TypeId operandType,
@@ -3943,7 +3943,7 @@ private:
         return finishCall(expression, std::move(instruction), std::move(arguments), consumedArguments);
     }
 
-    // `t.equals(other: u)` in an instance whose `T` is a builtin or derived conformer (decision 0029): the builtin
+    // `t.equals(other: u)` in an instance whose `T` is a builtin or derived conformer (decision 0031): the builtin
     // `==` or the derived witness, since neither is a method. Returns nothing for any other call.
     std::optional<std::optional<ir::Value>> lowerBuiltinEqualsRequirement(
             const syntax::CallExprSyntax::Ptr& expression, const semantic::Symbol* targetSymbol) {
@@ -3957,7 +3957,7 @@ private:
         const auto type = typeOf(expression);
         if (!baseType.has_value() || !type.has_value()) return std::nullopt;
         // A derived conformer and an array have no `equals` method either; the generated witness or the
-        // `arrayEqual` instance stands in (decision 0029).
+        // `arrayEqual` instance stands in (decision 0031).
         if (model->isDerivedEquatable(*baseType) || model->isArrayRoleType(*baseType)) {
             return lowerWitnessEquality(base, expression->arguments[0]->value, *baseType, true, *type,
                                         expression->span);

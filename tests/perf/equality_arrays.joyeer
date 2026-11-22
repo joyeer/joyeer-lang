@@ -1,4 +1,4 @@
-// Array equality (decision 0029, plan 0012 phase 4): `[Int] == [Int]` through the collections prelude's
+// Array equality (decision 0031, plan 0012 phase 4): `[Int] == [Int]` through the collections prelude's
 // `arrayEqual`. The baseline compiler has no array `==`, so it compiles `equality_arrays_loop.joyeer`, the same
 // comparison written by hand. Elements change every round, so no comparison can leave the loop. Not a test; see
 // README.md.

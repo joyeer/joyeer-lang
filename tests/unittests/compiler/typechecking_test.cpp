@@ -3613,7 +3613,7 @@ TEST_F(TypeCheckingTest, FunctionTypesCannotBeKeysConstantsOrNeverParameters) {
 TEST_F(TypeCheckingTest, GenericCallsUseWitnessesAndCacheTransitiveInstances) {
     check(readFixture("type-checking/generics.joyeer"));
     ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
-    // The role prelude's `Optional` and `Result` conformances to `Equatable` (decision 0029) are not the fixture's.
+    // The role prelude's `Optional` and `Result` conformances to `Equatable` (decision 0031) are not the fixture's.
     std::vector<joyeer::typing::Conformance> conformances;
     for (const auto& conformance : checking.model->conformances()) {
         if (!resolution.model->isPreludeSource(conformance.span)) conformances.push_back(conformance);
@@ -4208,7 +4208,7 @@ bool diagnosticHelpContains(const joyeer::typing::TypeCheckingResult& checking,
 
 }  // namespace
 
-// Decision 0029 replaces 0024's rejection: `X?` and `Result<X, Y>` conform when their payloads do (spec 20.13.3),
+// Decision 0031 replaces 0024's rejection: `X?` and `Result<X, Y>` conform when their payloads do (spec 20.13.3),
 // so only a payload without equality is rejected, and the help names the payload.
 TEST_F(TypeCheckingTest, EqualityOnOptionalAndResultIsRejectedWithMatchHelp) {
     using Id = joyeer::typing::TypeCheckingDiagnosticId;
@@ -4431,7 +4431,7 @@ protected:
         const auto userParse = joyeer::parser::Parser(userSource->tokens).parse();
         ASSERT_TRUE(userParse.succeeded()) << joyeer::parser::dump(userParse.diagnostics);
 
-        // The collections prelude constrains `arrayEqual` by `Equatable` (decision 0029), so every replacement role
+        // The collections prelude constrains `arrayEqual` by `Equatable` (decision 0031), so every replacement role
         // prelude declares it too.
         roleSource = std::make_shared<SourceFile>(roles + equatable);
         lexer.parse(roleSource);
@@ -4524,7 +4524,7 @@ TEST_F(RolePreludeTest, AMissingRoleIsReportedByNameResolution) {
 
 } // namespace
 
-// Equality through `Equatable` (decision 0029, spec 20.13), plan 0012 phase 2: the prelude protocol, the builtin
+// Equality through `Equatable` (decision 0031, spec 20.13), plan 0012 phase 2: the prelude protocol, the builtin
 // conformers, hand-written conformances, and `==` on a type parameter. Derived conformances (phase 3) and
 // `Optional`, `Result`, arrays and the presence test (phase 4) are not covered here.
 namespace {
@@ -4594,7 +4594,7 @@ TEST_F(TypeCheckingTest, AHandWrittenEquatableConformanceGivesEqualityAndSatisfi
     EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
 }
 
-// Equality only borrows, so a noncopyable conformer compares without a copy (decision 0029, "Ownership").
+// Equality only borrows, so a noncopyable conformer compares without a copy (decision 0031, "Ownership").
 TEST_F(TypeCheckingTest, ANoncopyableConformerComparesByBorrowing) {
     check("struct Handle {\n    var fd: Int\n    deinit() {}\n}\n"
           "extension Handle: Equatable {\n"
@@ -4670,7 +4670,7 @@ TEST_F(TypeCheckingTest, NonBuiltinEqualityHoldsItsLeftOperandAcrossTheRight) {
     EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
 }
 
-// Review findings on plan 0012 phase 2 (decision 0029): help text that names only what the compiler accepts, the
+// Review findings on plan 0012 phase 2 (decision 0031): help text that names only what the compiler accepts, the
 // remaining reserved-name and exclusivity cases, and requirement members on builtin conformers.
 TEST_F(TypeCheckingTest, EqualityHelpNeverSuggestsAConformanceTheCompilerRejects) {
     using Id = joyeer::typing::TypeCheckingDiagnosticId;
@@ -4752,7 +4752,7 @@ bool hasDiagnosticNamed(const joyeer::typing::TypeCheckingResult& checking, cons
 
 }  // namespace
 
-// Derived `Equatable` conformances (decision 0029, spec 20.13.5), plan 0012 phase 3: an empty conformance derives
+// Derived `Equatable` conformances (decision 0031, spec 20.13.5), plan 0012 phase 3: an empty conformance derives
 // memberwise or case-then-payload equality, conditionally for a generic type, coinductively for a recursive type, and
 // whatever the order of the extensions; operands without a type of their own are typed by the other operand.
 TEST_F(TypeCheckingTest, AnEmptyConformanceDerivesEqualityForStructsAndEnums) {
@@ -4839,7 +4839,7 @@ TEST_F(TypeCheckingTest, AMemberNamedEqualsSelectsTheHandWrittenPath) {
     EXPECT_TRUE(hasTypeDiagnostic(checking, Id::missingWitness)) << joyeer::typing::dump(checking.diagnostics);
 }
 
-// The derived witness is not a member (decision 0029): `==` is the spelling.
+// The derived witness is not a member (decision 0031): `==` is the spelling.
 TEST_F(TypeCheckingTest, ADerivedConformanceAddsNoEqualsMember) {
     source = std::make_shared<SourceFile>("struct Point {\n    var x: Int\n}\nextension Point: Equatable {}\n"
                                           "func f(a: Point, b: Point): Bool { return a.equals(other: b) }\n");
@@ -4852,7 +4852,7 @@ TEST_F(TypeCheckingTest, ADerivedConformanceAddsNoEqualsMember) {
     })) << joyeer::semantic::dump(resolution.diagnostics);
 }
 
-// Review findings on plan 0012 phase 3 (decision 0029): `Never` conforms only as a member, one mistake is reported
+// Review findings on plan 0012 phase 3 (decision 0031): `Never` conforms only as a member, one mistake is reported
 // once, the conformance check stays linear on types that share members, operands without a type of their own, a
 // later `equals`, help text, and conformance checks at generic type arguments.
 TEST_F(TypeCheckingTest, NeverOperandsHaveNoEquality) {
@@ -4923,7 +4923,7 @@ TEST_F(TypeCheckingTest, DerivedConformanceBoundariesAtTheExtensionAndAtTypeArgu
     EXPECT_TRUE(hasTypeDiagnostic(checking, Id::unsatisfiedConstraint)) << joyeer::typing::dump(checking.diagnostics);
 }
 
-// Plan 0012 phase 4 (decision 0029, spec 20.13.3 items 3 and 4, 20.13.4): `Optional`, `Result` and arrays conform when
+// Plan 0012 phase 4 (decision 0031, spec 20.13.3 items 3 and 4, 20.13.4): `Optional`, `Result` and arrays conform when
 // their payloads or elements do, `x == nil` tests presence on any optional, and recursive types conform through arrays.
 TEST_F(TypeCheckingTest, OptionalResultAndArraysConformWhenTheirComponentsDo) {
     check("struct Point {\n    var x: Int\n}\nextension Point: Equatable {}\n"
@@ -5021,7 +5021,7 @@ TEST_F(TypeCheckingTest, AConsumedMemberCallIsNotAnEqualityOperand) {
 
 namespace {
 
-// The `equatable` role binds `==` (decision 0029): the role prelude's protocol must have exactly the requirement
+// The `equatable` role binds `==` (decision 0031): the role prelude's protocol must have exactly the requirement
 // `func equals(other: Self): Bool`, and only one protocol may carry the role (plan 0012 phase 2).
 class EquatableRoleTest : public RolePreludeTest {};
 

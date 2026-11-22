@@ -345,7 +345,7 @@ struct Conformance {
     semantic::SymbolId protocol = semantic::invalidSymbolId;
     std::unordered_map<semantic::SymbolId, semantic::SymbolId> witnesses;
     SourceSpan span;
-    // A derived `Equatable` conformance (decision 0029, spec 20.13.5): no witness method; it holds for an instance
+    // A derived `Equatable` conformance (decision 0031, spec 20.13.5): no witness method; it holds for an instance
     // when every member conforms.
     bool derived = false;
     // A derived conformance rejected at its extension: it counts as satisfied afterwards, so the one mistake is
@@ -472,7 +472,7 @@ public:
     [[nodiscard]] const std::vector<semantic::SymbolId>& constraints(semantic::SymbolId typeParameter) const;
     [[nodiscard]] std::optional<semantic::SymbolId> copyableProtocol() const;
     // The prelude protocol bound to `==` and `!=` by the `equatable` role, and its `equals` requirement
-    // (decision 0029, spec 20.13). Absent when the role prelude does not declare it.
+    // (decision 0031, spec 20.13). Absent when the role prelude does not declare it.
     [[nodiscard]] std::optional<semantic::SymbolId> equatableProtocol() const;
     [[nodiscard]] std::optional<semantic::SymbolId> equatableRequirement() const;
     // The compiler's own conformers (spec 20.13.3, item 1): the integer types, `Bool`, `UInt8`, `Float`,

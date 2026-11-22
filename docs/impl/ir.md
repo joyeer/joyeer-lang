@@ -302,7 +302,7 @@ to its header. Both emit cleanup only for scopes deeper than the loop's saved
 scope depth, including pending expression temporaries and match bindings.
 The jump keeps its explicit source location; generated cleanup is implicit.
 
-`==` and `!=` ([0029](../decisions/0029-equatable.md)) on a builtin conformer lower as before: the left operand
+`==` and `!=` ([0031](../decisions/0031-equatable.md)) on a builtin conformer lower as before: the left operand
 is read as a value before the right is evaluated, then `compare` (or the `String` prelude call), and `Void`
 equality is a `literal` after both operands. In a generic body the left operand stays borrowed, as the checked
 body decided. On a hand-written conformance, `==` is a `call` of the witness (or of its instance for a generic

@@ -4,7 +4,7 @@
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0024](../decisions/0024-library-optional-and-result.md) (rejects `==` on `Optional`/`Result`),
-  [0029](../decisions/0029-equatable.md) (this plan's decision, accepted 2026-11-21)
+  [0031](../decisions/0031-equatable.md) (this plan's decision, accepted 2026-11-21)
 - Spec: [§5.2](../../specs/05-expressions.md), [§12.4](../../specs/12-modules.md) (reserved names),
   [§20.5](../../specs/20-protocols.md), [§20.10](../../specs/20-protocols.md) item 2
 
@@ -67,13 +67,13 @@ types it cannot compile (0024, "Equality is rejected").
 
 - [x] Record a decision for `Equatable`. It must settle the open questions below and state how each
   rejected option fails (operator functions, implicit structural equality for every type). Evidence:
-  [0029](../decisions/0029-equatable.md), status proposed; the user chose four of the answers (2026-11-21).
+  [0031](../decisions/0031-equatable.md), status proposed; the user chose four of the answers (2026-11-21).
 - [x] Run the language-designer and type-system reviewers on it; record the outcome in the decision.
-  Evidence: 0029 "Review": one critical, three high and the medium and low findings, all addressed in the
+  Evidence: 0031 "Review": one critical, three high and the medium and low findings, all addressed in the
   revision.
-- [x] The user accepts 0029 as revised (status `accepted`). Evidence: the user's acceptance on
-  2026-11-21; 0029's status line.
-- [x] Amend the sections 0029 lists (§2.1.2, §2.4, §2.5, §2.6, §5.2, §12.4, §20.2, §20.3, §20.4.2,
+- [x] The user accepts 0031 as revised (status `accepted`). Evidence: the user's acceptance on
+  2026-11-21; 0031's status line.
+- [x] Amend the sections 0031 lists (§2.1.2, §2.4, §2.5, §2.6, §5.2, §12.4, §20.2, §20.3, §20.4.2,
   §20.5, §20.6, §20.8, §20.10, §20.12.2, §20.12.5, Appendix C) and 0024. Add §20.13 for `Equatable`
   with its diagnostics. Evidence: §20.13 (marked specified, not implemented), the listed sections and
   0024's amendment notes; a search of `specs/` finds no remaining rule that rejects `==` on `Optional`,
@@ -141,7 +141,7 @@ types it cannot compile (0024, "Equality is rejected").
   `DerivedWitnessesFollowWhatTheProgramReaches`).
 - [x] For a generic type, define when `Box<X>` conforms: the derived conformance holds when every
   field type, with `X` substituted, conforms. Check it at use, and record the rule in the decision.
-  Evidence: 0029 and §20.13.5 record it; `ADerivedConformanceOfAGenericTypeIsConditionalOnItsArguments`,
+  Evidence: 0031 and §20.13.5 record it; `ADerivedConformanceOfAGenericTypeIsConditionalOnItsArguments`,
   `DerivedConformanceBoundariesAtTheExtensionAndAtTypeArguments`.
 - [x] End-to-end fixtures: compare structs, payload enums and generic instances; reject the
   non-conforming ones. Evidence: `E2EEquatableDerived` and `E2EEquatableDerivedEdges` at -O0 to -O3,
@@ -170,7 +170,7 @@ types it cannot compile (0024, "Equality is rejected").
 - [x] Give the role-bound library `Array<T>` conformance when `T` conforms, without reviving a compiler array
   kind or dispatching on the name `Array`. Decide library witness iteration versus a runtime element-compare
   callback in the equality decision. Check `Dict` separately against the open question below. Evidence:
-  library witness iteration, as 0029 decided: `@compiler_role(array_equal) arrayEqual<T: Equatable>` in
+  library witness iteration, as 0031 decided: `@compiler_role(array_equal) arrayEqual<T: Equatable>` in
   the collections prelude; `Dict` does not conform; `ArrayCharacterization.EqualityOfLibraryArrays*`.
 - [x] End-to-end fixtures for `Int?`, `Point?`, `Result<Int, String>`, `[Int]`, `[[String]]`, `== nil`
   on a function optional, and noncopyable payloads compared by borrowing. Evidence:
@@ -221,7 +221,7 @@ call" for `==`.
 
 ## Open questions
 
-All are answered in [0029](../decisions/0029-equatable.md): the requirement is
+All are answered in [0031](../decisions/0031-equatable.md): the requirement is
 `equals(other: Self)`; conformance is opt-in and derivable; conditional conformance is structural and
 limited to derived `Equatable`; `x == nil` is a presence test; `Float` and `Double` conform with IEEE
 equality; `Dict` does not conform until a `Hashable` decision; noncopyable types may conform and linear
@@ -279,10 +279,10 @@ types may not; conformances stay in the type's module.
   Hand-written conformances came forward from phase 3; the reviews added the prelude-shape check
   (phase 2) and symmetric operand typing (phase 3). Debug and Release CTest pass.
 
-- 2026-11-21: The user accepted 0029 as revised. Amended chapters 2, 5, 12 and 20 (new §20.13, marked
+- 2026-11-21: The user accepted 0031 as revised. Amended chapters 2, 5, 12 and 20 (new §20.13, marked
   not implemented), Appendix C (`prelude_protocol`) and 0024. Phase 1 is done; phase 2 starts with
   failing tests.
-- 2026-11-21: Phase 1 started. Drafted 0029 with the user's four choices (opt-in, `equals(other:)`,
+- 2026-11-21: Phase 1 started. Drafted 0031 with the user's four choices (opt-in, `equals(other:)`,
   `== nil` presence test, noncopyable but not linear); ran the language-designer and type-system
   reviewers and revised for every finding (derived witnesses are not members, conditional conformance
   is a recorded predicate, `==` on non-builtin conformers borrows like a call). Added the acceptance

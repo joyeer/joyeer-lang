@@ -1,4 +1,4 @@
-# 0029: Equality through `Equatable`
+# 0031: Equality through `Equatable`
 
 - Status: accepted (2026-11-21, by the user, as revised after review); implemented in plan 0012 phases 2 to 4 (2026-11-22), with the acceptance gates of phase 5 open. The user chose explicit
   opt-in, the requirement `equals(other:)`, `x == nil` as a presence test on any optional, and conformance for

@@ -334,7 +334,7 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "llvm-backend;debug-info;optimization"
     )
 
-    # Derived Equatable witnesses call other witnesses; every such call carries a debug location (decision 0029). The
+    # Derived Equatable witnesses call other witnesses; every such call carries a debug location (decision 0031). The
     # container fixture adds witnesses located in the role prelude and the presence test.
     foreach(variant IN ITEMS "O0Dwarf;-O0;-gdwarf" "O2Dwarf;-O2;-gdwarf" "O0CodeView;-O0;-gfull;-gcodeview")
         list(GET variant 0 suffix)
@@ -1521,7 +1521,7 @@ false
 true
 "
             0 1 2 3)
-    # Equality through `Equatable` (decision 0029, plan 0012 phase 2): builtin conformers, hand-written witnesses
+    # Equality through `Equatable` (decision 0031, plan 0012 phase 2): builtin conformers, hand-written witnesses
     # and generic `==`, one expected output at every level.
     add_joyeer_native_regression(
             E2EEquatableBuiltins equatable_builtins
@@ -1545,7 +1545,7 @@ true
 true
 "
             0 1 2 3)
-    # Witness instances of generic conformances, temporary operands and Void operands (decision 0029).
+    # Witness instances of generic conformances, temporary operands and Void operands (decision 0031).
     add_joyeer_native_regression(
             E2EEquatableWitnessInstances equatable_witness_instances
             "true
@@ -1560,7 +1560,7 @@ true
 1
 "
             0 1 2 3)
-    # Derived Equatable conformances (decision 0029, plan 0012 phase 3).
+    # Derived Equatable conformances (decision 0031, plan 0012 phase 3).
     add_joyeer_native_regression(
             E2EEquatableDerived equatable_derived
             "true
@@ -1580,7 +1580,7 @@ false
 true
 "
             0 1 2 3)
-    # Edge cases of derived Equatable conformances (decision 0029, plan 0012 phase 3 review).
+    # Edge cases of derived Equatable conformances (decision 0031, plan 0012 phase 3 review).
     add_joyeer_native_regression(
             E2EEquatableDerivedEdges equatable_derived_edges
             "true
@@ -1597,7 +1597,7 @@ true
 true
 "
             0 1 2 3)
-    # Optional, Result and array equality, the presence test and recursive types (decision 0029, plan 0012 phase 4).
+    # Optional, Result and array equality, the presence test and recursive types (decision 0031, plan 0012 phase 4).
     add_joyeer_native_regression(
             E2EEquatableContainers equatable_containers
             "true
@@ -1621,7 +1621,7 @@ false
 false
 "
             0 1 2 3)
-    # Equality borrows: noncopyable array elements and a compared temporary are each destroyed once (decision 0029).
+    # Equality borrows: noncopyable array elements and a compared temporary are each destroyed once (decision 0031).
     add_joyeer_native_regression(
             E2EEquatableOwnership equatable_ownership
             "3
