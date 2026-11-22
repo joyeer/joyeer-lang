@@ -21,6 +21,8 @@ const char* verificationErrorName(VerificationErrorId id) {
         case VerificationErrorId::typeMismatch: return "ir.type-mismatch";
         case VerificationErrorId::callMismatch: return "ir.call-mismatch";
         case VerificationErrorId::invalidSourceLocation: return "ir.invalid-source-location";
+        case VerificationErrorId::unreachableSwitchCase: return "ir.unreachable-switch-case";
+        case VerificationErrorId::nonExhaustiveSwitch: return "ir.non-exhaustive-switch";
     }
     return "ir.unknown";
 }

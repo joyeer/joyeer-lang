@@ -901,6 +901,39 @@ return number
     EXPECT_EQ(opcodeCount(function("optional"), joyeer::ir::Opcode::switchPattern), 1u);
 }
 
+// A wildcard or binding arm matches every value, so the arms after it never run: the dispatch ends with it
+// (the IR verifier rejects a case after a top-level wildcard), and their bodies are not lowered.
+TEST_F(IRLoweringTest, DispatchesNoArmAfterACatchAllArm) {
+    lower(R"JOYEER(func pick(value: Int?): Int {
+return match value {
+.Some(1) => 10,
+n => 20,
+.Some(m) => m,
+_ => 30,
+}
+}
+func flag(value: Bool): Int {
+return match value {
+_ => 1,
+true => 2,
+}
+}
+)JOYEER");
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    for (const auto& [name, cases] : { std::pair { "pick", 2u }, std::pair { "flag", 1u } }) {
+        const auto& lowered = function(name);
+        ASSERT_EQ(opcodeCount(lowered, joyeer::ir::Opcode::switchPattern), 1u) << name;
+        const auto& dispatch = lowered.blocks[0].instructions.back();
+        ASSERT_EQ(dispatch.opcode, joyeer::ir::Opcode::switchPattern) << name;
+        ASSERT_EQ(dispatch.switchCases.size(), cases) << name << "\n" << joyeer::ir::dump(*result.module);
+        EXPECT_EQ(dispatch.switchCases.back().pattern.kind, joyeer::ir::PatternKind::wildcard) << name;
+    }
+    // Neither dead arm's payload binding nor its body reaches IR.
+    EXPECT_EQ(opcodeCount(function("pick"), joyeer::ir::Opcode::extractPayload), 0u);
+}
+
 TEST_F(IRLoweringTest, CarriesSourceLocationsAndMarksCleanupImplicit) {
     lower(R"JOYEER(func run(input: consuming String) {
 let text = "value"

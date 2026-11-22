@@ -1256,6 +1256,9 @@ none
             E2EMatchMovesOnward match_moves_onward
             "100\n1\n1\nname\n3\n2\n")
     add_joyeer_native_regression(
+            E2EMatchArmsAfterCatchAll match_arms_after_catch_all
+            "10\n20\n20\nyes\nother\nnone\nheld kept!\n")
+    add_joyeer_native_regression(
             E2EConstArrayConsume const_array_consume
             "41\n41\n58\n6\n")
     add_joyeer_native_regression(

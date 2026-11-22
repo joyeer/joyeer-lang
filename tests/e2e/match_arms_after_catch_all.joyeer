@@ -1,0 +1,36 @@
+// Arms after a catch-all arm never run: the first matching arm wins, and
+// a wildcard or binding arm matches every value.
+func pick(value: Int?): Int {
+    return match value {
+        .Some(1) => 10,
+        _ => 20,
+        .Some(m) => m,
+        .None => 30,
+    }
+}
+
+func describe(flag: Bool): String {
+    return match flag {
+        true => "yes",
+        other => if other { "unreached" } else { "other" },
+        false => "no",
+    }
+}
+
+func label(note: String?): String {
+    return match note {
+        .None => "none",
+        held => match held { .Some(text) => "held " + text, _ => "unset" },
+        .Some(inner) => inner,
+    }
+}
+
+func main() {
+    print(value: pick(value: .Some(1)))
+    print(value: pick(value: .Some(5)))
+    print(value: pick(value: .None))
+    print(value: describe(flag: true))
+    print(value: describe(flag: false))
+    print(value: label(note: .None))
+    print(value: label(note: .Some("kept" + "!")))
+}
