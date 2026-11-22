@@ -10,8 +10,11 @@
 ## 1. Boundary
 
 Joyeer IR is the compiler's backend-neutral representation. Typed AST lowering
-is in `compiler/ir/irlowering.h` and `compiler/ir/irlowering.cpp`. The public
-model is split by concern; `compiler/ir/ir.h` includes all of it:
+has its public interface in `compiler/ir/irlowering.h`; the implementation is
+in `compiler/ir/lowering/`, one file per concern (functions, statements,
+expressions, equality, places, calls, patterns, ownership, and so on). Lowering
+is part of the compiler core only. The public model is split by concern;
+`compiler/ir/ir.h` includes all of it:
 
 | Header | Contents |
 |---|---|
@@ -24,9 +27,9 @@ model is split by concern; `compiler/ir/ir.h` includes all of it:
 | `verifier.h` | the structural verifier; implementation in `verifier/` |
 | `dump.h` | deterministic text dumps |
 
-The verifier implementation in `compiler/ir/verifier/` starts with
-`internal.h`, which describes the order of its phases and which file holds
-each one.
+The lowering implementation in `compiler/ir/lowering/` and the verifier
+implementation in `compiler/ir/verifier/` each start with an `internal.h`
+that describes the order of the work and which file holds each part.
 
 A successful compilation stores the result in `SourceFile::joyeerIR`. The
 LLVM/native backend consumes it for
