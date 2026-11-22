@@ -254,6 +254,9 @@ public func exitProcess(status: Int32): Never {
     exitWindows(status: status as UInt32)
 }
 
+@platform(windows)
+func maskPanicPipeSignal() {}
+
 // ---- Linux: raw system calls ----------------------------------------------------
 
 @platform(linux)
@@ -269,6 +272,15 @@ private func targetArchitecture(): Int
 public func callNumber(x86: Int, arm: Int): Int {
     if targetArchitecture() == 2 { return arm }
     return x86
+}
+
+@platform(linux)
+func maskPanicPipeSignal() {
+    // rt_sigprocmask(SIG_BLOCK, &SIGPIPE, nullptr, sizeof(kernel_sigset_t)).
+    let mask = staticSlot(index: panicScratchSlot)
+    store64(address: mask, value: 4096)
+    systemCall(number: callNumber(x86: 14, arm: 135), first: 0, second: mask,
+        third: 0, fourth: 8, fifth: 0, sixth: 0)
 }
 
 @platform(linux)
@@ -325,6 +337,19 @@ private func writeDescriptor(descriptor: Int32, buffer: Int, count: Int): Int
 @platform(macos)
 @c_extern(symbol: "read")
 private func readDescriptor(descriptor: Int32, buffer: Int, count: Int): Int
+
+@platform(macos)
+@c_extern(symbol: "pthread_sigmask")
+private func threadSignalMask(how: Int32, signals: Int, previous: Int): Int32
+
+@platform(macos)
+func maskPanicPipeSignal() {
+    // Darwin's sigset_t is the low 32 bits of the scratch word. Block on
+    // this thread only so a closed pipe cannot preempt the contract exit.
+    let mask = staticSlot(index: panicScratchSlot)
+    store64(address: mask, value: 4096)
+    threadSignalMask(how: 1, signals: mask, previous: 0)
+}
 
 @platform(macos)
 @c_extern(symbol: "isatty")

@@ -23,21 +23,20 @@ foreach(fixture IN ITEMS compiler-spy compiler-no-output forwarding-driver)
         COMMAND "$<TARGET_FILE:joyeer>" -O0 -g0
             -o "${fern_test_bin}/${fixture}${CMAKE_EXECUTABLE_SUFFIX}"
             -- "${fern_fixture_dir}/${fixture}.joyeer"
-        DEPENDS joyeer JoyeerBackend JoyeerRuntime
+        DEPENDS joyeer JoyeerBackend JoyeerRuntime "${JOYEER_STDLIB_STAMP}"
             "${fern_fixture_dir}/${fixture}.joyeer"
         VERBATIM)
 endforeach()
 
 set(fern_input_writer_sources
     "${JOYEER_SOURCE_DIR}/tools/fern/common.joyeer"
-    "${CMAKE_BINARY_DIR}/tools/fern/platform.joyeer"
     "${fern_fixture_dir}/cmake-input-writer.joyeer")
 add_custom_command(
     OUTPUT "${fern_input_writer}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${fern_test_bin}"
     COMMAND "$<TARGET_FILE:joyeer>" --module-name fern.app -O0 -g0
         -o "${fern_input_writer}" -- ${fern_input_writer_sources}
-    DEPENDS joyeer JoyeerBackend JoyeerRuntime ${fern_input_writer_sources}
+    DEPENDS joyeer JoyeerBackend JoyeerRuntime "${JOYEER_STDLIB_STAMP}" ${fern_input_writer_sources}
     VERBATIM)
 
 set(fern_logic_sources ${JOYEER_FERN_SOURCES})
@@ -48,7 +47,7 @@ add_custom_command(
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${fern_test_bin}"
     COMMAND "$<TARGET_FILE:joyeer>" --module-name fern.app -O0 -g0
         -o "${fern_logic}" -- ${fern_logic_sources}
-    DEPENDS joyeer JoyeerBackend JoyeerRuntime ${fern_logic_sources}
+    DEPENDS joyeer JoyeerBackend JoyeerRuntime "${JOYEER_STDLIB_STAMP}" ${fern_logic_sources}
     VERBATIM)
 add_custom_target(FernAcceptanceTools ALL
     DEPENDS "${fern_spy}" "${fern_no_output}" "${fern_forwarder}" "${fern_logic}"
@@ -76,7 +75,9 @@ function(fern_add_acceptance name script labels timeout)
             "-DTEST_CONFIGURATION=$<CONFIG>"
             "-DDSYMUTIL_EXECUTABLE=${JOYEER_DSYMUTIL_EXECUTABLE}"
             "-DCOMPILER_FILE_NAME=$<TARGET_FILE_NAME:joyeer>"
-            "-DRUNTIME_FILE_NAMES=$<TARGET_FILE_NAME:joyeer>;$<TARGET_FILE_NAME:JoyeerBackend>;$<TARGET_FILE_NAME:JoyeerRuntime>"
+            "-DRUNTIME_ROOT_FILE_NAMES=$<TARGET_FILE_NAME:joyeer>;$<TARGET_FILE_NAME:JoyeerBackend>"
+            "-DRUNTIME_ARCHIVE_NAME=$<TARGET_FILE_NAME:JoyeerRuntime>"
+            "-DJOYEER_BUILD_COMPRESSION=${JOYEER_BUILD_COMPRESSION}"
             "-DLICENSE_SOURCE=${JOYEER_SOURCE_DIR}/LICENSE"
             "-DFIXTURE_DIR=${fern_fixture_dir}"
             "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/runs/${name}"

@@ -1,0 +1,15 @@
+// The C binding borrows the String as a pointer and a byte count.
+@c_extern(symbol: "joyeer_panic_bytes")
+private func panicBytes(message: String): Never
+
+public func fatalError(message: String): Never {
+    panicBytes(message: message)
+}
+
+public func assert(condition: Bool, message: String): Void {
+    if !condition { fatalError(message: message) }
+}
+
+public func precondition(condition: Bool, message: String): Void {
+    if !condition { fatalError(message: message) }
+}

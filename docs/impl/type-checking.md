@@ -157,7 +157,8 @@ The current checker validates:
   its prelude function role validates `function:` as a name and reports
   `spawn-target-not-function`, `spawn-target-unsupported`, `spawn-target-parameters` and
   `spawn-target-never`; `consume h.join()` is an ordinary method whose substituted signature gives `R`;
-  the calls to `spawn` and System's `runProcess` are recorded for `semantic-analysis.run-process-with-tasks`;
+  calls to `spawn` and uses of System's `runProcess` or `startProcess` (including as function values)
+  are recorded for `semantic-analysis.run-process-with-tasks`;
 - `type-checking.overlapping-access` for calls that combine an exclusive
   inout/consuming/initializing projection with another overlapping access; the
   primary span identifies the later access and a secondary note identifies the

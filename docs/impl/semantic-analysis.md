@@ -35,7 +35,7 @@ LLVM, or native output.
 | `semantic-analysis.linear-overwrite` | error | Assigning over a live linear binding, field path or array element would drop it. |
 | `semantic-analysis.consume-of-linear-element` | error | `consume a[i]` of a linear element (builtin or library array) would leave a slot nothing can end ([0025](../decisions/0025-library-collection-capabilities.md)). The `self` of a `container_end` method is the one exempt receiver. |
 | `semantic-analysis.linear-result-dropped` | error | A statement value (including a tail that is not used as a value), an owned temporary that is only borrowed, or a payload ignored with `_` over a moved scrutinee, of linear type, would be dropped. |
-| `semantic-analysis.run-process-with-tasks` | error | System's `runProcess` is called in a program that also calls `spawn` (spec 21.6); reported at the `runProcess` call. |
+| `semantic-analysis.run-process-with-tasks` | error | System's `runProcess` or `startProcess` is used in a program that calls `spawn` (spec 21.6); reported at the call or function-value reference. |
 | `semantic-analysis.unused-binding` | warning | A local or pattern binding is never read; names beginning with `_` explicitly suppress this warning. |
 
 `let`/field immutability and `inout` access-marker checks remain type-checker

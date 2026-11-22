@@ -29,6 +29,18 @@ if(WIN32)
     endif()
 endif()
 
+if(APPLE)
+    if(CMAKE_OSX_ARCHITECTURES)
+        set(_joyeer_macos_arch "${CMAKE_OSX_ARCHITECTURES}")
+    else()
+        set(_joyeer_macos_arch "${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+    if(NOT _joyeer_macos_arch STREQUAL "arm64")
+        message(FATAL_ERROR
+            "Joyeer supports native macOS ARM64 builds only; System uses the ARM64 filesystem ABI.")
+    endif()
+endif()
+
 cmake_policy(SET CMP0110 NEW)
 if(POLICY CMP0135)
     cmake_policy(SET CMP0135 NEW)
@@ -264,11 +276,15 @@ set(JOYEER_TOOLCHAIN_VERSION "${PROJECT_VERSION}")
 
 add_subdirectory(compiler)
 
-# Object generation needs the compiler before a mixed-language runtime exists.
+# Object generation needs the compiler before the runtime archive exists.
 # Stage the usable product separately, rather than making joyeer wait for it.
+set(JOYEER_TOOLCHAIN_LIB_DIRECTORY "$<TARGET_FILE_DIR:joyeer>/lib")
 add_custom_target(JoyeerToolchain ALL
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${JOYEER_TOOLCHAIN_LIB_DIRECTORY}"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "$<TARGET_FILE:JoyeerRuntime>"
+        "${JOYEER_TOOLCHAIN_LIB_DIRECTORY}/$<TARGET_FILE_NAME:JoyeerRuntime>"
+    COMMAND "${CMAKE_COMMAND}" -E rm -f
         "$<TARGET_FILE_DIR:joyeer>/$<TARGET_FILE_NAME:JoyeerRuntime>"
     DEPENDS joyeer JoyeerRuntime
     COMMENT "Staging the Joyeer compiler/runtime product"
@@ -282,7 +298,9 @@ add_subdirectory(lib)
 file(GLOB_RECURSE JOYEER_STDLIB_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/lib/Foundation/*"
     "${CMAKE_CURRENT_SOURCE_DIR}/lib/System/*")
-set(JOYEER_STDLIB_DIRECTORY "$<TARGET_FILE_DIR:joyeer>/lib")
+set(JOYEER_STDLIB_MODULE_DIRECTORIES
+    "${JOYEER_TOOLCHAIN_LIB_DIRECTORY}/Foundation"
+    "${JOYEER_TOOLCHAIN_LIB_DIRECTORY}/System")
 set(JOYEER_STDLIB_STAMP "${CMAKE_CURRENT_BINARY_DIR}/stdlib.stamp")
 set(JOYEER_STDLIB_COMPRESSION "")
 set(JOYEER_STDLIB_EXTRA_DEPENDS "")
@@ -290,6 +308,7 @@ set(JOYEER_STDLIB_DEPENDS joyeer)
 if(JOYEER_BUILD_COMPRESSION)
     set(JOYEER_STDLIB_COMPRESSION
         "${CMAKE_BINARY_DIR}/lib/Compression/package/$<CONFIG>/Compression")
+    list(APPEND JOYEER_STDLIB_MODULE_DIRECTORIES "${JOYEER_TOOLCHAIN_LIB_DIRECTORY}/Compression")
     list(APPEND JOYEER_STDLIB_DEPENDS JoyeerCompression)
     set(JOYEER_STDLIB_EXTRA_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/lib/Compression/compression.joyeer")
@@ -297,7 +316,7 @@ endif()
 add_custom_command(
     OUTPUT "${JOYEER_STDLIB_STAMP}"
     COMMAND "${CMAKE_COMMAND}"
-        "-DDESTINATION=${JOYEER_STDLIB_DIRECTORY}"
+        "-DDESTINATION=${JOYEER_TOOLCHAIN_LIB_DIRECTORY}"
         "-DLIBRARY_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/lib"
         "-DCOMPRESSION_PACKAGE=${JOYEER_STDLIB_COMPRESSION}"
         "-DVERSION=${JOYEER_TOOLCHAIN_VERSION}"
@@ -311,10 +330,9 @@ add_custom_command(
     COMMENT "Staging the standard library next to the compiler"
     VERBATIM)
 add_custom_target(JoyeerStandardLibrary ALL DEPENDS "${JOYEER_STDLIB_STAMP}")
-# <prefix>/lib sits beside the installed compiler, where it looks for it. The
-# index lists every staged module, so the library installs as one component.
-install(DIRECTORY "${JOYEER_STDLIB_DIRECTORY}/"
-    DESTINATION lib COMPONENT StandardLibrary)
+# The runtime archive in the same directory belongs to its own install component.
+install(DIRECTORY ${JOYEER_STDLIB_MODULE_DIRECTORIES} DESTINATION lib COMPONENT StandardLibrary)
+install(FILES "${JOYEER_TOOLCHAIN_LIB_DIRECTORY}/index.toml" DESTINATION lib COMPONENT StandardLibrary)
 
 if(JOYEER_BUILD_FERN)
     add_subdirectory(tools/fern)
@@ -329,7 +347,7 @@ install(TARGETS joyeer JoyeerBackend
     RUNTIME DESTINATION . COMPONENT JoyeerRuntime
     LIBRARY DESTINATION . COMPONENT JoyeerRuntime)
 install(TARGETS JoyeerRuntime
-    ARCHIVE DESTINATION . COMPONENT JoyeerRuntime)
+    ARCHIVE DESTINATION lib COMPONENT JoyeerRuntime)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
     DESTINATION licenses COMPONENT JoyeerRuntime)
 install(FILES lib/Runtime/include/joyeer/native.h lib/Runtime/include/joyeer/runtime.h

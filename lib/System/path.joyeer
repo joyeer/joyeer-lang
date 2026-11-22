@@ -1,8 +1,13 @@
 import Foundation
 
-// Lexical path helpers. The host is not detected: callers pass `windows`
-// explicitly, so behavior is deterministic and testable on any platform.
-// Nothing here touches the filesystem, canonicalizes, or proves confinement.
+@platform(windows)
+public func isWindows(): Bool { return true }
+
+@platform(posix)
+public func isWindows(): Bool { return false }
+
+// Lexical path helpers use the caller's path syntax. They do not touch the
+// filesystem, canonicalize, or prove confinement.
 
 public func isPathSeparator(byte: UInt8, windows: Bool): Bool {
     return byte == b'/' || (windows && byte == b'\\')

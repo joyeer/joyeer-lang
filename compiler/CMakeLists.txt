@@ -22,10 +22,12 @@ add_subdirectory(backend)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${JOYEER_SOURCE_DIR}/lib/Runtime/concurrency.joyeer"
     "${JOYEER_SOURCE_DIR}/lib/Runtime/roles.joyeer"
-    "${JOYEER_SOURCE_DIR}/lib/Runtime/collections.joyeer")
+    "${JOYEER_SOURCE_DIR}/lib/Runtime/collections.joyeer"
+    "${JOYEER_SOURCE_DIR}/lib/Runtime/contracts.joyeer")
 file(READ "${JOYEER_SOURCE_DIR}/lib/Runtime/concurrency.joyeer" JOYEER_PRELUDE_SOURCE)
 file(READ "${JOYEER_SOURCE_DIR}/lib/Runtime/roles.joyeer" JOYEER_ROLE_PRELUDE_SOURCE)
 file(READ "${JOYEER_SOURCE_DIR}/lib/Runtime/collections.joyeer" JOYEER_COLLECTIONS_PRELUDE_SOURCE)
+file(READ "${JOYEER_SOURCE_DIR}/lib/Runtime/contracts.joyeer" JOYEER_CONTRACTS_PRELUDE_SOURCE)
 configure_file(frontend/prelude_source.h.in generated/prelude_source.h @ONLY)
 
 # One private object target serves the compiler and its stage-specific tests.
@@ -91,7 +93,7 @@ target_include_directories(JoyeerCompilerCore PUBLIC ${JOYEER_SOURCE_DIR} ${JOYE
 target_include_directories(JoyeerCompilerCore PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(JoyeerCompilerCore PRIVATE JoyeerBackend)
 target_compile_definitions(JoyeerCompilerCore PRIVATE
-	JOYEER_RUNTIME_PATH="$<TARGET_FILE_NAME:JoyeerRuntime>"
+	JOYEER_RUNTIME_PATH="lib/$<TARGET_FILE_NAME:JoyeerRuntime>"
 	JOYEER_TOOLCHAIN_VERSION="${JOYEER_TOOLCHAIN_VERSION}"
 	JOYEER_TOOLCHAIN_TARGET="${JOYEER_TOOLCHAIN_TARGET}"
 	JOYEER_TOOLCHAIN_CONFIG="$<LOWER_CASE:$<CONFIG>>"

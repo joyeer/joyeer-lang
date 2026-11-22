@@ -1,3 +1,4 @@
+import Foundation
 import System
 
 struct BuildResult {
@@ -56,14 +57,15 @@ private func allocateArtifact(plan: borrowing BuildPlan): Result<String, ToolErr
     // Create exactly these three missing parents, one component at a time.
     // Existing final links are not accepted as output directories. Ancestor
     // resolution and races still follow the host; this is not confinement.
-    let profileDirectory = pathDirectory(path: plan.artifactParent)
-    let targetDirectory = pathDirectory(path: profileDirectory)
+    let windows = System.isWindows()
+    let profileDirectory = pathDirectory(path: plan.artifactParent, windows: windows)
+    let targetDirectory = pathDirectory(path: profileDirectory, windows: windows)
     ensureDirectory(path: targetDirectory)?
     ensureDirectory(path: profileDirectory)?
     ensureDirectory(path: plan.artifactParent)?
     var id = 1
     while id <= 128 {
-        let directory = toolJoin(base: plan.artifactParent, path: "build-" + decimal(value: id))?
+        let directory = toolJoin(base: plan.artifactParent, path: "build-" + decimalString(value: id))?
         let claimed = match createDirectory(path: directory) {
             .Ok(_) => true,
             .Err(error) => match error {
@@ -133,7 +135,10 @@ private func executeBuild(plan: borrowing BuildPlan, options: borrowing CliOptio
     if plan.native { action = "building" }
     var incomplete = ""
     if plan.native && inPlace { incomplete = "; output may be incomplete at '" + output + "'" }
-    else if plan.native { incomplete = "; incomplete generation left at '" + pathDirectory(path: output) + "'" }
+    else if plan.native {
+        incomplete = "; incomplete generation left at '" +
+            pathDirectory(path: output, windows: System.isWindows()) + "'"
+    }
     toolStderr(contents: "fern: " + action + " module '" + plan.moduleName + "' (" + plan.profile + ")\n")?
     if options.verbose { displayInvocation(module: plan.moduleName, invocation: invocation)? }
     let status = match runProcess(executable: invocation.executable,
@@ -150,12 +155,12 @@ private func executeBuild(plan: borrowing BuildPlan, options: borrowing CliOptio
             // Compiler signal termination is a tool failure, not a source
             // rejection. Unlike a signaled test program, abort the test suite.
             return .Err(ToolError(message: "module '" + plan.moduleName + "': compiler '" +
-                invocation.executable + "' terminated by signal " + decimal(value: signal) + incomplete, pos: -1))
+                invocation.executable + "' terminated by signal " + decimalString(value: signal) + incomplete, pos: -1))
         },
     }
     if !successful {
         toolStderr(contents: "fern: module '" + plan.moduleName + "': compiler " +
-            completionMessage(status: status) + incomplete + "\n")?
+            processStatusMessage(status: status) + incomplete + "\n")?
         return .Ok(.CompileFailed(status))
     }
     if plan.native {
@@ -190,7 +195,7 @@ private func executeChild(build: borrowing BuildResult, options: borrowing CliOp
     }
     if !successful {
         toolStderr(contents: "fern: module '" + build.moduleName + "': child " +
-            completionMessage(status: status) + "\n")?
+            processStatusMessage(status: status) + "\n")?
     }
     return .Ok(successful)
 }
@@ -218,8 +223,8 @@ private func executeTests(plans: borrowing [BuildPlan], options: borrowing CliOp
     }
     var noun = " tests: "
     if plans.count == 1 { noun = " test: " }
-    print(value: decimal(value: plans.count) + noun + decimal(value: passed) + " passed, " +
-        decimal(value: buildFailed) + " build-fail, " + decimal(value: runFailed) + " run-fail")
+    print(value: decimalString(value: plans.count) + noun + decimalString(value: passed) + " passed, " +
+        decimalString(value: buildFailed) + " build-fail, " + decimalString(value: runFailed) + " run-fail")
     if buildFailed != 0 || runFailed != 0 { return .Ok(1) }
     return .Ok(0)
 }
@@ -289,8 +294,9 @@ private func initFiles(directory: String, options: borrowing CliOptions): Result
 }
 
 func initializeProject(options: borrowing CliOptions): Result<Int, ToolError> {
-    let directory = trimDirectoryPath(path: options.directory)
-    let parent = pathDirectory(path: directory)
+    let windows = System.isWindows()
+    let directory = trimDirectoryPath(path: options.directory, windows: windows)
+    let parent = pathDirectory(path: directory, windows: windows)
     // Do not create ancestors. A missing parent is a failure, not mkdir -p.
     requireDirectory(path: parent)?
     match createDirectory(path: directory) {

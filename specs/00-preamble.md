@@ -44,8 +44,8 @@ Performance comparisons must preserve equivalent ownership, copying, error
 handling, arithmetic, and bounds-check semantics. Comparing a checked operation
 with an unchecked one does not establish abstraction overhead. Optimizations
 may remove redundant work only without changing source validity or observable
-behavior. Eliding a development-time `assert` does not disable required language
-safety checks (§9).
+behavior, including observable contract failures and required language safety
+checks (§9).
 
 Performance parity and fixed binary-size budgets are measurement goals, not
 language guarantees. Current costs and measurement requirements belong in the

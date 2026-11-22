@@ -1,8 +1,7 @@
 # 0007: writeStderr and readStdinLine in Joyeer
 
-- Status: accepted and implemented (decided and built 2026-11-07). Verified on
-  Windows x64 Debug and Release; the POSIX variant is empty and type-checks for
-  Linux and macOS.
+- Status: accepted and implemented (decided and built 2026-11-07).
+  See [host-operation validation](../impl/supported-features.md#host-operation-validation).
 - Amended by [0011](0011-runtime-without-the-c-library.md): the operations now use the
   runtime's own streams over the operating system instead of the C library's `FILE*`
   streams, `errno` and Windows text-mode switch described below. The documented
@@ -15,8 +14,8 @@
 ## Context
 
 [Decision 0004](0004-remove-host-builtins.md) moves the host operations into
-`System`. [The filesystem plan](../plan/0007-filesystem.md) held back `writeStderr`
-and `readStdinLine` because a port seemed to need one of two things Joyeer lacks:
+`System`. The original filesystem plan held back `writeStderr` and
+`readStdinLine` because a port seemed to need one of two things Joyeer lacked:
 
 - **Windows descriptor protection.** The C code stops the CRT from aborting the
   process on a closed descriptor by installing a thread-local invalid-parameter

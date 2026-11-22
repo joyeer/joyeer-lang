@@ -1,0 +1,130 @@
+import Foundation
+
+@platform(posix)
+@c_extern(symbol: "joyeer_intrinsic_load_u8")
+private func loadByte(address: Int): UInt8
+
+@platform(posix)
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+private func loadWord(address: Int): UInt64
+
+@platform(macos)
+@c_extern(symbol: "getcwd", pointer: "buffer")
+private func getcwdP(buffer: inout [UInt8], size: Int): Int
+
+@platform(macos)
+@c_extern(symbol: "clock_gettime", pointer: "stamp")
+private func clockGettimeP(clock: UInt32, stamp: inout [UInt8]): Int32
+
+@platform(posix)
+func nativeEnvironmentVariable(name: String): Result<String?, HostQueryError> {
+    var slot = cEnvironment()
+    if slot == 0 { return .Ok(nil) }
+    var entry = loadWord(address: slot) as Int
+    while entry != 0 {
+        var index = 0
+        while index < name.count && loadByte(address: entry + index) == name[index] {
+            index = index + 1
+        }
+        if index == name.count && loadByte(address: entry + index) == b'=' {
+            var value: [UInt8] = []
+            index = index + 1
+            var byte = loadByte(address: entry + index)
+            while byte != 0 {
+                &value.append(element: byte)
+                index = index + 1
+                byte = loadByte(address: entry + index)
+            }
+            let text = stringFromBytes(bytes: value, count: value.count)
+            if !isValidUtf8(text: text) { return .Err(.InvalidEncoding(invalidEncodingCode())) }
+            return .Ok(.Some(text))
+        }
+        slot = slot + 8
+        entry = loadWord(address: slot) as Int
+    }
+    return .Ok(nil)
+}
+
+// Bytes written without the terminator, or negated errno. The Linux kernel
+// can report a path prefixed with "(unreachable)"; that is not an absolute path.
+@platform(linux)
+private func cwdBytes(buffer: inout [UInt8]): Int {
+    let size = buffer.count
+    let length = linuxCall(x86: 79, arm: 17, first: addressOfBytes(bytes: &buffer), second: size,
+        third: 0, fourth: 0, fifth: 0, sixth: 0)
+    if length < 0 { return length }
+    if length < 2 || buffer[0] != b'/' { return -2 }
+    return length - 1
+}
+
+@platform(macos)
+private func cwdBytes(buffer: inout [UInt8]): Int {
+    let size = buffer.count
+    if getcwdP(buffer: &buffer, size: size) == 0 { return 0 - (cErrno() as Int) }
+    var length = 0
+    while length < size && buffer[length] != 0 { length = length + 1 }
+    if length == size { return -34 }
+    return length
+}
+
+@platform(posix)
+func nativeCurrentDirectory(): Result<String, HostQueryError> {
+    var size = 256
+    while size <= 9223372036854775807 / 2 {
+        var buffer = zeroBuffer(count: size)
+        let length = cwdBytes(buffer: &buffer)
+        if length >= 0 { return .Ok(stringFromBytes(bytes: buffer, count: length)) }
+        if length != -34 { return .Err(.QueryFailed(0 - length)) }
+        size = size * 2
+    }
+    return .Err(.OutOfRange(queryOverflowCode()))
+}
+
+@platform(linux)
+private func queryOverflowCode(): Int { return 75 }
+
+@platform(macos)
+private func queryOverflowCode(): Int { return 84 }
+
+@platform(linux)
+private func sampleClock(monotonic: Bool, stamp: inout [UInt8]): Int {
+    let clock = if monotonic { 1 } else { 0 }
+    let outcome = linuxCall(x86: 228, arm: 113, first: clock, second: addressOfBytes(bytes: &stamp),
+        third: 0, fourth: 0, fifth: 0, sixth: 0)
+    return 0 - outcome
+}
+
+@platform(macos)
+private func sampleClock(monotonic: Bool, stamp: inout [UInt8]): Int {
+    let clock: UInt32 = if monotonic { 6 } else { 0 }
+    if clockGettimeP(clock: clock, stamp: &stamp) != 0 { return cErrno() as Int }
+    return 0
+}
+
+@platform(posix)
+func nativeClockMillis(monotonic: Bool): Result<Int, HostQueryError> {
+    var stamp = zeroBuffer(count: 16)
+    let code = sampleClock(monotonic: monotonic, stamp: &stamp)
+    if code != 0 { return .Err(.QueryFailed(code)) }
+    return millisFromTimespec(seconds: hostWord(bytes: stamp, offset: 0) &as Int,
+        nanos: hostWord(bytes: stamp, offset: 8) as Int)
+}
+
+@platform(posix)
+func millisFromTimespec(seconds: Int, nanos: Int): Result<Int, HostQueryError> {
+    let fraction = nanos / 1000000
+    let last = 9223372036854775807
+    let first = 0 - last - 1
+    let low = first / 1000 - 1
+    let high = last / 1000
+    if seconds < low || seconds > high || (seconds == high && fraction > last % 1000) {
+        return .Err(.OutOfRange(queryOverflowCode()))
+    }
+    if seconds == low {
+        // The intermediate seconds * 1000 is below Int.min; the sum may fit.
+        let needed = 1000 + first % 1000
+        if fraction < needed { return .Err(.OutOfRange(queryOverflowCode())) }
+        return .Ok(first + (fraction - needed))
+    }
+    return .Ok(seconds * 1000 + fraction)
+}

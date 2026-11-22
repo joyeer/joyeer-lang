@@ -1,0 +1,84 @@
+@platform(windows)
+@c_extern(symbol: "GetCurrentDirectoryW", pointer: "buffer")
+private func getCurrentDirectoryW(size: UInt32, buffer: inout [UInt8]): UInt32
+
+@platform(windows)
+@c_extern(symbol: "GetEnvironmentVariableW", pointer: "name", pointer: "buffer")
+private func getEnvironmentVariableW(name: [UInt8], buffer: inout [UInt8], size: UInt32): UInt32
+
+@platform(windows)
+@c_extern(symbol: "GetLastError")
+private func getLastErrorW(): UInt32
+
+@platform(windows)
+@c_extern(symbol: "SetLastError")
+private func clearLastErrorW(code: UInt32): Void
+
+@platform(windows)
+@c_extern(symbol: "GetTickCount64")
+private func getTickCount64(): UInt64
+
+@platform(windows)
+@c_extern(symbol: "GetSystemTimePreciseAsFileTime", pointer: "stamp")
+private func getFileTime(stamp: inout [UInt8]): Void
+
+@platform(windows)
+private func decodedText(buffer: [UInt8], length: Int): Result<String, HostQueryError> {
+    var bytes: [UInt8] = []
+    if !decodeName(data: buffer, start: 0, units: length + 1, into: &bytes) {
+        return .Err(.InvalidEncoding(invalidEncodingCode()))
+    }
+    return .Ok(stringFromBytes(bytes: bytes, count: bytes.count))
+}
+
+@platform(windows)
+func nativeCurrentDirectory(): Result<String, HostQueryError> {
+    var size: UInt32 = 256
+    while true {
+        var buffer = zeroBuffer(count: (size as Int) * 2)
+        let length = getCurrentDirectoryW(size: size, buffer: &buffer)
+        if length == 0 { return .Err(.QueryFailed(getLastErrorW() as Int)) }
+        if length < size { return decodedText(buffer: buffer, length: length as Int) }
+        if length == size { return .Err(.QueryFailed(122)) }
+        size = length
+    }
+    return .Err(.QueryFailed(122))
+}
+
+@platform(windows)
+func nativeEnvironmentVariable(name: String): Result<String?, HostQueryError> {
+    let native = nativePathBytes(text: name)
+    var size: UInt32 = 256
+    while true {
+        var buffer = zeroBuffer(count: (size as Int) * 2)
+        clearLastErrorW(code: 0)
+        let length = getEnvironmentVariableW(name: native, buffer: &buffer, size: size)
+        if length == 0 {
+            let code = getLastErrorW() as Int
+            if code == 203 { return .Ok(nil) }
+            if code != 0 { return .Err(.QueryFailed(code)) }
+            return .Ok(.Some(""))
+        }
+        if length < size {
+            let value = decodedText(buffer: buffer, length: length as Int)?
+            return .Ok(.Some(value))
+        }
+        if length == size { return .Err(.QueryFailed(122)) }
+        size = length
+    }
+    return .Err(.QueryFailed(122))
+}
+
+@platform(windows)
+func nativeClockMillis(monotonic: Bool): Result<Int, HostQueryError> {
+    if monotonic {
+        let duration = getTickCount64()
+        if duration > 9223372036854775807 { return .Err(.OutOfRange(534)) }
+        return .Ok(duration as Int)
+    }
+    var stamp = zeroBuffer(count: 8)
+    getFileTime(stamp: &stamp)
+    // FILETIME is an unsigned count of 100 ns units since 1601.
+    let millis = hostWord(bytes: stamp, offset: 0) / 10000
+    return .Ok((millis as Int) - 11644473600000)
+}

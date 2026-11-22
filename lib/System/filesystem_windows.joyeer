@@ -339,37 +339,28 @@ private func isDriveLetter(byte: UInt8): Bool {
     return (byte >= b'a' && byte <= b'z') || (byte >= b'A' && byte <= b'Z')
 }
 
-// Entries between a first FindFirstFileW result and the end, excluding "." and "..".
 @platform(windows)
-private func collectEntries(handle: Int, data: inout [UInt8], names: inout [String], first: Bool): Int {
-    var more = true
-    var code = 0
-    var advance = !first
-    while more && code == 0 {
-        if advance {
-            if findNextW(handle: handle, data: &data) == 0 {
-                more = false
-                let last = lastErrorW()
-                if last != 18 { code = last as Int }
-                continue
-            }
+func nativeDirectoryNext(directory: inout DirectoryReader): Result<String?, Int> {
+    // FindFirstFileW already filled the buffer with the first entry.
+    let handle = directory.handle
+    if directory.cursor != 0 {
+        if findNextW(handle: handle, data: &directory.buffer) == 0 {
+            let code = lastErrorW() as Int
+            if code == 18 { return .Ok(nil) }
+            return .Err(code)
         }
-        advance = true
-        var name: [UInt8] = []
-        if !decodeName(data: data, start: findNameOffset, units: findNameUnits, into: &name) {
-            code = 1113
-            continue
-        }
-        let isDot = name.count == 1 && name[0] == b'.'
-        let isDotDot = name.count == 2 && name[0] == b'.' && name[1] == b'.'
-        if !isDot && !isDotDot { &names.append(element: stringFromBytes(bytes: name, count: name.count)) }
     }
-    return code
+    &directory.cursor = 1
+    var name: [UInt8] = []
+    if !decodeName(data: directory.buffer, start: findNameOffset, units: findNameUnits, into: &name) {
+        return .Err(invalidEncodingCode())
+    }
+    return .Ok(.Some(stringFromBytes(bytes: name, count: name.count)))
 }
 
 @platform(windows)
-func nativeListDirectory(path: String, native: [UInt8]): Result<[String], FileSystemError> {
-    let attributes = fileAttributesW(path: native)
+func nativeOpenDirectory(path: String, bytes: [UInt8]): Result<DirectoryReader, FileSystemError> {
+    let attributes = fileAttributesW(path: bytes)
     if attributes == invalidAttributes { return .Err(classifyError(code: lastErrorW() as Int)) }
     if (attributes & attributeDirectory) == 0 { return .Err(.NotDirectory(267)) }
     // The search pattern is the path, a separator unless it ends in one or is
@@ -380,19 +371,20 @@ func nativeListDirectory(path: String, native: [UInt8]): Result<[String], FileSy
     let patternBytes = nativePathBytes(text: pattern)
     var data = zeroBuffer(count: findDataSize)
     let handle = findFirstW(pattern: patternBytes, data: &data)
-    var names: [String] = []
     if handle == -1 {
         let code = lastErrorW()
         if code != 2 { return .Err(classifyError(code: code as Int)) }
         // No entries at all, not even "." and "..": an empty directory.
-        let remaining = fileAttributesW(path: native)
+        let remaining = fileAttributesW(path: bytes)
         if remaining == invalidAttributes { return .Err(classifyError(code: lastErrorW() as Int)) }
-        if (remaining & attributeDirectory) == 0 { return .Err(classifyError(code: code as Int)) }
-        return .Ok(names)
+        if (remaining & attributeDirectory) == 0 { return .Err(.NotDirectory(267)) }
+        return .Ok(DirectoryReader(handle: -1, state: -1, buffer: [], cursor: 0, limit: 0))
     }
-    let work = collectEntries(handle: handle, data: &data, names: &names, first: true)
-    var code = work
-    if findCloseW(handle: handle) == 0 && code == 0 { code = lastErrorW() as Int }
-    if code != 0 { return .Err(classifyError(code: code)) }
-    return .Ok(names)
+    return .Ok(DirectoryReader(handle: handle, state: 0, buffer: consume data, cursor: 0, limit: 0))
+}
+
+@platform(windows)
+func nativeCloseDirectory(handle: Int): Int {
+    if findCloseW(handle: handle) == 0 { return lastFailure() }
+    return 0
 }

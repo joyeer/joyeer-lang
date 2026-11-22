@@ -213,7 +213,7 @@ private func inheritable(kind: UInt32): Int {
 }
 
 @platform(windows)
-func nativeRun(executable: String, arguments: [String], workingDirectory: String): Result<ProcessStatus, ProcessError> {
+func nativeStart(executable: String, arguments: [String], workingDirectory: String): Result<Int, ProcessError> {
     let fullExecutable = absolute(text: executable)?
     let fullDirectory = absolute(text: workingDirectory)?
     if isBatchFile(path: fullExecutable) { return .Err(.LaunchFailed(badExecutableFormat)) }
@@ -253,30 +253,41 @@ func nativeRun(executable: String, arguments: [String], workingDirectory: String
     if launched == 0 { return .Err(classifyProcessError(code: launchError)) }
     let process = readInteger(bytes: information, offset: 0, width: 8)
     closeQuietly(handle: readInteger(bytes: information, offset: 8, width: 8))
-    return waitForExit(process: process)
+    return .Ok(process)
 }
 
 @platform(windows)
-private func waitForExit(process: Int): Result<ProcessStatus, ProcessError> {
+private func closeWaitHandle(handle: Int) {
+    if closeProcessHandleW(handle: handle) == 0 {
+        fatalError(message: "could not release owned child process handle")
+    }
+}
+
+@platform(windows)
+func nativeWait(child: Int, emergency: Bool): Result<ProcessStatus, ProcessError> {
     var waited = 0
     var again = true
     while again {
-        waited = waitForObjectW(handle: process, milliseconds: waitInfinite) as Int
+        waited = waitForObjectW(handle: child, milliseconds: waitInfinite) as Int
         again = waited == waitFailed && (processLastErrorW() as Int) == ioPending
     }
     if waited != 0 {
         let code = processLastErrorW() as Int
-        terminateProcessW(handle: process, code: 1)
-        waitForObjectW(handle: process, milliseconds: waitInfinite)
-        closeQuietly(handle: process)
+        if !emergency { fatalError(message: "could not wait for owned child process") }
+        // Preserve runProcess's emergency termination policy on a native wait failure.
+        terminateProcessW(handle: child, code: 1)
+        if waitForObjectW(handle: child, milliseconds: waitInfinite) != 0 {
+            fatalError(message: "could not reap child process after a wait failure")
+        }
+        closeWaitHandle(handle: child)
         return .Err(.WaitFailed(code))
     }
     var status = zeroBuffer(count: 4)
-    if exitCodeW(handle: process, code: &status) == 0 {
+    if exitCodeW(handle: child, code: &status) == 0 {
         let code = processLastErrorW() as Int
-        closeQuietly(handle: process)
+        closeWaitHandle(handle: child)
         return .Err(.WaitFailed(code))
     }
-    closeQuietly(handle: process)
+    closeWaitHandle(handle: child)
     return .Ok(.Exited(readInteger(bytes: status, offset: 0, width: 4)))
 }

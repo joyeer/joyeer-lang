@@ -24,12 +24,10 @@ Facts, checked against the code:
   C `int`, `DWORD` and `BOOL` results are `Int32` or `UInt32`, widened with `as Int`, because the
   upper half of the register is undefined), and `@c_export` functions whose address `symbol_address`
   takes in the same unit.
-- **Archive members are not always linked lazily.** (Amended by [plan 0011](../plan/0011-library-containers.md):
-  macOS no longer uses `-force_load` and links lazily like Linux; only the Windows C-startup link below
-  still loads every member.) Linux and the Windows own-entry link are:
-  a member nothing references does not reach the program. The Windows C-startup link uses
-  `/WHOLEARCHIVE` and macOS uses `-force_load`, which load every member, so a thread object would
-  add its imports to those programs. See "Gating".
+- **Archive members are not always linked lazily.** Linux, macOS, and the Windows own-entry link
+  omit unreferenced members. [0026](0026-library-array.md), amendment A7, removed the macOS
+  `-force_load`. The Windows C-startup link still uses `/WHOLEARCHIVE`, which loads every member,
+  so a thread object would add its imports to those programs. See "Gating".
 - Static slots are 64 eight-byte, zero-initialised words shared by the program. Used today: 0
   counter, 1 allocator, 2 stream state, 3 to 10 stream scratch, 16 the process environment block,
   32 to 33 string scratch, 34 to 36 the argument handle, 37 the byte buffer. The slot table is

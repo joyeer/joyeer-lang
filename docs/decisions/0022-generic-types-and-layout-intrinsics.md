@@ -1,8 +1,9 @@
 # 0022: Generic structs and enums, and runtime layout intrinsics
 
-- Status: accepted (2026-11-13), after a language-designer review (see "Review"). Phase 3 of the [generics plan](../plan/0010-generics.md); it settles that
-  plan's open question 5. Builds on [0021](0021-protocols-and-generic-functions.md) (generic functions,
-  instantiation) and [0005](0005-runtime-unsafe-memory.md) (runtime-only unsafe layer).
+- Status: accepted (2026-11-13), after a language-designer review (see "Review").
+  Implemented in [#23](https://github.com/joyeer/joyeer-lang/pull/23). Builds on
+  [0021](0021-protocols-and-generic-functions.md) (generic functions, instantiation)
+  and [0005](0005-runtime-unsafe-memory.md) (runtime-only unsafe layer).
 - Spec: §20.12 (new), with amendments to §2.6, §3.2.3, §3.3, §3.4, §3.5, §4.1.1, §19.4.5, §20.10 (item 1 lifted).
 
 ## Context

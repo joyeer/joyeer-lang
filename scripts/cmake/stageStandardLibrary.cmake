@@ -9,8 +9,8 @@ foreach(name IN ITEMS DESTINATION LIBRARY_SOURCE VERSION TARGET CONFIG)
     endif()
 endforeach()
 
-# A clean stage: a removed source file must not survive in the toolchain.
-file(REMOVE_RECURSE "${DESTINATION}")
+# Remove stale module sources without touching the runtime archive staged in lib/.
+file(REMOVE_RECURSE "${DESTINATION}/Foundation" "${DESTINATION}/System" "${DESTINATION}/Compression")
 file(MAKE_DIRECTORY "${DESTINATION}")
 
 set(modules "")

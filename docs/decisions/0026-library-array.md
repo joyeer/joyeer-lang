@@ -8,7 +8,8 @@
   [§3.1.1](../../specs/03-declarations.md#311-top-level-constants), [§4.3](../../specs/04-memory.md),
   [§19](../../specs/19-c-interop.md), [§20.12.5](../../specs/20-protocols.md) and
   [§21.2.2](../../specs/21-concurrency.md).
-- Plan: [0011](../plan/0011-library-containers.md), Phase 3. Builds on [0025](0025-library-collection-capabilities.md).
+- Implementation: [library collection switch](https://github.com/joyeer/joyeer-lang/pull/31).
+  Builds on [0025](0025-library-collection-capabilities.md).
 
 ## Context
 
@@ -33,7 +34,7 @@ inventory of the code (2026-11-15):
   `joyeer_array_create_owned_abi` directly. The `for-in` loop is a parser rewrite to `count` and `a[i]`, but the
   checker's `for-in` and `not-iterable` tests also name the type kind.
 - **Cost.** `a[i]` and `count` are inline today; `append`, `removeLast` and `consumeEmpty` are calls into the
-  runtime. The baseline of `tests/perf/array_*.joyeer` is recorded in the plan 0011 log.
+  runtime. The builtin baseline for `tests/perf/array_*.joyeer` is `7a1d748`.
 
 Phase 3 must remove the type kind, the opcodes and the array cases of the backend without changing a program that
 compiles today, its traps, or its allocation sizes, with no performance regression outside measured noise at `-O2`
@@ -381,8 +382,8 @@ The implementation chose a private consuming literal method and artificial owner
 
 The stage 4 and 5 implementation (commits 1ad202b, 4477d9b, 656ac2e, validated on Windows x64, Linux x86_64 and
 macOS/AArch64) departs from or adds to revision 3 in the places below. None adds source syntax, and none changes a
-gate: the Windows x64 measurements of the plan 0011 log (2026-11-16) meet every Section 4 limit as written. They are
-recorded here so that the decision record matches the code. The user accepted all nine items on 2026-11-16
+gate: the 2026-11-16 Windows x64 comparison of `7a1d748` against `d1cf2ca` met every Section 4 limit.
+The amendments are recorded here so the decision matches the code. The user accepted all nine items on 2026-11-16
 ("Accept all A1-A9"); where an item amends text above, this section governs.
 
 | # | Amendment | Revision 3 said | Implemented | Visible effect |
@@ -395,7 +396,7 @@ recorded here so that the decision record matches the code. The user accepted al
 | A6 | Diverging-call rule | not addressed | A call with a statically `Never`-typed argument is fully type and constraint checked but does not demand a callee instance; lowering evaluates earlier operands with their normal ownership, then stops without a call. Needed because `[Never].append(element: return)` compiled with the builtin array (that array type is now rejected, see A10; the rule still serves generic calls such as `accept(value: return, sample: 1)`). This is a general rule, not an array one | None for programs that compiled before |
 | A7 | macOS linking | not addressed | `-force_load` of the runtime archive is removed; the archive loads lazily as on Linux. Two native callback probes conflicted with the test channel exports under `-force_load` | Programs on macOS stop importing unused thread and channel functions |
 | A8 | Diagnostics beyond the list under Consequences | `address` and `capacity` become `inaccessible-declaration`; the report goldens | Also `literal`, `element` and `duplicate` (with the whole `a.member` span and no help line); "it is a builtin method" is now "it is a method"; `&a.count = 5`, `a.count += 1` and passing `&a.count` inout carry an extra help line; `&a.append(element: &r)` reports `consuming argument requires 'consume' at the call site` with a fix-it; `consume a.count` is `partial-consume-of-deinit-type` (it was a pseudo-member); `&a.append(element: consume a[0])` on a noncopyable element is `type-checking.overlapping-access` (it was accepted until `a` was used again); the linear help names the handle's ending method, with the remove-then-`consumeEmpty` advice only for a bare array | The two rejections apply to programs the builtin accepted but could not run correctly; the rest are wording |
-| A9 | Cost measurements by platform | gates apply on Windows x64; Linux reported once its noise is known | Windows x64 passes (plan log, 2026-11-16). macOS/AArch64 reports flat drop at `-O2` at 1.019 to 1.021 with a lower bound above 1, and +16432 B on nested destruction at `-O2`, which is a 16 KiB Mach-O segment boundary. Linux performance is not measured | Proposal: executable bytes are gated on Windows x64 only, and a jump of exactly one segment page on Mach-O is reported, not gated |
+| A9 | Cost measurements by platform | gates apply on Windows x64; Linux reported once its noise is known | Windows x64 passes (2026-11-16 switch measurements). macOS/AArch64 reports flat drop at `-O2` at 1.019 to 1.021 with a lower bound above 1, and +16432 B on nested destruction at `-O2`, which is a 16 KiB Mach-O segment boundary. Linux performance was not measured in that run | Proposal: executable bytes are gated on Windows x64 only, and a jump of exactly one segment page on Mach-O is reported, not gated |
 | A10 | `Never` is not an array element (revision 5, accepted 2026-11-16) | `[Never]` is accepted and pinned for compatibility; its zero-size representation is kept | `[Never]`, `Array<Never>` and an inferred element type `Never` (`[return]`) are rejected with `type-checking.invalid-type-argument`, like `Never` in any other generic; `[Never?]` stays valid. The checker had exempted the array role from the rule that applies to every other generic | A program that wrote `[Never]` stops compiling. The compiler crashes on iterating or indexing a `[Never]` (present before the switch) are removed for arrays; the same rule now covers a `Dict` key or value (A11) |
 | A11 | `Never` is not a dictionary key or value (accepted 2026-11-16) | `Dict` unchanged by this record | `[String: Never]`, `[Never: Int]` and an inferred `["a": return]` are rejected with `type-checking.invalid-type-argument`, the rule of A10 applied to the builtin `Dict`, which crashed the compiler on `d["a"]` before the switch. `[String: Never?]` stays valid | A program that wrote such a type stops compiling |
 
@@ -408,8 +409,8 @@ type parameter; (9) the diverging-call rule, which is general. Items 7 and 8 are
 verifier tests. A2: checker and lowering tests plus about 110 differential programs against the builtin baseline, all
 identical except the A8 changes. A4, A5: native `-gfull` execution and DWARF checks, and 33 differential runs at `-O0`
 to `-O3`. A6: tests observed failing first (destruction order, skipped later arguments, generic callers). A7: the two
-native probes, and no change on Windows, where `/WHOLEARCHIVE` stays for the C-startup link. A9: the raw reports
-retained by the measurer, summarized in the plan log.
+native probes, and no change on Windows, where `/WHOLEARCHIVE` stays for the C-startup link. A9: the November 16
+comparisons above; the Windows flat-drop rows passed on the allowed 50-pair rerun.
 
 **Known gaps, stated rather than waived.** (a) Nothing verifies LLVM debug info after the optimization pipeline, so
 a debug-scope corruption introduced by inlining at `-O1` or above would not be caught at compile time; the proposed
@@ -439,5 +440,6 @@ design, not an implementation.
 
 ## Evidence
 
-The inventory above (2026-11-15) and the baseline of `tests/perf/array_*.joyeer` in the plan 0011 log. Prior art:
-0024's role binding of syntax, 0025's capabilities, 0023's bundled-prelude separation.
+The inventory above (2026-11-15), the [benchmark harnesses](../../tests/perf/README.md#comparing-two-builds),
+and the [collection validation](../impl/runtime.md#collection-validation). Prior art: 0024's role binding of
+syntax, 0025's capabilities, 0023's bundled-prelude separation.

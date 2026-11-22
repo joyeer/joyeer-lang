@@ -1,17 +1,16 @@
 # 0003: Pure-Joyeer filesystem and bare byte pointers
 
-- Status: accepted for the FFI extension and the `System` implementation
-  (implemented; verified on Windows x64 Debug and Release). The routing
-  question was settled by [0004](0004-remove-host-builtins.md): the built-in
-  names and `filesystem.c` were removed, and `System` is the only provider.
-  The POSIX variants have still not run on Linux or macOS.
+- Status: accepted and implemented. [0004](0004-remove-host-builtins.md)
+  removed the built-ins and made `System` the only provider. See
+  [host-operation validation](../impl/supported-features.md#host-operation-validation)
+  for the Windows x64, Linux x86_64, and macOS ARM64 results.
 - Spec: [§19.4.4 Bare byte pointers](../../specs/19-c-interop.md#1944-bare-byte-pointers)
 
 ## Context
 
-[docs/plan/0007-filesystem.md](../plan/0007-filesystem.md) proposed writing the §18.2
-filesystem operations in Joyeer, calling the operating system directly. The
-first plan listed five FFI extensions: NUL- and UTF-16-terminated string
+The original plan proposed writing the §18.2 filesystem operations in Joyeer,
+calling the operating system directly. It listed five FFI extensions:
+NUL- and UTF-16-terminated string
 adapters (E1), mutable buffers (E2), opaque handles (E3), variadic calls (E4),
 and captured native errors (E5). Mapping the compiler's native-binding path
 showed that most of that is avoidable.
@@ -52,10 +51,11 @@ Option 2.
   logic; `filesystem_windows.joyeer` and `filesystem_posix.joyeer` for the
   per-platform primitives behind `@platform`), and `System` declares
   `native-bindings = true`.
-- Struct layouts use per-OS constants chosen so each is the same on both
-  supported architectures: `statx` on Linux (mode at offset 28), `lstat` on
-  macOS (mode at offset 4), `dirent` names at offset 19 (Linux) and 21 (macOS),
-  `WIN32_FIND_DATAW` names at offset 44.
+- Struct layouts use per-platform constants: `statx` on Linux (mode at
+  offset 28), `lstat` on macOS ARM64 (mode at offset 4), directory entry
+  names at offset 19 (Linux `getdents64`) and 21 (macOS `dirent`), and
+  `WIN32_FIND_DATAW` names at offset 44. Intel and universal macOS builds
+  are rejected rather than using the ARM64 file bindings.
 - The compiler's built-in filesystem names are unchanged for now. The Joyeer
   versions are reached by qualification (`System.readFileUtf8`) and are checked
   against the built-ins by differential tests.
@@ -68,19 +68,12 @@ Option 2.
 - Harder: the compiler cannot check a binding against the real C prototype or
   that the count passed matches the buffer; those remain the binding author's
   burden. Each binding is exercised on its own platform only.
-- Allocation: the Joyeer reader copies through a temporary `[UInt8]`, so it does
-  not match the C reader's single allocation and prefix-bounded storage. Nothing
-  depends on that today. If the contract in §18.2 is to stay exact, add a
-  buffer-to-String path that does not copy before routing.
-- Unverified: the POSIX variants type-check for Linux and macOS (a service test
-  compiles the real library for all three targets) but have not executed.
-  `readdir_r` is deprecated yet still exported on glibc and macOS; `statx`
-  needs glibc 2.28. Both must be confirmed on real hosts.
-- Open before routing: whether to keep the built-in names compiler-known and
-  lower them to `System`, or remove them and require `import System`
-  ([plan](../plan/0007-filesystem.md#coverage)); POSIX run evidence; fern and moss
-  switching to the Joyeer implementation; removing the C runtime code and its
-  ABI tests.
+- Allocation: the Joyeer reader copies through a temporary `[UInt8]`.
+  [§18.2](../../specs/18-host.md#182-filesystem-operations) bounds the logical
+  read and storage growth, not the number of allocations. See
+  [reader allocation costs](../impl/runtime.md#reader-allocation-costs).
+- Platform bindings: macOS still uses the deprecated `readdir_r`. Linux now
+  calls `getdents64` and `statx` directly, so it needs neither libc wrapper.
 - Tests: `tests/c-interop/pointers.joyeer` with a C fixture (both profiles),
   unit tests for accepted and rejected declarations and malformed IR,
   `tests/lib/System/filesystem.joyeer` (over a hundred differential

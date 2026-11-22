@@ -20,7 +20,7 @@ Explanations and plans do not add language rules or implementation guarantees.
 | Use the first local project-manager version | [impl/fern.md](impl/fern.md) |
 | Use the optional miniz-backed ZIP library | [Compression](impl/compression.md) |
 | Disassemble Java classes and JARs with an AI agent | [moss](../tools/moss/README.md) and its [skill](../tools/moss/skills/moss/SKILL.md) |
-| Plan runtime and public-library development | [Runtime in Joyeer](plan/0008-runtime-in-joyeer.md) and [Library modules](plan/0003-library.md) |
+| Track runtime work and see the public library | [Runtime in Joyeer](plan/0008-runtime-in-joyeer.md) and [Standard modules](../specs/12-modules.md#125-standard-modules) |
 | Plan how the compiler finds the standard library | [Toolchain library resolution](plan/0006-toolchain-libraries.md) |
 | See a larger program (a Markdown web server over the provisional [TCP API](../specs/18-host.md#186-tcp-networking)) | [example/](../example/README.md) |
 | Build from source | [building.md](building.md) |
@@ -73,15 +73,11 @@ iteration, a progress log, and deletion once every item is done. Start from the
 |---|---|
 | [0001](plan/0001-package-manager.md) | Package manager: remaining native platform/release gates and future dependency, workspace, cache, and registry contracts |
 | [0002](plan/0002-c-interop.md) | C interoperation: remaining scalar ABI implementation, cross-platform acceptance, and separate memory/alias proposals |
-| [0003](plan/0003-library.md) | Standard modules: remaining Foundation/System work (contract APIs, host detection, environment and time), Collections/Testing, and fern adoption |
 | [0004](plan/0004-native-link-inputs.md) | Linking native libraries by logical name and search path (proposed) |
 | [0005](plan/0005-test-audit.md) | Test coverage gaps: fuzzing, sanitizers, CI, ownership generators, spec traceability |
 | [0006](plan/0006-toolchain-libraries.md) | How the compiler finds standard modules (implemented) and what is left: the runtime in `lib/`, `--sysroot` in fern, precompiled modules |
-| [0007](plan/0007-filesystem.md) | Remaining work after the host operations moved into `System`: POSIX verification, Compression/moss verification, and the allocation contract |
 | [0008](plan/0008-runtime-in-joyeer.md) | The plan to write the whole runtime in Joyeer: definition of done, the core dialect, open design decisions, capabilities, phases and acceptance gates |
 | [0009](plan/0009-concurrency.md) | What is left of the concurrency work (tasks, channels and the worker-pool server are done): gates not yet run, compiler gaps, deferred features |
-| [0010](plan/0010-generics.md) | Generics and source-library concurrency are complete on Windows/Linux x86_64; native macOS/AArch64 acceptance remains open |
-| [0011](plan/0011-library-containers.md) | Source-library Optional/Result, then borrowed element access and linear-safe Array/Dict |
 | [0012](plan/0012-equatable.md) | `==` and `!=` through the `Equatable` protocol: builtin, derived and generic equality, `nil` comparison |
 | [0013](plan/0013-ir-opcode-set.md) | Decision 0028 in stages: an opcode descriptor table, merged families, String out of the scalar opcodes, dense numbering |
 
@@ -112,11 +108,16 @@ in the spec.
 | [0017](decisions/0017-runtime-thread-safety.md) | Runtime thread safety (accepted, implemented): locks taken only while a second thread exists, OS-assisted sleeping locks, atomic `print`, first-panic-wins |
 | [0018](decisions/0018-tasks.md) | Tasks (accepted design, in implementation): `spawn`, `JoinHandle<R>` and `consume h.join()`, one heap block per task, `Array.consumeEmpty()` |
 | [0019](decisions/0019-channels.md) | Channels (accepted, implemented): single-sender, single-receiver bounded channels, `send` returns `Result<Void, ChannelClosed>`, a runtime object with a lock-protected close protocol |
-| [0020](decisions/0020-function-values.md) | Function values (accepted, in implementation): non-capturing references to top-level functions, `(effect T, ...): R` types without labels, positional calls, parenthesized non-identifier callees, one indirect call |
+| [0020](decisions/0020-function-values.md) | Function values: non-capturing references to top-level functions, `(effect T, ...): R` types without labels, positional calls, parenthesized non-identifier callees, one indirect call |
 | [0021](decisions/0021-protocols-and-generic-functions.md) | Protocols and monomorphized generic functions |
 | [0022](decisions/0022-generic-types-and-layout-intrinsics.md) | Generic structs/enums and runtime-only typed layout operations |
-| [0023](decisions/0023-library-concurrency.md) | Concurrency as a source prelude, with closed compatibility/transfer metadata and verified x86_64 acceptance |
+| [0023](decisions/0023-library-concurrency.md) | Concurrency as a source prelude, with closed compatibility/transfer metadata and verified x86_64 and macOS ARM64 acceptance |
+| [0024](decisions/0024-library-optional-and-result.md) | `Optional` and `Result` as role-bound library enums |
+| [0025](decisions/0025-library-collection-capabilities.md) | Borrowed element access and conditional ownership for library collections |
+| [0026](decisions/0026-library-array.md) | `Array` as a library struct |
+| [0027](decisions/0027-library-dict.md) | `Dict` as a library struct |
 | [0028](decisions/0028-ir-opcode-set.md) | A smaller IR opcode set described by one table (accepted, in implementation) |
+| [0029](decisions/0029-contracts-and-owned-host-resources.md) | Prelude contracts, host queries and clocks, and noncopyable native resource owners |
 
 ## Conventions
 

@@ -140,66 +140,40 @@ func nativeKind(path: [UInt8]): Int {
     return modeKind(mode: halfWord(bytes: buffer, offset: 28))
 }
 
-// The names in one batch of struct linux_dirent64 records (inode 8 bytes, offset 8,
-// length 2 at 16, type 1, then the NUL-terminated name from byte 19). Returns an error
-// code, 0 otherwise.
 @platform(linux)
-private func appendNames(buffer: [UInt8], used: Int, names: inout [String]): Int {
-    var position = 0
-    while position < used {
-        let length = halfWord(bytes: buffer, offset: position + 16)
-        if length < 20 { return 5 }
-        var name: [UInt8] = []
-        var cursor = position + 19
-        while cursor < position + length && buffer[cursor] != 0 {
-            &name.append(element: buffer[cursor])
-            cursor = cursor + 1
+func nativeDirectoryNext(directory: inout DirectoryReader): Result<String?, Int> {
+    if directory.cursor == directory.limit {
+        let handle = directory.handle
+        let address = addressOfBytes(bytes: &directory.buffer)
+        var used = 0 - interrupted
+        while used == 0 - interrupted {
+            used = linuxCall(x86: 217, arm: 61, first: handle, second: address,
+                third: entriesBufferSize, fourth: 0, fifth: 0, sixth: 0)
         }
-        let isDot = name.count == 1 && name[0] == b'.'
-        let isDotDot = name.count == 2 && name[0] == b'.' && name[1] == b'.'
-        if !isDot && !isDotDot {
-            let text = stringFromBytes(bytes: name, count: name.count)
-            if !isValidUtf8(text: text) { return encodingErrno() }
-            &names.append(element: text)
-        }
-        position = position + length
+        if used < 0 { return .Err(0 - used) }
+        if used == 0 { return .Ok(nil) }
+        &directory.cursor = 0
+        &directory.limit = used
     }
-    return 0
-}
-
-// getdents64 until it reports nothing more: 0 on success, else the error code.
-@platform(linux)
-private func collectEntries(descriptor: Int, names: inout [String]): Int {
-    var buffer = zeroBuffer(count: entriesBufferSize)
-    let address = addressOfBytes(bytes: &buffer)
-    var code = 0
-    var finished = false
-    while !finished {
-        let used = linuxCall(x86: 217, arm: 61, first: descriptor, second: address,
-            third: entriesBufferSize, fourth: 0, fifth: 0, sixth: 0)
-        if used == 0 - interrupted {
-            code = 0
-        } else if kernelFailed(outcome: used) {
-            code = 0 - used
-            finished = true
-        } else if used == 0 {
-            finished = true
-        } else {
-            code = appendNames(buffer: buffer, used: used, names: &names)
-            if code != 0 { finished = true }
-        }
-    }
-    return code
+    // linux_dirent64: record length at byte 16, NUL-terminated name at byte 19.
+    let start = directory.cursor
+    let remaining = directory.limit - start
+    if remaining < 20 { return .Err(writeFaultCode()) }
+    let length = halfWord(bytes: directory.buffer, offset: start + 16)
+    if length < 20 || length > remaining { return .Err(writeFaultCode()) }
+    &directory.cursor = start + length
+    return posixDirectoryName(bytes: directory.buffer, start: start + 19, end: start + length)
 }
 
 @platform(linux)
-func nativeListDirectory(path: String, native: [UInt8]): Result<[String], FileSystemError> {
-    let descriptor = openPath(path: native, flags: directoryFlag() + closeOnExec, mode: 0)
-    if descriptor < 0 { return .Err(classifyError(code: 0 - descriptor)) }
-    var names: [String] = []
-    var code = collectEntries(descriptor: descriptor, names: &names)
-    let closed = nativeClose(handle: descriptor)
-    if closed < 0 && code == 0 { code = 0 - closed }
-    if code != 0 { return .Err(classifyError(code: code)) }
-    return .Ok(names)
+func nativeOpenDirectory(path: String, bytes: [UInt8]): Result<DirectoryReader, FileSystemError> {
+    let handle = openPath(path: bytes, flags: directoryFlag() + closeOnExec, mode: 0)
+    if handle < 0 { return .Err(classifyError(code: 0 - handle)) }
+    return .Ok(DirectoryReader(handle: handle, state: 0, buffer: zeroBuffer(count: entriesBufferSize),
+        cursor: 0, limit: 0))
+}
+
+@platform(linux)
+func nativeCloseDirectory(handle: Int): Int {
+    return nativeClose(handle: handle)
 }

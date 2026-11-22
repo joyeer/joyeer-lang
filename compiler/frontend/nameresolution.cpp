@@ -2581,6 +2581,10 @@ NameResolutionResult NameResolver::resolveWithPrelude(std::vector<ModuleInput> m
             [](const auto& module) { return module.replaces == ReplacedPrelude::roles; });
     const bool suppliedCollections = std::any_of(modules.begin(), modules.end(),
             [](const auto& module) { return module.replaces == ReplacedPrelude::collections; });
+    // Core-only compilations cannot depend on the managed String call ABI.
+    const bool includeContracts = std::any_of(modules.begin(), modules.end(),
+            [](const auto& module) { return !module.coreContext && !module.preludeContext &&
+                                           module.replaces == ReplacedPrelude::none; });
     // The test seam implies prelude context; a module that names a replacement only would be inert.
     for (auto& module : modules) {
         if (module.replaces != ReplacedPrelude::none) module.preludeContext = true;
@@ -2589,9 +2593,9 @@ NameResolutionResult NameResolver::resolveWithPrelude(std::vector<ModuleInput> m
     for (const auto& module : modules) {
         for (const auto& file : module.files) sourceId = std::max(sourceId, file->span.sourceId);
     }
-    // Source identities are dense: the concurrency prelude takes max+1, the role prelude the next and the
-    // collections prelude the one after, each only when it is bundled.
-    const uint32_t needed = (supplied ? 0u : 1u) + (suppliedRoles ? 0u : 1u) + (suppliedCollections ? 0u : 1u);
+    // Source identities follow the supplied files, in bundled-prelude order.
+    const uint32_t needed = (supplied ? 0u : 1u) + (suppliedRoles ? 0u : 1u) +
+            (suppliedCollections ? 0u : 1u) + (includeContracts ? 1u : 0u);
     if (sourceId > std::numeric_limits<uint32_t>::max() - needed) {
         auto result = NameResolutionBuilder().build(modules, singleFile);
         result.diagnostics.push_back({NameResolutionDiagnosticId::invalidPrelude, {},
@@ -2613,10 +2617,16 @@ NameResolutionResult NameResolver::resolveWithPrelude(std::vector<ModuleInput> m
         preludes.push_back(parsePrelude(PreludeKind::collections, nextSourceId++));
         kinds.push_back(PreludeKind::collections);
     }
+    std::optional<uint32_t> contractsSourceId;
+    if (includeContracts) {
+        contractsSourceId = nextSourceId++;
+        preludes.push_back(parsePrelude(PreludeKind::contracts, *contractsSourceId));
+        kinds.push_back(PreludeKind::contracts);
+    }
     for (size_t index = 0; index < preludes.size(); ++index) {
         auto& prelude = preludes[index];
         if (prelude.root == nullptr) continue;
-        // The concurrency and collections preludes may declare C bindings; the role prelude has none.
+        // The role prelude has no C bindings.
         switch (kinds[index]) {
             case PreludeKind::concurrency:
                 modules.push_back({"$prelude", {prelude.root}, true, false, true});
@@ -2627,9 +2637,13 @@ NameResolutionResult NameResolver::resolveWithPrelude(std::vector<ModuleInput> m
             case PreludeKind::collections:
                 modules.push_back({"$collections-prelude", {prelude.root}, true, false, true});
                 break;
+            case PreludeKind::contracts:
+                modules.push_back({"$contracts-prelude", {prelude.root}, true, false, true});
+                break;
         }
     }
     auto result = NameResolutionBuilder().build(modules, singleFile);
+    result.model->contractsPreludeSourceId_ = contractsSourceId;
     uint32_t problemSourceId = sourceId + 1;
     for (auto& prelude : preludes) {
         result.model->preludeSourceFiles_.push_back(prelude.source);

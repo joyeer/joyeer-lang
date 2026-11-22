@@ -1,6 +1,6 @@
 # 0001: Joyeer Package Manager
 
-- Status: in progress (updated 2026-11-12)
+- Status: in progress (updated 2026-11-22)
 - Decisions: none yet
 - Spec: [§12](../../specs/12-modules.md), [§18](../../specs/18-host.md)
 
@@ -41,7 +41,9 @@ and [host operations](../../specs/18-host.md).
 - [ ] Publication and cleanup: reliable, crash-atomic, concurrent-safe replacement, and anchored
   non-link-following deletion (needed by P6 and P7).
 - [ ] Compiler discovery: executable-location, current-directory and environment lookup, before adding
-  sibling or `PATH` discovery.
+  sibling or `PATH` discovery. `System` provides the
+  [current-directory and environment queries](../../specs/18-host.md#187-process-environment-and-current-directory);
+  executable location and fern discovery policy remain open.
 - [ ] Dependency visibility: if strict direct-import allowlists are adopted, add a compiler interface;
   fern must not scan source text.
 
@@ -113,5 +115,8 @@ Streaming, process capture, cancellation and timeouts, and Unicode-aware diagnos
 scoped, not prerequisites.
 
 ## Progress log
+
+- 2026-11-22: `System` now supplies the environment and current-directory queries needed for
+  compiler discovery. Executable-location lookup and discovery policy remain open.
 
 - 2026-11-12: converted to the plan template; macOS ARM64 validation was already recorded and is checked.

@@ -6,8 +6,17 @@ func check(name: String, ok: Bool): Int {
     return 1
 }
 
+@platform(windows)
+private func expectedHostDirectory(): String { return "C:\\dir" }
+
+@platform(posix)
+private func expectedHostDirectory(): String { return "." }
+
 func main(args: [String]): Int {
     var failures = 0
+
+    failures = failures + check(name: "host path syntax",
+        ok: pathDirectory(path: "C:\\dir\\file", windows: System.isWindows()) == expectedHostDirectory())
 
     failures = failures + check(name: "separator slash", ok: isPathSeparator(byte: b'/', windows: false))
     failures = failures + check(name: "backslash posix", ok: !isPathSeparator(byte: b'\\', windows: false))
@@ -36,6 +45,7 @@ func main(args: [String]): Int {
 
     failures = failures + testFileSystem()
     failures = failures + testProcess()
+    failures = failures + testOwnedResources()
     failures = failures + testStdio()
     failures = failures + testNetwork()
 

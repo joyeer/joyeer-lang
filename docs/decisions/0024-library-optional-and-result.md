@@ -1,7 +1,8 @@
 # 0024: Optional and Result as role-bound library enums
 
-- Status: accepted by the user (2026-11-14) after three language-designer reviews (see "Review"); implementation and the acceptance gates below remain open.
-  Phase 1 of the [library containers plan](../plan/0011-library-containers.md).
+- Status: accepted by the user (2026-11-14) after three language-designer reviews (see "Review").
+  Implemented in [#26](https://github.com/joyeer/joyeer-lang/pull/26); see the
+  [collection validation](../impl/runtime.md#collection-validation).
 - Spec: [§2.4–2.6, §2.9](../../specs/02-types.md), [§4.1.1](../../specs/04-memory.md), [§5.2, §5.4.1](../../specs/05-expressions.md), [§8.3](../../specs/08-error-handling.md), [§19.4.7](../../specs/19-c-interop.md), [§20.12](../../specs/20-protocols.md), [Appendix C](../../specs/appendix-c-grammar.md) amended 2026-11-14. The `docs/impl/` notes change with the implementation.
 
 ## Context

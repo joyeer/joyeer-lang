@@ -1,3 +1,5 @@
+import Foundation
+
 struct CliOptions {
     let command: String
     let compiler: String
@@ -169,7 +171,7 @@ func parseCli(args: [String]): Result<CliOptions, ToolError> {
                 if name[cursor] == b'.' { start = cursor + 1 }
                 cursor = cursor + 1
             }
-            output = textSlice(text: name, start: start, end: name.count)
+            output = substring(text: name, start: start, end: name.count)
             if !validPortableName(name: output) {
                 return .Err(ToolError(message: "module name needs an explicit portable --output", pos: -1))
             }

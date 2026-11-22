@@ -671,17 +671,13 @@ LinkResult Linker::link(
         }
     }
 #elif defined(__APPLE__)
-#if defined(__aarch64__) || defined(__arm64__)
-    constexpr auto architecture = "arm64";
-#elif defined(__x86_64__)
-    constexpr auto architecture = "x86_64";
-#else
-#error "Unsupported macOS architecture"
+#if !defined(__aarch64__) && !defined(__arm64__)
+#error "Joyeer supports native macOS ARM64 builds only"
 #endif
     std::vector<std::string> lldArguments {
         "ld64.lld",
         "-arch",
-        architecture,
+        "arm64",
         "-platform_version",
         "macos",
         options.deploymentTarget,

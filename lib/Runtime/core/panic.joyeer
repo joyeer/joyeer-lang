@@ -1,8 +1,7 @@
 // Runtime failure (`joyeer_panic`): writes any buffered standard output, then
 // `Joyeer runtime error: <message>` and a newline to standard error, and ends the
-// process with status 1. The message is the address of a NUL-terminated constant (a
-// string literal named with the literal-address intrinsic, or a C string); zero
-// means "unknown error".
+// process with status 1. The legacy entry takes a C string (zero means
+// "unknown error"); the contract entry takes an explicit byte count.
 //
 // Nothing here allocates or touches a managed value, so a panic is safe at any
 // point, including inside the allocator. The streams it writes through (streams.joyeer)
@@ -41,12 +40,7 @@ private func length(address: Int): Int {
     return count
 }
 
-// A write that fails is dropped: there is nowhere left to report it.
-@c_export(symbol: "joyeer_panic")
-public func panic(message: Int): Never {
-    var text = message
-    if text == 0 { text = literalAddress(text: "unknown error") }
-    let prefix = literalAddress(text: "Joyeer runtime error: ")
+private func beginPanic(): Void {
     let claimed = atomicAdd(address: staticSlot(index: panicSlot), delta: 1)
     if claimed != 0 {
         // Another thread is already panicking. If other threads can exist it ends the process;
@@ -54,9 +48,28 @@ public func panic(message: Int): Never {
         if threadsActive() { parkThread() }
         exitProcess(status: 1)
     }
+}
+
+// A write that fails is dropped: there is nowhere left to report it.
+private func finishPanic(data: Int, count: Int): Never {
+    let prefix = literalAddress(text: "Joyeer runtime error: ")
     stdoutFlushForPanic()
     stderrWriteForPanic(data: prefix, count: length(address: prefix))
-    stderrWriteForPanic(data: text, count: length(address: text))
+    if count > 0 { stderrWriteForPanic(data: data, count: count) }
     stderrWriteForPanic(data: literalAddress(text: "\n"), count: 1)
     exitProcess(status: 1)
+}
+
+@c_export(symbol: "joyeer_panic")
+public func panic(message: Int): Never {
+    beginPanic()
+    let text = if message == 0 { literalAddress(text: "unknown error") } else { message }
+    finishPanic(data: text, count: length(address: text))
+}
+
+@c_export(symbol: "joyeer_panic_bytes")
+public func panicBytes(data: Int, count: Int): Never {
+    beginPanic()
+    maskPanicPipeSignal()
+    finishPanic(data: data, count: count)
 }

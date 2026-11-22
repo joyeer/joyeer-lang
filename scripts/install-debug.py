@@ -120,7 +120,7 @@ def inspect_debug_build(build_dir: Path, source_dir: Path, system: str) -> Debug
         artifacts = {
             "joyeer.exe": binary_dir / "joyeer.exe",
             "joyeer-backend.dll": binary_dir / "joyeer-backend.dll",
-            "JoyeerRuntime.lib": library_dir / "JoyeerRuntime.lib",
+            "lib/JoyeerRuntime.lib": library_dir / "JoyeerRuntime.lib",
         }
         symbols = {name: binary_dir / name for name in ("joyeer.pdb", "joyeer-backend.pdb")}
         if install_fern:
@@ -131,13 +131,13 @@ def inspect_debug_build(build_dir: Path, source_dir: Path, system: str) -> Debug
         artifacts = {
             "joyeer": binary_dir / "joyeer",
             backend_name: library_dir / backend_name,
-            "libJoyeerRuntime.a": library_dir / "libJoyeerRuntime.a",
+            "lib/libJoyeerRuntime.a": library_dir / "libJoyeerRuntime.a",
         }
         if install_fern:
             artifacts["fern"] = binary_dir / "fern"
         if system == "Darwin":
             for name, artifact in artifacts.items():
-                if name == "libJoyeerRuntime.a":
+                if artifact.suffix == ".a":
                     continue
                 bundle = artifact.with_name(name + ".dSYM")
                 dsymutil = cache.get("JOYEER_DSYMUTIL_EXECUTABLE", "")

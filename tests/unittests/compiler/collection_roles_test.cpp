@@ -1380,23 +1380,24 @@ PreludeLoad loadPreludes(const std::string& user, const std::string& collections
     return load;
 }
 
-TEST(CollectionsPrelude, ThreeBundledPreludesGetDenseSourceIdentitiesInOrder) {
+TEST(CollectionsPrelude, BundledPreludesGetDenseSourceIdentitiesInOrder) {
     const auto load = loadPreludes("func main() {}\n");
     ASSERT_TRUE(load.resolution.succeeded()) << joyeer::semantic::dump(load.resolution.diagnostics);
-    // The user source is 0; concurrency, roles and collections follow.
-    EXPECT_EQ(load.ids, (std::vector<uint32_t> { 1, 2, 3 }));
+    // The user source is 0; concurrency, roles, collections, and contracts follow.
+    EXPECT_EQ(load.ids, (std::vector<uint32_t> { 1, 2, 3, 4 }));
     const auto& sources = load.resolution.model->preludeSources();
-    ASSERT_EQ(sources.size(), 3u);
+    ASSERT_EQ(sources.size(), 4u);
     EXPECT_NE(sources[0]->getAbstractPath().string().find("concurrency.joyeer"), std::string::npos);
     EXPECT_NE(sources[1]->getAbstractPath().string().find("roles.joyeer"), std::string::npos);
     EXPECT_NE(sources[2]->getAbstractPath().string().find("collections.joyeer"), std::string::npos);
+    EXPECT_NE(sources[3]->getAbstractPath().string().find("contracts.joyeer"), std::string::npos);
 }
 
 TEST(CollectionsPrelude, ReplacingTheCollectionsPreludeKeepsTheIdentitiesDense) {
     const auto load = loadPreludes("func main() {}\n", buffer() + "public func fromTest(): Int { return 7 }\n");
     ASSERT_TRUE(load.resolution.succeeded()) << joyeer::semantic::dump(load.resolution.diagnostics);
-    // The replacement carries source 1; the bundled concurrency and role preludes follow it.
-    EXPECT_EQ(load.ids, (std::vector<uint32_t> { 2, 3 }));
+    // The replacement carries source 1; the remaining bundled preludes follow it.
+    EXPECT_EQ(load.ids, (std::vector<uint32_t> { 2, 3, 4 }));
 }
 
 TEST(CollectionsPrelude, ASuppliedConcurrencyPreludeDoesNotRemoveTheCollectionsPrelude) {
@@ -1405,7 +1406,7 @@ TEST(CollectionsPrelude, ASuppliedConcurrencyPreludeDoesNotRemoveTheCollectionsP
     const auto load = loadPreludes("func main() {}\n", {},
             "public func fromConcurrency(): Int? { return nil }\n");
     ASSERT_TRUE(load.resolution.succeeded()) << joyeer::semantic::dump(load.resolution.diagnostics);
-    EXPECT_EQ(load.ids, (std::vector<uint32_t> { 2, 3 }));
+    EXPECT_EQ(load.ids, (std::vector<uint32_t> { 2, 3, 4 }));
 }
 
 TEST(CollectionsPrelude, ALibraryInTheCollectionsPreludeIsVisibleToUserCodeAndMayUseTheRoles) {

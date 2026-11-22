@@ -18,6 +18,10 @@ Prelude parsePrelude(PreludeKind kind, uint32_t sourceId) {
         source = collectionsPreludeSource;
         file = "collections.joyeer";
         name = "collections prelude";
+    } else if (kind == PreludeKind::contracts) {
+        source = contractsPreludeSource;
+        file = "contracts.joyeer";
+        name = "contracts prelude";
     }
     result.source = SourceFile::fromMemory(std::string(source), std::filesystem::path("lib") / "Runtime" / file);
     Diagnostics diagnostics;

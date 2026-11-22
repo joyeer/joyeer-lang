@@ -28,9 +28,12 @@ set(output "${STAGING_DIR}/joyeer-native-hello${EXECUTABLE_SUFFIX}")
 if(NOT EXISTS "${compiler}")
     fail_installed_validation("Installed compiler does not exist: ${compiler}")
 endif()
-if(NOT EXISTS "${STAGING_DIR}/${RUNTIME_ARCHIVE_NAME}" OR
-   IS_DIRECTORY "${STAGING_DIR}/${RUNTIME_ARCHIVE_NAME}")
-    fail_installed_validation("Installed JoyeerRuntime archive does not exist: ${RUNTIME_ARCHIVE_NAME}")
+set(runtime "${STAGING_DIR}/lib/${RUNTIME_ARCHIVE_NAME}")
+if(NOT EXISTS "${runtime}" OR IS_DIRECTORY "${runtime}")
+    fail_installed_validation("Installed JoyeerRuntime archive does not exist: ${runtime}")
+endif()
+if(EXISTS "${STAGING_DIR}/${RUNTIME_ARCHIVE_NAME}")
+    fail_installed_validation("Runtime archive was also installed next to the compiler")
 endif()
 
 execute_process(

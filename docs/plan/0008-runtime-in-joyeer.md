@@ -1,9 +1,11 @@
 # 0008: Runtime in Joyeer
 
-- Status: in progress (updated 2026-11-12). The runtime is Joyeer (`lib/Runtime/core/`); only its C
+- Status: in progress (updated 2026-11-22). The runtime is Joyeer (`lib/Runtime/core/`); only its C
   declarations remain as C (`lib/Runtime/include/joyeer/`). Tier 1 and Tier 2 are done on Windows x64
-  and Linux x86-64 (stages 0 to 10 of the [todo list](#11-todo)). Open: moving the archive into the
-  toolchain `lib/` (9.3) and platform acceptance on Windows ARM64, Linux AArch64 and macOS (9.4, 10.5).
+  and Linux x86-64 (stages 0 to 10 of the [todo list](#11-todo)). macOS ARM64 passes functional
+  validation and the archive audit, but linked `System` programs still import stdio. Open:
+  remaining platform acceptance (9.4) and the Tier 2 import gates for macOS `System`,
+  Windows ARM64, and Linux AArch64 (10.7, 10.8).
 - Decisions: [0005](../decisions/0005-runtime-unsafe-memory.md), [0008](../decisions/0008-runtime-core-build-shape.md)
   to [0011](../decisions/0011-runtime-without-the-c-library.md)
 - Current behavior: [runtime](../impl/runtime.md), [strings](../impl/string.md)
@@ -100,12 +102,12 @@ state, and the change is its own phase (R12).
 | Item | Where it is tracked | How it touches the runtime |
 |---|---|---|
 | Spec text for the runtime-only capabilities | [§19.4.6](../../specs/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point) (proposed) | Each capability becomes accepted spec text when its decision lands |
-| `assert`, `precondition`, `fatalError` | [library plan](0003-library.md#library) | Built on `joyeer_panic` (R2); `fatalError` needs a `Never` result |
-| `deinit` and noncopyable types | not planned yet (§3.7, §4.7 of the spec) | Needed for owned OS resources in `System`, not by the core runtime |
+| `assert`, `precondition`, `fatalError` | [§9](../../specs/09-contracts.md) | Implemented as a bundled prelude over `joyeer_panic_bytes`; existing traps keep `joyeer_panic` |
+| `deinit` and noncopyable types | [decision 0015](../decisions/0015-noncopyable-and-linear-types.md) | Used by [owned OS resources in `System`](../../specs/18-host.md#189-owned-sequential-files-and-directories), not by the core runtime |
 | User generics | [§20](../../specs/20-protocols.md) (proposed) | Lets D2 move to compiler-specialized containers |
 | Runtime archive in `lib/` | [toolchain libraries](0006-toolchain-libraries.md#todo) | Do it with R9, when the compiler builds the archive |
 | Sanitizer builds | [test audit](0005-test-audit.md) item 3 | The main safety net for unchecked address code |
-| POSIX verification of `System` | [filesystem plan](0007-filesystem.md#verify-the-posix-variants-blocks-claiming-linux-and-macos) | Same hosts and gates as this plan's platform acceptance |
+| POSIX verification of `System` | [host-operation validation](../impl/supported-features.md#host-operation-validation) | Full Linux x86_64 and macOS ARM64 functional runs; remaining platform evidence is tracked in 9.4 |
 
 ## 3. Inventory
 
@@ -367,7 +369,7 @@ FFI or a user-visible `unsafe`; GC, ARC or copy-on-write; enforcing UTF-8 on
 - Replace the type-erased array and dictionary helpers with compiler-specialized
   code when generics or an internal type-operation mechanism exist.
 - Owned OS resources, after custom destruction and noncopyability.
-- Source standard library: see [library](0003-library.md).
+- Source standard library: see [§12.5](../../specs/12-modules.md#125-standard-modules).
 
 Update [runtime](../impl/runtime.md), [strings](../impl/string.md),
 [backend](../impl/backend.md), [C interop](../impl/c-interop.md),
@@ -469,8 +471,9 @@ The §8 performance gate compares against these rows on the same machine.
 
 Finding: the symbol gate caught that a `[UInt8]` constant passed to a `pointer:`
 parameter makes a Debug build import the runtime's array clone and destroy. Core
-units must use scalars and addresses only (D3). The runtime therefore has no way
-yet to hand `joyeer_panic` a message from Joyeer; see D7 and §6 item 9.
+units must use scalars and addresses only (D3). The later prelude contract
+functions borrow a Joyeer message as an address and length instead, preserving
+this core boundary ([decision 0029](../decisions/0029-contracts-and-owned-host-resources.md)).
 
 ### Stage 2: Spikes and decisions, done
 
@@ -537,14 +540,14 @@ Designs are in [decision 0009](../decisions/0009-runtime-core-capabilities.md).
   `[String]` are Joyeer exports whose addresses come from the new symbol-address
   intrinsic (decision 0009).
 
-### Stage 7: Entry and native-library API (R7, R8), done on Windows x64
+### Stage 7: Entry and native-library API (R7, R8)
 
 - [x] 7.1 `main` / `wmain` in Joyeer: argument conversion, leak check, exit-status
   range check; all entry tests pass. `core/entry.joyeer` holds the logic
   (`joyeer_entry_run`) and `core/entry_main.joyeer` the C entry point; the first builds into
   `runtime-entry` and the second into `runtime-main`, separate archive members from the core object so a test that links
-  the core does not gain a second entry point. **Run on Windows x64 only: the POSIX
-  `main` path (stage 2.1) is unverified on Linux and macOS.**
+  the core does not gain a second entry point. Validation includes the Linux x86-64 and
+  macOS ARM64 `main` paths (9.4); the macOS import audit also confirmed `LC_MAIN`.
 - [x] 7.2 Replace `joyeer_native_errno`, `joyeer_native_environment` and
   `joyeer_native_stdio` with direct bindings (D5); update `System` (`System/cruntime.joyeer`).
   `@platform` now combines with `@c_data`. The Linux and macOS variants
@@ -569,14 +572,25 @@ Start any time after 5.3.
   now names the static C runtime (`libcmt.lib`) itself: it used to arrive through the
   default-library directive in the C objects.
 - [x] 9.2 Add the archive check: no object not produced by the Joyeer compiler
-  (`RuntimeArchiveMembers`: the archive holds exactly the core and entry objects).
-- [ ] 9.3 Move `JoyeerRuntime.*` into `lib/`
-  ([toolchain libraries](0006-toolchain-libraries.md#todo)).
+  (`RuntimeArchiveMembers`: the archive holds exactly the core, entry, main, thread, and channel
+  objects).
+- [x] 9.3 Move `JoyeerRuntime.*` into `lib/`
+  ([toolchain libraries](0006-toolchain-libraries.md#todo)). Build staging, compiler lookup,
+  CMake installs, and `install-debug.py` use the new layout. Evidence: macOS ARM64 Debug and
+  Release `InstalledCompilerNativeHello` and `Fern.Installed` passed; a relocated Debug installer
+  prefix compiled and ran `hello`. `StandardLibrary` does not install a second copy.
 - [ ] 9.4 Platform acceptance (§8) on Windows x64 and ARM64, Linux and macOS,
-  together with the POSIX verification of `System` ([filesystem plan](0007-filesystem.md#verify-the-posix-variants-blocks-claiming-linux-and-macos)).
-  Done so far: Windows x64, and Linux x86-64 (Debug and Release, 1188 tests, run in Ubuntu under
-  WSL2). Open: Windows ARM64, Linux AArch64, macOS.
-  **Tier 1 is done here.**
+  together with [host-operation validation](../impl/supported-features.md#host-operation-validation).
+  Recorded on Windows x64 and Linux x86-64 (Debug and Release, 1188 tests on Linux under WSL2).
+  A clean macOS ARM64 checkout at `9b334ec` passed full Debug and Release validation using
+  LLVM 22.1.8 and the macOS 26.5 SDK/deployment target: unfiltered CTest 2019/2019 and
+  `fern test` 7/7 in each configuration, including `SystemTests`, Compression, moss, and
+  the fern bootstrap. Both installed configurations from the code-identical `799dce4` build
+  compiled and ran `hello` after relocation. The later macOS host-operation run also passed
+  CTest 2023/2023 and `fern test` 7/7 in both configurations.
+  The maintainer handles Windows and Linux coverage separately. Native Windows ARM64 and Linux
+  AArch64 run details, Linux `statx`/`getdents64` ABI checks, child environment and exact error-code
+  evidence, and the minimum Linux kernel and toolchain libc versions are not recorded here.
 
 ### Stage 10: No C library (Tier 2: R10 to R12)
 
@@ -585,24 +599,49 @@ Start any time after 5.3.
   Decision [0011](../decisions/0011-runtime-without-the-c-library.md).
 - [x] 10.2 D10, then output and exit straight to the system interface (R11): the syscall and
   target-architecture intrinsics, `streams.joyeer` (shared stdout buffer, unbuffered stderr, stdin),
-  `print` and panic on it. Only Windows has run; the Linux and macOS code is unverified.
+  `print` and panic on it. The full runs in 9.4 cover these paths on Windows x64, Linux x86-64,
+  and macOS ARM64.
 - [x] 10.3 D9, then our own entry point on Windows (R12): `joyeer_start` with its own command-line
   splitting, chosen by the linker for a program that imports nothing from the C library
   (`RuntimeOwnEntryImportsOnlySystemFunctions`). Linux keeps `main`: `System` on POSIX still
   calls libc (decision 0011).
-- [x] 10.4 `System` off the C library's stdio and `errno`: standard error and input use the runtime's
-  streams, the legacy reader uses `CreateFileA` on Windows. Windows `System` calls `kernel32` only.
+- [x] 10.4 Move `System` standard error and input to the runtime's streams. The legacy reader
+  uses `CreateFileA` on Windows, and Windows `System` calls `kernel32` only.
   Linux `System` calls the kernel directly (`filesystem_linux.joyeer`, `process_linux.joyeer`);
-  macOS keeps libSystem.
-- [x] 10.5 The Tier 2 `llvm-nm` gate: the per-platform import lists of the three runtime objects
-  (Linux: none beyond the compiler support symbols) and `RuntimeSystemProgramHasNoCRuntime_*`, which
-  checks that programs using `System` import nothing that exists for the C startup or heap, and
-  `RuntimeSystemProgramNeedsOnlyTheCStartup_*` the same on Linux (`llvm-nm`). **Tier 2 is done on Windows
-  x64 and Linux x86-64** (the latter run in Ubuntu under WSL2, whose full suite passes: 1184 tests). On
-  Linux the program still starts at `main`; macOS keeps libSystem and is unverified, as are Linux
-  AArch64 and Windows ARM64.
+  macOS keeps libSystem, and its file operations still use stdio (10.7).
+- [x] 10.5 Windows x64 and Linux x86-64 Tier 2 symbol gates. The per-object import checks,
+  `RuntimeSystemProgramHasNoCRuntime_*` on Windows, and
+  `RuntimeSystemProgramNeedsOnlyTheCStartup_*` on Linux passed (Linux under WSL2, 1184 tests).
+  Linux still starts at `main`.
+- [x] 10.6 macOS ARM64 runtime archive audit, Debug and Release. `RuntimeArchiveMembers` and the
+  runtime object symbol tests pass. `llvm-ar` lists the five Joyeer-emitted objects; after resolving
+  intra-archive references, `llvm-nm` shows only libSystem imports and `joyeer_main` and
+  `joyeer_main_uses_arguments` from the application. No C heap, stdio, or CRT startup imports.
+- [ ] 10.7 Make macOS ARM64 `System` programs pass the §8 no-stdio import gate. **Blocked:** the
+  [macOS file primitives](../../lib/System/filesystem_posix.joyeer) use `fopen`, `fread`, `fwrite`,
+  `ferror`, and `fclose`. The relocated compiler linked all four import fixtures, but stdio appeared
+  in Debug (`-O0`) for `filesystem`, `process`, `read_file`, and `stdin_lines`, and in Release
+  (`-O2`) for `filesystem` and `read_file`. All used `LC_MAIN` and linked only libSystem;
+  none imported C heap or CRT startup symbols.
+- [ ] 10.8 Run the Tier 2 symbol and linked-program gates on Windows ARM64 and Linux AArch64.
+  Blocked: requires prepared Windows ARM64 and Linux AArch64 build hosts.
 
 ## Progress log
 
+- 2026-11-22: Retired the standard-library plan after
+  [validation](../impl/supported-features.md#standard-library-validation).
+  The new length-aware contract panic entry leaves the generated-trap ABI unchanged.
+- 2026-11-22: Retired the host-operations plan after macOS ARM64 validation and reader
+  allocation measurements. Kept remaining Windows and Linux platform evidence under 9.4;
+  the separate macOS no-stdio gate (10.7) remains open.
+- 2026-11-22: Completed 9.3. The macOS ARM64 Debug and Release validator passed CTest 2019/2019
+  and `fern test` 7/7 in each configuration without reruns. The packaging tests failed before
+  the move and passed afterward. A clean Debug build without Compression also passed the
+  relocated fern packaging test. Windows and Linux were not rerun for this layout change.
+- 2026-11-22: Clean macOS ARM64 validation at `9b334ec` passed Debug and Release, with 2019/2019
+  CTest tests and 7/7 fern suites each, without reruns. Relocation and runtime archive checks
+  passed; split the Tier 2 checklist to record the six fixture/profile failures from the macOS
+  `System` stdio file bindings. At that revision the archive was installed beside the compiler.
+  Windows ARM64 and Linux AArch64 were not run, and no new R0 performance comparison was run.
 - 2026-11-12: converted to the plan template (status header, `Todo` heading, this log); no items
   changed.

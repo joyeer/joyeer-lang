@@ -1,0 +1,83 @@
+import System
+
+@platform(windows)
+@c_extern(symbol: "SetEnvironmentVariableW", pointer: "name", pointer: "value")
+private func setEnvironmentW(name: [UInt8], value: [UInt8]): Int32
+
+@platform(windows)
+private func prepareEmpty(): Bool {
+    // Some Windows test runners interpret an empty assignment as removal.
+    let key = "JOYEER_QUERY_TEST_EMPTY"
+    var name: [UInt8] = []
+    for byte in key.utf8() {
+        &name.append(element: byte)
+        &name.append(element: 0)
+    }
+    &name.append(element: 0)
+    &name.append(element: 0)
+    return setEnvironmentW(name: name, value: [0, 0]) != 0
+}
+
+@platform(posix)
+private func prepareEmpty(): Bool { return true }
+
+private func environmentEquals(name: String, expected: String): Bool {
+    return match environmentVariable(name: name) {
+        .Ok(.Some(value)) => value == expected,
+        _ => false,
+    }
+}
+
+private func exercise(): Result<Int, HostQueryError> {
+    assert(condition: prepareEmpty(), message: "set up an empty environment value")
+    assert(condition: environmentEquals(name: "JOYEER_QUERY_TEST_EMPTY", expected: ""), message: "present empty")
+    let missing = environmentVariable(name: "JOYEER_QUERY_TEST_MISSING")?
+    assert(condition: match missing { .None => true, .Some(_) => false, }, message: "absent environment key")
+
+    let value = environmentVariable(name: "JOYEER_QUERY_TEST_LONG")?
+    let hasValue = match value {
+        .Some(text) => text.count == 390 && text[389] == b'3',
+        .None => false,
+    }
+    assert(condition: hasValue, message: "long environment value")
+    let folded = environmentVariable(name: "joyeer_query_test_long")?
+    let foundFolded = match folded { .Some(_) => true, .None => false, }
+    assert(condition: foundFolded == isWindows(), message: "native environment case rules")
+    let invalid = match environmentVariable(name: "bad=key") {
+        .Err(.InvalidInput(code)) => code == (if isWindows() { 87 } else { 22 }),
+        _ => false,
+    }
+    assert(condition: invalid, message: "invalid name error")
+    let malformed = match environmentVariable(name: byteToString(value: 255)) {
+        .Err(.InvalidEncoding(_)) => true,
+        _ => false,
+    }
+    assert(condition: malformed, message: "invalid name encoding")
+
+    let cwd = currentDirectory()?
+    let path = cwd + "/system_queries.joyeer"
+    let actualDirectory = match fileKind(path: path) { .Ok(.File) => true, _ => false, }
+    assert(condition: actualDirectory && cwd != ".", message: "operating system working directory, not PWD")
+    let earlier = monotonicMilliseconds()?
+    let wall = wallClockMilliseconds()?
+    let later = monotonicMilliseconds()?
+    assert(condition: later >= earlier, message: "nondecreasing monotonic readings")
+    print(value: wall)
+    return .Ok(0)
+}
+
+func main(args: [String]): Int {
+    return match exercise() {
+        .Ok(status) => status,
+        .Err(error) => {
+            let code = match error {
+                .InvalidInput(value) => value,
+                .InvalidEncoding(value) => value,
+                .QueryFailed(value) => value,
+                .OutOfRange(value) => value,
+            }
+            print(value: code)
+            1
+        },
+    }
+}

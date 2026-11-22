@@ -1,8 +1,7 @@
 # 0021: Protocols and bounded generic functions
 
 - Status: accepted (2026-11-12), after a `language-designer` review whose findings are folded in below
-  ("Review"). Phase 2 of the [generics plan](../plan/0010-generics.md); it settles that plan's open
-  questions 1 to 3.
+  ("Review"). Implemented in [#23](https://github.com/joyeer/joyeer-lang/pull/23).
 - Spec: [§20](../../specs/20-protocols.md) (normative for v1). The spec change also amends
   §1.4, §2.6, §2.9, §3.2.3, §4.1.1, §5.4, §12.2, §12.4, Appendix A and Appendix C (see "Spec
   changes").
@@ -15,7 +14,7 @@ dispatched statically by monomorphization. Nothing of it is implemented: `protoc
 `Result`, `Dict`, `JoinHandle`, the channel ends). Phase 4 of the plan needs user generics to move
 those builtins into Joyeer; Phase 2 is the first step, generic *functions* only.
 
-The draft leaves three questions open, recorded in plan 0010:
+The draft posed three questions:
 
 1. **Reviewability.** The preamble (§0.1) wants code a human can review. Monomorphization compiles one
    body many times; what keeps the behavior of every copy readable from the one body, and what does
@@ -404,8 +403,10 @@ success/error results with strings and deinit-traced values, and a chained
 `Self` result across two constraints, at `-O0` through `-O3`.
 
 The reviewers inspected source; the author ran the reproductions and
-regressions. The independent `adversarial-tester` invocation was rejected by
-the service (HTTP 422) before executing, so that review remains unrun.
+regressions. The first independent adversarial review could not run, but a
+later pass found five minor issues and no crash or miscompile. Regression
+tests cover the diagnostic cascade and rejection of generic `main`; the
+other findings are recorded below.
 
 ## Validation and measurements
 
@@ -415,18 +416,21 @@ unchanged in this sample; neither currently instantiates user generics.
 No automatic report archiving or additional cost budget is added beyond the
 documented implementation safety limits.
 
-Full-platform acceptance remains open. `python scripts/validate.py
---llvm-root C:\LLVM-22.1.8` exits 9009 because Python is not installed.
-The final Windows x64 Debug default build succeeds, and unfiltered CTest
-passes **1591 of 1591**. The report fixture is byte-exact across two runs at
-both `-O0` and `-O2`; the final fern/web-server reports each contain zero
-instances.
-The manually run Debug root `fern test` has six passing modules and one
-pre-existing `SystemTests` failure: read-only stderr reports error 13, and
-a zero-byte write to a closed descriptor reports success. The same failure
-reproduces with the `3feb624` baseline compiler. It is not changed here.
-Release-host and Linux acceptance, the independent adversarial review, and
-the debugger breakpoint check remain unrun; no debugger is available.
+The initial Windows x64 Debug build passed unfiltered CTest 1591/1591.
+The report fixture was byte-exact across two runs at both `-O0` and `-O2`.
+The initial root `fern test` exposed a pre-existing `SystemTests` stderr
+failure, also reproduced with `3feb624`. After the stderr fix, the full
+Debug and Release validator passed with generic types integrated: Windows
+x64 CTest 1648/1648 and Linux x86_64 (WSL Ubuntu) CTest 1624/1624 in each
+configuration; `fern test` passed 7/7 on both. Later cross-platform results
+are in [0023](0023-library-concurrency.md#final-comparison-and-validation).
+
+On 2026-11-22, macOS ARM64 at `799dce4` passed the debugger check. Compiling
+[`generics.joyeer`](../../tests/e2e/generics.joyeer) with `-O0 -gfull` let
+LLDB stop at `breakpoint set --func-regex totalArea` and then inside the
+generic body at `generics.joyeer:78`. LLDB showed the concrete `[Square]`
+argument and the local variables. DWARF associated the linkage name in the
+LLDB frame with the `totalArea<Square>` specialization.
 
 ## Evidence
 

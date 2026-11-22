@@ -122,6 +122,12 @@ The current prelude declares:
   the String operations; a prelude without them reports only when a program uses that operation;
 - the builtin `IOError`, `FileSystemError`, `FileKind`, `ProcessStatus`, and
   `ProcessError` cases;
+- `assert`, `precondition`, and `fatalError`: ordinary functions from
+  `lib/Runtime/contracts.joyeer`, omitted in core-only runtime compilations
+  because their messages use the `String` ABI ([§9](../../specs/09-contracts.md)).
+  The compiler lowers these functions on first emitted call or address use,
+  so unused declarations do not add managed-runtime imports to standalone
+  scalar C objects;
 - builtin functions: `print(value:)`, `byteToInt(value:)`, and
   `byteToString(value:)`. The host operations (`readFile`, `readFileUtf8`,
   `writeFileNew`, `runProcess`, ...) are not builtins: they are functions of the

@@ -17,8 +17,8 @@ target. Today there are two workarounds:
 - Anything platform-specific lives in C behind `#ifdef`, as in
   `filesystem.c` (since removed; the filesystem is now Joyeer, see [decision 0003](0003-pure-joyeer-filesystem.md)).
 
-The [filesystem plan](../plan/0007-filesystem.md) moves the filesystem into Joyeer
-and needs a way to express the per-OS differences.
+The [move of the filesystem into Joyeer](0003-pure-joyeer-filesystem.md)
+needed a way to express the per-OS differences.
 
 Constraints from the current compiler:
 

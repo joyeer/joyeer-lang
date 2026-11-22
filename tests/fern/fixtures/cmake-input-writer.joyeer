@@ -3,7 +3,7 @@ import System
 // CMake file(WRITE) inserts CR before every LF on Windows, even in CRLF.
 // Reverse that translation before an exact-byte, exclusive runtime write.
 private func originalInput(contents: String): String {
-    if !hostWindows() || contents.count == 0 { return contents }
+    if !System.isWindows() || contents.count == 0 { return contents }
     var pieces: [String] = []
     var index = 0
     while index < contents.count {

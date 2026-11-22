@@ -14,10 +14,9 @@ The runtime is not offered as separately selectable `abi`, `core`, or `std`
 profiles. Programs depend on the target's C runtime and startup/link inputs;
 freestanding, kernel, embedded, and no-libc profiles are not supported.
 
-The [runtime plan](../plan/0008-runtime-in-joyeer.md) describes how the whole runtime moves
-into Joyeer behind the existing runtime interfaces; this document
-describes the current C implementation. Public library modules and their
-separate fern workflow are tracked in the [library plan](../plan/0003-library.md).
+The [runtime plan](../plan/0008-runtime-in-joyeer.md) tracks the remaining
+runtime work. The [standard modules](../../specs/12-modules.md#125-standard-modules)
+are distinct from the runtime archive and use the [fern](fern.md) source-module workflow.
 The [C binding implementation](c-interop.md) supports the restricted
 by-value scalar runtime-source boundary of [§19](../../specs/19-c-interop.md).
 It does not replace any production C algorithm or compiler-known runtime
@@ -37,6 +36,13 @@ operation. String byte reads and `count`, concatenation, equality, ordering and 
 functions of the collections prelude ([0028](../decisions/0028-ir-opcode-set.md)); a byte read is an inline bounds
 check and load, and the others call `joyeer_string_concat_abi`, `joyeer_string_equal_abi`,
 `joyeer_string_compare_abi` and the owned-array creation API by their Int signatures.
+
+The [contract functions](../../specs/09-contracts.md#92-standard-checks) are
+ordinary bundled Joyeer functions. They pass a borrowed message to
+`joyeer_panic_bytes` as a pointer and a byte count, so even embedded NUL or
+non-UTF-8 bytes survive. The core panic path allocates nothing, makes a
+best-effort output flush and diagnostic write, and exits without unwinding.
+Compiler-generated traps still use the existing `joyeer_panic` C-string ABI.
 
 Scalar printing includes all integer widths, `Float`, and `Double`. Signed
 integers use the existing 64-bit printer after sign extension; unsigned
@@ -212,6 +218,30 @@ and replaced values exactly once. Cloning a normalized dictionary preserves
 its count and independently clones its entries without repeating duplicate
 key detection.
 
+### Collection validation
+
+The [library collection switch](https://github.com/joyeer/joyeer-lang/pull/31)
+removed the dedicated `Array` and `Dict` type kinds and executable opcodes.
+Full [platform validation](../building.md#full-platform-validation) passed
+with LLVM 22.1.8:
+
+| Platform | Revision | Debug and Release (each) |
+|---|---|---|
+| Windows x64 | `a14b5f2` | CTest 2005/2005, `fern test` 7/7; selected CTest cases passed on rerun |
+| Linux x86_64 (WSL2 Ubuntu) | `a14b5f2` | CTest 1981/1981, `fern test` 7/7; no reruns |
+| macOS ARM64 | `799dce4` | CTest 2019/2019, `fern test` 7/7; no reruns |
+
+The native macOS run used SDK and deployment target 26.5. An independent `Dict`
+pass at the same revision passed nine runtime checks (including two expected
+missing-key traps) and ten expected compiler rejections at each of `-O0` and
+`-O2`. The cases covered literal evaluation and destruction order, nested
+mutation and copying, lookup, and key and value constraints.
+
+On 2026-11-22, the maintainer confirmed completing the remaining Windows x64
+and WSL verification and approved retiring the plan after the macOS pass.
+The table records the functional runs, not benchmark timings. The benchmark
+method and revisions are in [Comparing two builds](../../tests/perf/README.md#comparing-two-builds).
+
 ### Unit values
 
 Source `Void` values use LLVM's zero-sized `{}` type in value and storage
@@ -229,17 +259,13 @@ new runtime allocation or destruction API is introduced for unit values.
 
 ## Host operations
 
-File input, the portable filesystem, synchronous processes, standard-error
-writing and standard-input line reading are not part of the C runtime. They are
-ordinary Joyeer functions in the `System` standard module
-([spec §18](../../specs/18-host.md)): `readFile` (legacy), `readFileUtf8`,
-`readFilePrefix`, `writeFileNew`, `createDirectory`, `listDirectory`,
-`fileKind`, `removeFile`, `removeDirectory`, `joinPath`, `runProcess`,
-`writeStderr` and `readStdinLine`. A program writes `import System`. The
-compiler knows no host function; it declares only the error and status
-enumerations they return (`IOError`, `FileSystemError`, `FileKind`,
-`ProcessStatus`, `ProcessError`, `StderrError`, `StdinError`) as prelude types,
-so user code and `System` share one definition.
+The portable filesystem, processes, streams, environment lookup, and clocks
+are ordinary Joyeer functions in the `System` standard module
+([spec §18](../../specs/18-host.md)). A program writes `import System`.
+Host functions are not builtins. The original host error and status
+enumerations (`IOError`, `FileSystemError`, `FileKind`,
+`ProcessStatus`, `ProcessError`, `StderrError`, `StdinError`) remain prelude
+types, so user code and `System` share one definition.
 
 `System` reaches the operating system through `@c_extern` bindings, authorized
 by the module's `native-bindings = true` ([§19](../../specs/19-c-interop.md)): the
@@ -252,6 +278,22 @@ see [decision 0003](../decisions/0003-pure-joyeer-filesystem.md),
 embedded NUL and emptiness before the host is asked, and become UTF-16 on
 Windows and UTF-8 on POSIX. Contents are never validated and remain arbitrary
 bytes.
+
+Owned file and directory APIs use `deinit` to release their native tokens.
+Windows uses non-inheritable handles; Linux uses close-on-exec descriptors.
+On macOS, `openx_np` acquires file descriptors with `O_CLOEXEC`. Readers use
+`fdopen`; writers use descriptor I/O so an interrupted buffered write cannot
+duplicate bytes on retry. `opendir` supplies a close-on-exec directory stream.
+Directory enumeration uses the same cursor for the owned API and
+`listDirectory`. [Process owners](../../specs/18-host.md#183-child-processes)
+are created by the same launcher as `runProcess`; the scoped owner consumes
+and reaps the child on explicit wait or on normal destruction.
+
+Host queries live in `lib/System/queries*.joyeer`. Windows uses wide
+environment and directory APIs, `GetTickCount64`, and `FILETIME`; POSIX
+queries the native environment, directory and `clock_gettime` without a
+host subprocess. Linux uses raw calls and the inherited environment vector,
+not libc. See the [validation record](supported-features.md#standard-library-validation).
 
 What the runtime still provides to them:
 
@@ -274,6 +316,44 @@ the whole of `System` now calls only `kernel32`, including the legacy narrow-pat
 `readFile` (`CreateFileA`, with the C library's mapping of system errors to `errno`
 codes). On Linux the file, directory and process operations are system calls
 (`filesystem_linux.joyeer`, `process_linux.joyeer`); macOS calls libSystem.
+
+On macOS ARM64, file I/O still uses stdio. The file primitives check the
+stream error even after a short transfer. They clear `EINTR` before
+returning progress so the next call can resume without repeating bytes.
+The [native fixture](../../tests/lib/System/macos-fixture.c) checks the
+filesystem and spawn layouts against the SDK headers and injects `EINTR`
+before and after partial file transfers and before `waitpid` succeeds.
+
+### Reader allocation costs
+
+The [prefix limit](../../specs/18-host.md#182-filesystem-operations) bounds
+the bytes accepted, not the exact allocation capacity. `readFilePrefix` uses
+at most 64 KiB of read scratch, reduced for smaller limits and omitted for a
+zero limit. It accumulates the accepted bytes in an array and copies them
+into an owned `String`. `readStdinLine` uses a separate buffered input path
+and also copies its accumulated line into an owned `String`.
+
+A macOS ARM64 `-O2` comparison used the C readers at `4f4a469` and the
+Joyeer readers based on `8289622` with the scratch limit above. Hooks around
+allocation calls recorded the peak sum of live requested bytes (including
+path conversion) and bytes copied by string-clone calls during each read.
+These figures exclude host buffering, allocator rounding, and transient
+storage inside a resize; they are not RSS measurements.
+
+| Read | C peak bytes | Joyeer peak bytes | String-clone bytes, C to Joyeer |
+|---|---:|---:|---:|
+| Zero-byte prefix | 10 | 88 | 0 to 0 |
+| 16-byte prefix | 16 | 138 | 0 to 32 |
+| 65,537-byte prefix | 65,537 | 262,204 | 0 to 131,074 |
+| 65,537-byte whole file | 196,609 | 262,204 | 65,537 to 131,074 |
+| 16-byte stdin line | 33 | 72 | 16 to 32 |
+| 65,537-byte stdin line | 131,075 | 262,170 | 65,537 to 131,074 |
+
+The 65,537-byte prefix had identical allocation results on files of 65,537
+bytes and 8 MiB with the same prefix: 2 new allocations and 6 resize
+requests in C, versus 9 new allocations and 32 resize requests in Joyeer.
+Capping the scratch size reduced the Joyeer peak from 131,178 bytes to 88
+for a zero limit and to 138 for a 16-byte limit.
 
 ## Limits and validation
 

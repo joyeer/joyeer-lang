@@ -1,0 +1,12 @@
+import System
+
+func useReader(): Result<Void, FileSystemError> {
+    var file = openFileRead(path: "data")?
+    closeFileReader(file: consume file)?
+    readFileChunk(file: &file, maximumBytes: 1)?
+    return .Ok(())
+}
+
+func main() {
+    useReader()
+}

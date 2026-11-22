@@ -1,0 +1,124 @@
+import System
+
+private func exerciseFiles(directory: String, path: String): Result<Int, FileSystemError> {
+    var failures = 0
+    // Let destruction close the writer and flush its data.
+    if true {
+        var writer = openFileNew(path: path)?
+        writeFileChunk(file: &writer, contents: "a\0")?
+        writeFileChunk(file: &writer, contents: "bc")?
+    }
+
+    let exclusive = match openFileNew(path: path) {
+        .Ok(_) => false,
+        .Err(error) => match error { .AlreadyExists(_) => true, _ => false, },
+    }
+    failures = failures + check(name: "owned writer is exclusive", ok: exclusive)
+
+    var file = openFileRead(path: path)?
+    let invalid = match readFileChunk(file: &file, maximumBytes: 0) {
+        .Ok(_) => false,
+        .Err(error) => match error { .Other(_) => true, _ => false, },
+    }
+    failures = failures + check(name: "owned file rejects a zero read", ok: invalid)
+    let first = readFileChunk(file: &file, maximumBytes: 2)?
+    let second = readFileChunk(file: &file, maximumBytes: 65536)?
+    let end = readFileChunk(file: &file, maximumBytes: 2)?
+    let again = readFileChunk(file: &file, maximumBytes: 1)?
+    failures = failures + check(name: "owned file cursor and EOF",
+        ok: first == "a\0" && second == "bc" && end == "" && again == "")
+    closeFileReader(file: consume file)?
+
+    var entries = openDirectory(path: directory)?
+    let entry = nextDirectoryEntry(directory: &entries)?
+    let finished = nextDirectoryEntry(directory: &entries)?
+    let repeated = nextDirectoryEntry(directory: &entries)?
+    closeDirectory(directory: consume entries)?
+    let gotFile = match entry { .Some(name) => name == "owned.bin", .None => false, }
+    let noMore = match finished { .Some(_) => false, .None => true, }
+    let stillDone = match repeated { .Some(_) => false, .None => true, }
+    failures = failures + check(name: "owned directory names and sticky EOF", ok: gotFile && noMore && stillDone)
+    return .Ok(failures)
+}
+
+@platform(posix)
+private func gateArguments(): [String] {
+    return ["-c", "i=0; while [ ! -f gate ]; do i=$((i+1)); [ $i -lt 100 ] || exit 75; sleep .02; done; exit 7"]
+}
+
+@platform(windows)
+private func gateArguments(): [String] {
+    return ["-NoProfile", "-NonInteractive", "-Command",
+        "for ($i=0; $i -lt 100; $i++) { if (Test-Path gate) { exit 7 }; Start-Sleep -Milliseconds 20 }; exit 75"]
+}
+
+@platform(posix)
+private func markerArguments(): [String] {
+    return ["-c", "sleep .15; printf done > marker"]
+}
+
+@platform(windows)
+private func markerArguments(): [String] {
+    return ["-NoProfile", "-NonInteractive", "-Command",
+        "Start-Sleep -Milliseconds 150; [IO.File]::WriteAllText((Join-Path (Get-Location) 'marker'), 'done')"]
+}
+
+private func dropAfterStart(directory: String): Result<Void, ProcessError> {
+    startProcess(executable: shell(), arguments: markerArguments(), workingDirectory: directory)?
+    return .Ok(())
+}
+
+private func exerciseProcess(directory: String): Int {
+    var failures = 0
+    let started = startProcess(executable: shell(), arguments: gateArguments(), workingDirectory: directory)
+    match consume started {
+        .Ok(child) => {
+            failures = failures + check(name: "release child gate",
+                ok: describeUnit(outcome: writeFileNew(path: directory + "/gate", contents: "")) == "ok")
+            failures = failures + check(name: "launch returns before child exits",
+                ok: describeRun(outcome: waitProcess(child: consume child)) == "ok:exited with status 7")
+        },
+        .Err(error) => {
+            print(value: processMessage(error: error))
+            failures = failures + 1
+        },
+    }
+    match dropAfterStart(directory: directory) {
+        .Ok(_) => {},
+        .Err(error) => {
+            print(value: processMessage(error: error))
+            failures = failures + 1
+        },
+    }
+    let marker = match readFileUtf8(path: directory + "/marker") {
+        .Ok(text) => text == "done",
+        .Err(_) => false,
+    }
+    failures = failures + check(name: "dropping child waits for completion", ok: marker)
+    let missing = match startProcess(executable: shell() + ".missing", arguments: [], workingDirectory: directory) {
+        .Ok(_) => false,
+        .Err(error) => match error { .NotFound(_) => true, _ => false, },
+    }
+    failures = failures + check(name: "owned child reports failed exec as launch error", ok: missing)
+    ignoreUnit(outcome: removeFile(path: directory + "/gate"))
+    ignoreUnit(outcome: removeFile(path: directory + "/marker"))
+    return failures
+}
+
+func testOwnedResources(): Int {
+    let directory = claimDirectory(prefix: "owned-test-")
+    if directory == "" { return 1 }
+    let path = directory + "/owned.bin"
+    var failures = match exerciseFiles(directory: directory, path: path) {
+        .Ok(count) => count,
+        .Err(error) => {
+            print(value: fileSystemMessage(error: error))
+            1
+        },
+    }
+    failures = failures + exerciseProcess(directory: directory)
+    ignoreUnit(outcome: removeFile(path: path))
+    failures = failures + check(name: "remove owned test directory",
+        ok: describeUnit(outcome: removeDirectory(path: directory)) == "ok")
+    return failures
+}

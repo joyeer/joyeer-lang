@@ -100,7 +100,7 @@ private func projectIsStandard(standard: borrowing [String], name: String): Bool
 // contribute no workspace edge and never appear in the loaded project. A
 // compiler without lib/index.toml has no standard modules.
 private func projectStandardModules(compiler: String): Result<[String], ProjectError> {
-    var directory = pathDirectory(path: compiler)
+    var directory = pathDirectory(path: compiler, windows: System.isWindows())
     if directory.count == 0 { directory = "." }
     let libraryDirectory = match toolJoin(base: directory, path: "lib") {
         .Ok(joined) => joined,
@@ -285,12 +285,13 @@ private func projectLoadWorkspace(path: String, directory: String, depth: Int,
 
 func loadProject(options: borrowing CliOptions): Result<Project, ProjectError> {
     var loaded: [LoadedModule] = []
-    var directory = pathDirectory(path: options.manifestPath)
+    let windows = System.isWindows()
+    var directory = pathDirectory(path: options.manifestPath, windows: windows)
     if options.workspacePath.count == 0 {
         let module = projectModule(path: options.manifestPath, directory: directory)?
         &loaded.append(element: module)
     } else {
-        directory = pathDirectory(path: options.workspacePath)
+        directory = pathDirectory(path: options.workspacePath, windows: windows)
         projectLoadWorkspace(path: options.workspacePath, directory: directory, depth: 0, loaded: &loaded)?
     }
     let standard = projectStandardModules(compiler: options.compiler)?

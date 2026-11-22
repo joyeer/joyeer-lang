@@ -65,24 +65,27 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Protocols and generic functions | Top-level `protocol` declarations, explicit conformance extensions of same-module user structs/enums, and top-level generic functions (`<T: P & Copyable>`), checked once and monomorphized with direct witness calls. Type arguments are inferred from arguments, not the result; they may be noncopyable but never linear or `Never`. A parameter is noncopyable without `Copyable`. Requirement effects use the ordinary access markers and ownership/exclusivity checks. No generic function values or generic `spawn` targets. Generic methods, defaults/refinement of protocols, associated types and existential values remain deferred ([spec §20](../../specs/20-protocols.md), [decision 0021](../decisions/0021-protocols-and-generic-functions.md)) |
 | Generic structs and enums | `struct Box<T: P> { ... }` and `enum Tree<T> { ... }`, with `extension Box<U>` listing exactly the declaration's parameters and unconditional conformance. Type arguments are inferred from an initializer or case arguments, then from the expected type (binding annotation or similar); `Box<Int>(...)` is not an expression form. A parameter is noncopyable without `Copyable`; a type owning raw memory needs a `deinit`, which runs once per instance. Expanding recursion through fields is rejected. See [spec §20.12](../../specs/20-protocols.md), [decision 0022](../decisions/0022-generic-types-and-layout-intrinsics.md) |
 | Layout intrinsics | In authorized runtime units: `joyeer_intrinsic_size_of<T>()`, `align_of<T>()`, `move_in<T>(address:value:)`, `move_out<T>(address:)`, `destroy_at<T>(address:)`, `stack_slot<T>()`, `needs_destroy<T>()`, `callback_address<T...>(function:)`, and the collection intrinsics `clone_at<T>`, `destroy_range<T>`, `clone_callback<T>`, `destroy_callback<T>` ([0025](../decisions/0025-library-collection-capabilities.md)) and `slot_address<T>(base:index:)`, `stack_block<T>(count:)` and `place_address<T>(value:)` ([0026](../decisions/0026-library-array.md)), and `borrow_address<T>(value:)` and `key_kind<K>()` ([0027](../decisions/0027-library-dict.md)). Addresses are `Int`; callback entries have an exact consuming-Int/Void signature. Linear layout transfers are restricted to closed compiler-prelude task declarations ([0023](../decisions/0023-library-concurrency.md)) |
-| `spawn` and `JoinHandle<R>` | Ordinary generic source-prelude declarations. `let h = spawn(function: work, input: consume value)` runs the named nongeneric top-level function `work` (one `consuming` parameter); `consume h.join()` waits and returns its result. Handles are linear, including task inputs/results; arrays of them drain with `removeLast()` and end with `consumeEmpty()`. At most 256 unjoined tasks; a task trap ends the process; `runProcess` and `spawn` cannot share a program. Public generic targets and stored function-value targets remain rejected ([spec §21](../../specs/21-concurrency.md), [0023](../decisions/0023-library-concurrency.md)) |
+| `spawn` and `JoinHandle<R>` | Ordinary generic source-prelude declarations. `let h = spawn(function: work, input: consume value)` runs the named nongeneric top-level function `work` (one `consuming` parameter); `consume h.join()` waits and returns its result. Handles are linear, including task inputs/results; arrays of them drain with `removeLast()` and end with `consumeEmpty()`. At most 256 unjoined tasks; a task trap ends the process. A program that calls `spawn` cannot call or take a function value of `System.runProcess` or `System.startProcess`. Public generic targets and stored function-value targets remain rejected ([spec §21](../../specs/21-concurrency.md), [0023](../decisions/0023-library-concurrency.md)) |
 | Channels | Source-prelude generic `deinit` structs and an ordinary `ChannelClosed` enum. `channel(capacity: 8, sender: &s, receiver: &r)` creates a bounded single-sender/single-receiver channel; `send(value: consume x)` gives `Result<Void, ChannelClosed>`, `receive()` gives `Result<T, ChannelClosed>`, and consuming `close()` or destruction closes an end. Ends are noncopyable, not linear, and move into tasks; linear elements are rejected. With no other thread a blocking operation traps (`channel deadlock`). Known limits: copyable match payloads are cloned; builtin `ConversionError.OutOfRange` still fails qualified lowering; `consume Chain.End` needs a local first ([spec §21.9](../../specs/21-concurrency.md#219-channels), [0023](../decisions/0023-library-concurrency.md)) |
 | Dictionary lookup | `Dict.get(key:)` returns an independent owned `Optional<V>`; missing keys return `.None`, without changing strict subscripts |
 | Unit results | `Result<Void, E>`, constructed as `.Ok(())`; unit expressions, types, bindings, aggregate fields, container elements, and patterns |
 | Strings and bytes | Byte count/indexing, owned `utf8()` byte arrays, the fixed escape set, comparison, concatenation, cloning, and destruction |
-| Built-ins | Primitive/string `print(value:)` and byte conversions. Everything that touches the host is in `System` (below) |
+| Built-ins | Primitive/string `print(value:)` and byte conversions |
+| Contracts | Always-on `assert(condition:message:)`, `precondition(condition:message:)`, and `fatalError(message:): Never` are bundled prelude functions; a failure stops without unwinding ([§9](../../specs/09-contracts.md)) |
 | Filesystem (`System`) | UTF-8 paths, binary whole-file `readFileUtf8` and bounded `readFilePrefix`, exclusive `writeFileNew`, directory creation/listing, file classification, file/empty-directory removal, and lexical `joinPath` |
 | TCP (`System`, provisional) | `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpLocalPort`, `tcpReceive`, `tcpSend`, `tcpCloseConnection`, `tcpCloseListener`: blocking IPv4 literal addresses with receive and accept timeouts (`timeoutMillis`), over Winsock (`ws2_32`, linked by the toolchain) on Windows and raw system calls on Linux. Verified on Windows x64 and Linux x86-64 Debug; macOS is a placeholder returning `.Other(38)`. See [spec §18.6](../../specs/18-host.md#186-tcp-networking) |
-| Processes (`System`) | Synchronous `runProcess` with explicit executable, argument array and child directory; typed completion and launch/wait errors; no implicit shell or PATH lookup |
+| Processes (`System`) | Synchronous `runProcess`, or `startProcess` with an owned `ChildProcess` and consuming `waitProcess`. Explicit executable, argument array and child directory; no implicit shell or PATH lookup. Dropping the owner blocks until the child finishes |
+| Host queries and clocks (`System`) | Read-only `environmentVariable` and `currentDirectory`, plus `monotonicMilliseconds` and `wallClockMilliseconds` ([§18.7–8](../../specs/18-host.md#187-process-environment-and-current-directory)) |
+| Owned sequential I/O (`System`) | Noncopyable `FileReader`, `FileWriter` and `DirectoryReader`, with deterministic cleanup and explicit consuming close ([§18.9](../../specs/18-host.md#189-owned-sequential-files-and-directories)) |
 | Compiler output | Frontend validation, textual LLVM IR, native executables, optimization flags, debug information, and native debug artifacts |
 | Internal C bindings | Explicitly authorized scalar imports/exports, restricted borrowed/initializing buffer imports, bare `[UInt8]` data pointers (`pointer:`, borrowed or `inout`), runtime-only memory intrinsics (`joyeer_intrinsic_*`: address-of, loads, stores, atomic add), scalar or `Void` results, runtime-object output, and explicit native-library link inputs |
-| System library (Joyeer) | `import System` provides the nine §18.2 filesystem operations, legacy `readFile`, `runProcess` (§18.3), `writeStderr` (§18.4) and `readStdinLine` (§18.5), written in Joyeer over kernel32 (Windows) or libc (POSIX; processes use `posix_spawn`; the standard streams use the C library's own stdio) through `@platform` variants. They are no longer compiler-known built-ins and the C runtime has no filesystem, process, stderr, stdin or `readFile` code. Verified by `SystemTests` and the end-to-end fixtures on Windows x64 Debug. The POSIX variants type-check for Linux and macOS but have not run there |
+| System library (Joyeer) | `import System` provides target-platform detection with `isWindows()` (§18.1), explicit-syntax lexical path helpers, the nine §18.2 filesystem operations, legacy `readFile`, `runProcess` (§18.3), `writeStderr` (§18.4), and `readStdinLine` (§18.5). The platform variants use Win32, Linux system calls, or macOS libSystem. Standard input and error use the runtime's streams; macOS file I/O still uses stdio. See [host-operation validation](#host-operation-validation) |
 | Platform selection | `@platform(windows, linux, macos, posix)` (one or more names) on top-level functions ([§11.5](../../specs/11-annotations.md#115-platform)). The selected variant is kept and the others are removed before name resolution; the target is the host. `CompileOptions.targetPlatform` can name another, but only for `validate` output (`driver.unsupported-target-platform` otherwise); there is no command-line option. Dropped variants must parse and keep valid annotations but are not resolved or type-checked; a failed selection reports only `platform.*` diagnostics |
 | Top-level constants | Top-level `let` with an explicit type and a compile-time initializer: `Bool`, numbers, `String`, and nested arrays of those, up to 1 MiB of data per constant; `public` constants work across modules. Overflow and other evaluation errors are compile-time errors (`ir-lowering.invalid-constant`). Structs, enums, dictionaries and function calls are not supported |
 | Optional Compression library | Separately built miniz-backed classic ZIP creation, listing, and bounded in-memory extraction; see [Compression](compression.md) |
 
 `Array`, `Dict`, `Optional` and `Result` are library declarations bound by closed roles; no container is
-compiler-defined ([library-container plan](../plan/0011-library-containers.md)).
+compiler-defined. See the [collection implementation and validation](runtime.md#collections).
 User generic structs/enums are supported independently through §20.12.
 
 `--report-instantiations` prints one line per concrete generic function
@@ -127,6 +130,47 @@ supported. New scalars can be stored in arrays, fields, and enum/optional/result
 payloads; dictionary keys support only `Int`, `Bool`, `UInt8`, and `String`, and any other key type is
 rejected at the type (`type-checking.invalid-type-argument`).
 
+### Host-operation validation
+
+The filesystem, process and standard-stream fixtures, `SystemTests`, and fern
+bootstrap passed full Debug and Release validation on Windows x64 and Linux
+x86_64 (WSL2) at [`a14b5f2`](runtime.md#collection-validation). On macOS ARM64,
+the filesystem retry and prefix-reader changes based on `8289622` passed
+CTest 2023/2023 and `fern test` 7/7 in each configuration, without reruns,
+using LLVM 22.1.8 and SDK 26.5. The run covered Compression, moss, and the
+macOS ABI, exact error-code and interrupted-call checks. Intel and universal
+macOS builds are rejected at configure time. Windows and Linux platform
+acceptance beyond the recorded runs is tracked in the
+[runtime plan](../plan/0008-runtime-in-joyeer.md#stage-9-remove-the-c-r9).
+See [reader allocation costs](runtime.md#reader-allocation-costs) for the
+measured prefix and stdin tradeoffs.
+
+### Standard-library validation
+
+On 2026-11-22, the changes for plan 0003 passed native macOS ARM64
+[validation](../building.md#full-platform-validation) on the implementation
+based on `723e543`, with LLVM 22.1.8 and macOS SDK 26.5. Debug and Release
+each passed **2,034/2,034 CTest cases** and **7/7 root `fern test` suites**
+without retrying failed tests.
+
+- `E2EContractsO0` and `E2EContractsO2` verified eager argument evaluation,
+  failure in both profiles, byte-exact panic messages, and no unwinding.
+  The runtime death test covered a closed stderr pipe, and the standalone C
+  link tests verified that unused contracts do not add runtime imports.
+- `E2ESystemQueriesO0` and `E2ESystemQueriesO2` exercised absent, empty and
+  nonempty environment values, working-directory lookup, and both clocks.
+  `SystemMacOS.InterruptedO0` and `SystemMacOS.InterruptedO2` also exercised
+  pre-epoch rounding, overflow, interrupted writes, and native errors.
+- `SystemTests` covered sequential file and directory use, close, child exit
+  and scoped destruction. The compiler tests rejected forged file owners,
+  use after close, and process-launch function values in task programs, including
+  when `System` is the root module.
+  [Fern adoption](fern.md#standard-library-adoption-validation) covered
+  bootstrap, restaging, self-build and relocation.
+
+The full `System` sources also passed frontend checking for Windows, Linux,
+and macOS. This was not a native Windows or Linux run of the new APIs.
+
 ## Source-implemented local project tool
 
 The separate Joyeer-written `fern 0.1.0` implements `init/check/build/run/test`
@@ -140,7 +184,8 @@ are unchanged; no library ABI is implied.
 CMake bootstraps the default `ALL` tool and registers 15 portable acceptance
 gates, including bootstrap regeneration, independently of
 `JOYEER_BUILD_UNITTESTS`. Native macOS ARM64 Debug and Release pass all 15,
-including self-build and relocated workflows. See
+including self-build and relocated workflows with the shared `Foundation`
+and `System` helpers. See [standard-library adoption validation](fern.md#standard-library-adoption-validation),
 [full platform validation](../building.md#full-platform-validation) for
 acceptance commands and [release staging](../building.md#release-staging)
 for packaging limits.
@@ -180,14 +225,14 @@ See [fern](fern.md) for current contracts and parser limits.
   types use `T?`; postfix `?` propagates only between the same `Result` error
   type or between `Optional` results. Other errors require explicit `match`.
 - String interpolation, Unicode scalar/grapheme APIs, general formatting,
-  aggregate printing, streaming file APIs, or a general standard library.
+  aggregate printing, or general streaming and asynchronous I/O.
 - General user FFI, raw native addresses, arbitrary output pointers, C
   aggregates, callbacks, variadic calls, or signatures beyond the specified
   scalar and restricted buffer-import boundary.
   The [C binding implementation](c-interop.md) documents explicit runtime
   authorization, buffer ownership, object output, and native linking.
-- Contracts or property annotations as executable language features,
-  incremental compilation, or formal verification.
+- Declaration-level contract syntax, property annotations as executable
+  features, incremental compilation, or formal verification.
 - Project-manager commands on the **compiler**, such as `joyeer build`, `run`,
   `test`, or `init`; use the separate source-implemented `fern`. Toolchain
   installation, `doctor`, registries, local path packages, and workspaces
@@ -226,10 +271,10 @@ Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
   invalid input in every optimization mode.
 - Legacy `readFile(path:)` returns `Result<String, IOError>` unchanged.
   Portable filesystem operations use a separate `FileSystemError`;
-  synchronous processes use `ProcessError` and `ProcessStatus`. See the
+  process operations use `ProcessError` and `ProcessStatus`. See the
   [exact signatures and boundaries](../../specs/18-host.md). Recursive cleanup,
   replacement/atomic publication, canonicalization, process output capture,
-  timeouts, and asynchronous handles are not provided.
+  timeouts, cancellation, and detach are not provided.
 - `writeStderr(contents: String): Result<Void, StderrError>` writes exact bytes
   without appending a newline and flushes; `.WriteFailed(Int)` carries CRT
   `errno`, not a Win32 status. The bounded

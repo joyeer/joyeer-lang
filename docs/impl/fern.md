@@ -41,9 +41,6 @@ dependency source; it has no standalone library artifact or stable binary
 ABI and must not declare `output`. Test programs are separate modules with
 their own manifests and entries, not extra units hidden inside one manifest.
 
-The [library plan](../plan/0003-library.md) applies this source-module model to
-the proposed `Foundation`, `System`, `Collections`, and `Testing` modules.
-Local library development can use the existing workspace workflow.
 Standard modules that ship with the compiler (`Foundation`, `System`, and
 `Compression` when built) need no workspace member: fern reads
 `<compiler directory>/lib/index.toml`, lets a module list them in
@@ -271,13 +268,33 @@ without resolving names again; the
 effects. This separation does not add a public library ABI or alter compiler
 module semantics.
 
+Fern uses [Foundation](../../lib/Foundation/text.joyeer) for byte slicing,
+UTF-8 validation, and decimal formatting. Slices clamp out-of-range endpoints,
+return an empty string for empty or inverted ranges, and use bounded chunks
+and pairwise concatenation to avoid quadratic prefix copying. UTF-8 validation
+scans the bytes and accepts embedded NUL as valid UTF-8; fern separately
+rejects NUL in host text. Decimal formatting handles all `Int` values,
+including the minimum value.
+
+[System path helpers](../../lib/System/path.joyeer) recognize separators and
+extract or trim directory paths by scanning their bytes, using the explicit
+syntax selected by `System.isWindows()`. The selection uses the compilation
+target, not a runtime host probe. These helpers do not validate paths, resolve
+them against the filesystem, or establish confinement. Fern keeps its own
+manifest and path validation rules and uses
+[System formatters](../../lib/System/messages.joyeer) for host errors and
+process outcomes, preserving the numeric platform codes.
+
 The seven maintained sources plus generated platform source compile in
 `fern.app`: common, CLI, manifest, **[project loader](../../tools/fern/project.joyeer)**,
 planner, executor, and entry. The explicit
 [CMake bootstrap](../../tools/fern/CMakeLists.txt) remains an `ALL` target,
-enabled by default, without a preinstalled fern or Python requirement.
-Configure stages the same files and a schema-1 single-module
-[self-build manifest](../../tools/fern/project.toml.in).
+enabled by default, without a preinstalled fern or Python requirement. The
+build-tree compiler resolves `Foundation` and `System` from its staged
+standard library. Fern's build output depends on the staging stamp so
+restaging rebuilds fern. Configure stages the same source files with a
+schema-1 [self-build manifest](../../tools/fern/project.toml.in) that declares
+both direct dependencies.
 Debug PDB/dSYM byproducts, platform fallback, and install components are
 unchanged; see [building](../building.md#fern-bootstrap-and-acceptance).
 
@@ -286,3 +303,18 @@ cache/clean, process capture/timeouts, and remote acquisition
 are not implemented. Physical filesystem identity, atomic publication,
 release notices, and general Unicode diagnostic rendering remain separate
 contracts in the [remaining plan](../plan/0001-package-manager.md).
+
+### Standard-library adoption validation
+
+The helper migration passed [full macOS ARM64 validation](supported-features.md#standard-library-validation)
+in Debug and Release. This included `FoundationTests`, `SystemTests`, and the
+bootstrap, self-build, relocated-install, and test-runner gates;
+`Fern.TestRunner` verified that a failing suite returns nonzero. Removing
+the generated standard-library stamp restaged the library and rebuilt fern
+and its fixtures in each configuration. Repeating the build without
+invalidating the stamp did not recompile them.
+
+`ModuleServiceTest.TheSystemLibraryChecksForEveryTargetPlatform` resolved
+and type-checked `System.isWindows()` for Windows, Linux, and macOS targets.
+`SystemTests` exercised native path selection on macOS ARM64. The migration
+was not run natively on Windows or Linux in this validation.

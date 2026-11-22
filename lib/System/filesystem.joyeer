@@ -59,11 +59,13 @@ func firstFailure(work: Int, closed: Int): Int {
 // Reads from the start until end of file, or until `maximum` bytes when
 // `bounded`. Returns 0, or the native error code.
 func readLoop(handle: Int, data: inout [UInt8], maximum: Int, bounded: Bool): Int {
-    var chunk = zeroBuffer(count: chunkSize)
+    if bounded && maximum == 0 { return 0 }
+    let capacity = if bounded && maximum < chunkSize { maximum } else { chunkSize }
+    var chunk = zeroBuffer(count: capacity)
     var code = 0
     var done = false
     while !done {
-        var wanted = chunkSize
+        var wanted = capacity
         if bounded {
             let remaining = maximum - data.count
             if remaining <= 0 {
@@ -115,7 +117,7 @@ public func readFilePrefix(path: String, maximumBytes: Int): Result<String, File
 
 // Writes `contents` from the start. A short write is retried from where it
 // stopped; no progress is a write fault. Returns 0, or the native error code.
-func writeLoop(handle: Int, contents: String): Int {
+func writeLoop(handle: Int, contents: String, owned: Bool): Int {
     var chunk: [UInt8] = []
     var offset = 0
     var code = 0
@@ -128,7 +130,8 @@ func writeLoop(handle: Int, contents: String): Int {
             &chunk.append(element: contents[offset + index])
             index = index + 1
         }
-        let written = nativeWrite(handle: handle, buffer: chunk, count: length)
+        let written = if owned { ownedWrite(handle: handle, buffer: chunk, count: length) }
+            else { nativeWrite(handle: handle, buffer: chunk, count: length) }
         if written < 0 {
             code = 0 - written
         } else if written == 0 {
@@ -144,7 +147,7 @@ public func writeFileNew(path: String, contents: String): Result<Void, FileSyste
     let native = encodePath(path: path)?
     let handle = nativeOpenNew(path: native)
     if handle < 0 { return .Err(failure(code: 0 - handle)) }
-    let work = writeLoop(handle: handle, contents: contents)
+    let work = writeLoop(handle: handle, contents: contents, owned: false)
     let code = firstFailure(work: work, closed: nativeClose(handle: handle))
     if code != 0 { return .Err(failure(code: code)) }
     return .Ok(())
@@ -158,8 +161,25 @@ public func createDirectory(path: String): Result<Void, FileSystemError> {
 }
 
 public func listDirectory(path: String): Result<[String], FileSystemError> {
-    let native = encodePath(path: path)?
-    return nativeListDirectory(path: path, native: native)
+    var directory = openDirectory(path: path)?
+    let entries = collectDirectory(directory: &directory)
+    let closed = closeDirectory(directory: consume directory)
+    return match entries {
+        .Ok(names) => match closed { .Ok(_) => .Ok(names), .Err(error) => .Err(error), },
+        .Err(error) => .Err(error),
+    }
+}
+
+private func collectDirectory(directory: inout DirectoryReader): Result<[String], FileSystemError> {
+    var names: [String] = []
+    var more = true
+    while more {
+        match nextDirectoryEntry(directory: &directory)? {
+            .Some(name) => { &names.append(element: name) },
+            .None => { more = false },
+        }
+    }
+    return .Ok(names)
 }
 
 public func fileKind(path: String): Result<FileKind, FileSystemError> {

@@ -14,7 +14,7 @@ be compared against a baseline on the same machine and configuration.
   --release-compiler <release-joyeer> --output-dir <new-directory>`. The directory must not
   already exist, so the baseline executables cannot be overwritten accidentally.
 
-- `array_*.joyeer` and `benchmark_arrays.py` (plan 0011, phase 3): growth by appending, `a[i]` reads and
+- `array_*.joyeer` and `benchmark_arrays.py` ([decision 0026](../../docs/decisions/0026-library-array.md)): growth by appending, `a[i]` reads and
   writes including a nested array, `removeLast` drains, nested destruction (`[[String]]` build, copy, drop) and
   the linear drain of `[JoinHandle<Int>]`. The script reuses `benchmark_concurrency.py` (same `build` and
   `measure` commands, same interleaved paired comparison and bootstrap) with its own workloads. Each program
@@ -30,7 +30,7 @@ be compared against a baseline on the same machine and configuration.
   array as the baseline, so a ratio above 1 is a cost of the library array. The results and the gate numbers are in
   decision 0026, Section 4.
 
-- `dict_*.joyeer` and `benchmark_dicts.py` (plan 0011, phase 4, decision 0027): Int-key lookup at sizes 1, 4, 16 and
+- `dict_*.joyeer` and `benchmark_dicts.py` ([decision 0027](../../docs/decisions/0027-library-dict.md)): Int-key lookup at sizes 1, 4, 16 and
   64 (strict reads, `get` hits and misses), String-key lookup at sizes 4 and 16, insertion with growth to 16 and
   replacement, a four-entry literal with a duplicate key, and nested destruction of `[String: [Int]]`. The same
   `build` and `measure` commands as `benchmark_arrays.py`; each program prints one checksum computed independently in
@@ -49,6 +49,10 @@ Record the numbers in the decision or the pull request that changes the runtime,
 the operating system and the build configuration.
 
 ## Comparing two builds
+
+To reproduce the comparison for the merged library collection switch, use
+`0d85605` as the candidate and `7a1d748` (`Array`) or `939d210` (`Dict`) as the
+builtin baseline. The harnesses measure both `-O0` and `-O2`.
 
 A single timing on a shared machine measures the machine. Build the baseline and the changed
 runtime in separate Release trees, then run the two executables **interleaved** (A, B, A, B, ...)

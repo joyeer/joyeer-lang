@@ -408,11 +408,11 @@ and the storage is "ungiven."
 extension Buffer {
   public subscript(i: Int): UInt8 {
     borrowing {
-      assert(condition: i >= 0 && i < count)
+      assert(condition: i >= 0 && i < count, message: "index out of range")
       yield  data[i]
     }
     inout {
-      assert(condition: i >= 0 && i < count)
+      assert(condition: i >= 0 && i < count, message: "index out of range")
       yield &data[i]
     }
   }
@@ -497,7 +497,7 @@ well-defined: the old storage remains valid until the replacement is ready.
 public struct FileHandle {
   var fd: Int32
   public init(path: String) {
-    precondition(condition: path.notEmpty())
+    precondition(condition: path.notEmpty(), message: "empty path")
     fd = sys.open(path: path)
   }
   deinit() {

@@ -147,12 +147,12 @@ The draft standard-library prelude includes:
 The prelude holds the language's own vocabulary: types and the few functions
 every program needs without an import. Operations on the host are **not**
 prelude functions; they are ordinary functions of the `System` standard module
-(§12.5). The host error and status types stay in the prelude so that user code,
-`System` and any other module share one definition of each.
+(§12.5). The host error and status types listed here stay in the prelude so
+user code and `System` share their definitions. Other `System` types, such as
+`HostQueryError` and `NetworkError`, require an ordinary import.
 
 This is a long-term design vision, not the current compiler prelude inventory.
-For example, the compiler does not yet supply the contract APIs or general
-tuple support. See the
+For example, the compiler does not yet supply general tuple support. See the
 [implemented name-resolution prelude](../docs/impl/name-resolution.md#3-scopes-and-symbols)
 for the authoritative current list.
 
@@ -173,7 +173,7 @@ resolution mechanism is an implementation contract, described in
 | Module | Provides |
 |---|---|
 | `Foundation` | Text helpers, UTF-8 validation, decimal formatting, checksums. No host access |
-| `System` | The host operations of §18 (filesystem, processes, standard error and input, legacy `readFile`), lexical path helpers, and message formatting for the host error types |
+| `System` | The host operations of §18, target-platform detection, lexical path helpers, and message formatting for the host error types |
 | `Compression` | ZIP and JAR reading; optional, and backed by a native library |
 
 Rules:

@@ -18,6 +18,12 @@ private func identity(value: Int): Int {
     return nativeIdentity(value: value)
 }
 
+// A generic body is checked but does not bring in the managed runtime
+// unless an instance is emitted.
+private func unused<T>(value: T) {
+    assert(condition: false, message: "no instance")
+}
+
 @c_export(symbol: "joyeer_fixture_identity")
 private func exportedIdentity(input value: Int): Int {
     return identity(value: value)

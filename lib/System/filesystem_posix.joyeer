@@ -24,6 +24,34 @@ private let kindSymlink: Int = 40960
 private func fopenP(path: [UInt8], mode: [UInt8]): Int
 
 @platform(macos)
+@c_extern(symbol: "openx_np", pointer: "path")
+private func openWithSecurity(path: [UInt8], flags: Int32, security: Int): Int32
+
+@platform(macos)
+@c_extern(symbol: "filesec_init")
+private func fileSecurity(): Int
+
+@platform(macos)
+@c_extern(symbol: "filesec_set_property", pointer: "value")
+private func setFileSecurity(security: Int, property: UInt32, value: [UInt8]): Int32
+
+@platform(macos)
+@c_extern(symbol: "filesec_free")
+private func freeFileSecurity(security: Int): Void
+
+@platform(macos)
+@c_extern(symbol: "fdopen", pointer: "mode")
+private func descriptorStream(descriptor: Int32, mode: [UInt8]): Int
+
+@platform(macos)
+@c_extern(symbol: "close")
+private func closeDescriptorP(descriptor: Int32): Int32
+
+@platform(macos)
+@c_extern(symbol: "write", pointer: "buffer")
+private func writeDescriptorP(descriptor: Int32, buffer: [UInt8], count: Int): Int
+
+@platform(macos)
 @c_extern(symbol: "fread", pointer: "buffer")
 private func freadP(buffer: inout [UInt8], size: Int, count: Int, stream: Int): Int
 
@@ -167,49 +195,93 @@ func nativeOpenNew(path: [UInt8]): Int {
     return stream
 }
 
-// A stream's error is retried when it was only an interrupted system call.
+// Unlike fopen, acquire the descriptor with O_CLOEXEC already set.
+@platform(macos)
+private func takeStream(descriptor: Int32, mode: [UInt8]): Int {
+    let stream = descriptorStream(descriptor: descriptor, mode: mode)
+    if stream != 0 { return stream }
+    let error = lastFailure()
+    closeDescriptorP(descriptor: descriptor)
+    return error
+}
+
+@platform(macos)
+func ownedOpenRead(path: [UInt8]): Int {
+    let descriptor = openWithSecurity(path: path, flags: 0x01000000, security: 0)
+    if descriptor < 0 { return lastFailure() }
+    return takeStream(descriptor: descriptor, mode: readMode())
+}
+
+@platform(macos)
+func ownedOpenNew(path: [UInt8]): Int {
+    let security = fileSecurity()
+    if security == 0 { return lastFailure() }
+    let permissions: [UInt8] = [0xB6, 0x01]  // mode_t 0666; the kernel applies the umask.
+    let changed = setFileSecurity(security: security, property: 4, value: permissions)
+    if changed != 0 {
+        let error = lastFailure()
+        freeFileSecurity(security: security)
+        return error
+    }
+    // O_CLOEXEC | O_CREAT | O_EXCL | O_WRONLY
+    let descriptor = openWithSecurity(path: path, flags: 0x01000A01, security: security)
+    let error = if descriptor < 0 { lastFailure() } else { 0 }
+    freeFileSecurity(security: security)
+    if descriptor < 0 { return error }
+    return descriptor as Int
+}
+
+// Use the descriptor directly: buffered fwrite can report EINTR after
+// accepting some of a chunk, which makes retrying that chunk unsafe.
+@platform(macos)
+func ownedWrite(handle: Int, buffer: [UInt8], count: Int): Int {
+    var status = 0 - interrupted
+    while status == 0 - interrupted {
+        status = writeDescriptorP(descriptor: handle as Int32, buffer: buffer, count: count)
+        if status < 0 { status = lastFailure() }
+    }
+    return status
+}
+
+@platform(macos)
+func ownedCloseWriter(handle: Int): Int {
+    if closeDescriptorP(descriptor: handle as Int32) != 0 { return lastFailure() }
+    return 0
+}
+
+// Check the stream error even after a partial transfer. Clear EINTR before
+// returning progress so the next call does not inherit the sticky error.
+@platform(macos)
+private func transferError(handle: Int): Int {
+    if ferrorP(stream: handle) == 0 { return 0 }
+    let code = cErrno() as Int
+    if code == interrupted { clearerrP(stream: handle) }
+    if code == 0 { return writeFaultCode() }
+    return code
+}
+
 @platform(macos)
 func nativeRead(handle: Int, buffer: inout [UInt8], count: Int): Int {
-    var outcome = 0
-    var retry = true
-    while retry {
-        retry = false
-        let got = freadP(buffer: &buffer, size: 1, count: count, stream: handle)
-        if got > 0 {
-            outcome = got
-        } else if ferrorP(stream: handle) != 0 {
-            let code = 0 - lastFailure()
-            if code == interrupted {
-                clearerrP(stream: handle)
-                retry = true
-            } else {
-                outcome = 0 - code
-            }
-        }
+    var got = 0
+    var code = interrupted
+    while got == 0 && code == interrupted {
+        got = freadP(buffer: &buffer, size: 1, count: count, stream: handle)
+        code = transferError(handle: handle)
     }
-    return outcome
+    if code != 0 && code != interrupted { return 0 - code }
+    return got
 }
 
 @platform(macos)
 func nativeWrite(handle: Int, buffer: [UInt8], count: Int): Int {
-    var outcome = 0
-    var retry = true
-    while retry {
-        retry = false
-        let written = fwriteP(buffer: buffer, size: 1, count: count, stream: handle)
-        if written > 0 {
-            outcome = written
-        } else if ferrorP(stream: handle) != 0 {
-            let code = 0 - lastFailure()
-            if code == interrupted {
-                clearerrP(stream: handle)
-                retry = true
-            } else {
-                outcome = 0 - code
-            }
-        }
+    var written = 0
+    var code = interrupted
+    while written == 0 && code == interrupted {
+        written = fwriteP(buffer: buffer, size: 1, count: count, stream: handle)
+        code = transferError(handle: handle)
     }
-    return outcome
+    if code != 0 && code != interrupted { return 0 - code }
+    return written
 }
 
 @platform(macos)
@@ -264,58 +336,29 @@ func nativeKind(path: [UInt8]): Int {
 @platform(macos)
 func nameOffset(): Int { return 21 }
 
-// Entries until readdir_r reports none: 0 on success, else the error code.
 @platform(macos)
-private func collectEntries(directory: Int, names: inout [String]): Int {
-    var entry = zeroBuffer(count: direntBufferSize)
+func nativeDirectoryNext(directory: inout DirectoryReader): Result<String?, Int> {
+    let handle = directory.handle
     var found = zeroBuffer(count: 8)
-    var code = 0
-    var finished = false
-    while !finished {
-        let status = readdirP(directory: directory, entry: &entry, found: &found)
-        if status != 0 {
-            code = status as Int
-            finished = true
-            continue
-        }
-        var ended = true
-        var position = 0
-        while position < 8 {
-            if found[position] != 0 { ended = false }
-            position = position + 1
-        }
-        if ended {
-            finished = true
-            continue
-        }
-        var name: [UInt8] = []
-        var cursor = nameOffset()
-        while cursor < direntBufferSize && entry[cursor] != 0 {
-            &name.append(element: entry[cursor])
-            cursor = cursor + 1
-        }
-        let isDot = name.count == 1 && name[0] == b'.'
-        let isDotDot = name.count == 2 && name[0] == b'.' && name[1] == b'.'
-        if !isDot && !isDotDot {
-            let text = stringFromBytes(bytes: name, count: name.count)
-            if !isValidUtf8(text: text) {
-                code = encodingErrno()
-                finished = true
-            } else {
-                &names.append(element: text)
-            }
-        }
+    var code = interrupted
+    while code == interrupted {
+        code = readdirP(directory: handle, entry: &directory.buffer, found: &found) as Int
     }
-    return code
+    if code != 0 { return .Err(code) }
+    if hostWord(bytes: found, offset: 0) == 0 { return .Ok(nil) }
+    return posixDirectoryName(bytes: directory.buffer, start: nameOffset(), end: direntBufferSize)
 }
 
 @platform(macos)
-func nativeListDirectory(path: String, native: [UInt8]): Result<[String], FileSystemError> {
-    let directory = opendirP(path: native)
-    if directory == 0 { return .Err(classifyError(code: 0 - lastFailure())) }
-    var names: [String] = []
-    var code = collectEntries(directory: directory, names: &names)
-    if closedirP(directory: directory) != 0 && code == 0 { code = 0 - lastFailure() }
-    if code != 0 { return .Err(classifyError(code: code)) }
-    return .Ok(names)
+func nativeOpenDirectory(path: String, bytes: [UInt8]): Result<DirectoryReader, FileSystemError> {
+    let handle = opendirP(path: bytes)
+    if handle == 0 { return .Err(classifyError(code: 0 - lastFailure())) }
+    return .Ok(DirectoryReader(handle: handle, state: 0, buffer: zeroBuffer(count: direntBufferSize),
+        cursor: 0, limit: 0))
+}
+
+@platform(macos)
+func nativeCloseDirectory(handle: Int): Int {
+    if closedirP(directory: handle) != 0 { return lastFailure() }
+    return 0
 }

@@ -18,6 +18,7 @@ enum class PreludeKind {
     concurrency,
     roles,
     collections,
+    contracts,
 };
 
 // Parses a compiler-bundled prelude with every token carrying `sourceId`. `source` is set even when

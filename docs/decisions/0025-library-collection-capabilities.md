@@ -5,13 +5,14 @@
   structure `role` enum that replaced the inert-zero bit.
 - Spec: §2.6 (`Array`), §4.1.1 (copyability), §4.4 (access paths), §20.12.5 (layout intrinsics) and
   §21 (a library array stays a valid task input) change with this record.
-- Plan: [0011](../plan/0011-library-containers.md), Phase 2.
+- Implementation: [#27](https://github.com/joyeer/joyeer-lang/pull/27) and the subsequent
+  [library collection switch](https://github.com/joyeer/joyeer-lang/pull/31).
 
 ## Context
 
 Phase 1 made `Optional` and `Result` ordinary library enums ([0024](0024-library-optional-and-result.md)).
-`Array` and `Dict` are next, and plan 0011 Phase 2 asks what the *compiler* must provide so that
-`Array<T>` and `Dict<K, V>` can be written as library structs without losing today's behavior.
+The next step asked what the *compiler* must provide so that `Array<T>` and `Dict<K, V>` can be
+written as library structs without losing the builtin behavior.
 
 Their algorithms already live in Joyeer (`lib/Runtime/core/arrays.joyeer`, `dictionaries.joyeer`).
 The compiler still owns the type kinds, the 24-byte `{data, count, capacity}` layout, element access
@@ -280,6 +281,7 @@ reviews approve a design, not an implementation.
 
 ## Evidence
 
-Inventory of the current implementation recorded in the progress log of plan 0011 (2026-11-15). Prior art:
+The inventory above records the implementation as of 2026-11-15. For the shipped implementation's
+results, see the [collection validation](../impl/runtime.md#collection-validation). Prior art:
 0022's layout intrinsics and its `borrow_at` gap, 0023's marked prelude contracts and must-transfer
 parameters, 0024's roles, closed validation and test seam.
