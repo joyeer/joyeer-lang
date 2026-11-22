@@ -5,10 +5,14 @@
 
 #include "internal.h"
 
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <functional>
+#include <iterator>
 #include <string_view>
+#include <unordered_map>
+#include <vector>
 
 namespace joyeer::ir::verifier {
 
@@ -24,6 +28,88 @@ bool validFloatingLiteral(typing::TypeKind kind, std::string_view text) {
     return kind == typing::TypeKind::float32 ? fits(float{}) :
             kind == typing::TypeKind::float64 && fits(double{});
 }
+
+// The type checker's pattern matrix (`patternMatrixIsExhaustive` in compiler/frontend/typechecking.cpp)
+// over IR patterns of verified types: whether the rows cover every tuple of values of the column types.
+// A wildcard covers its column; `true` and `false` together cover `Bool`; one case pattern per case
+// covers an enum when the rows of each case cover its payloads. Other literals cover nothing alone, and
+// neither does an enum without cases or an uninhabited payload: those need a wildcard.
+class SwitchCoverage {
+public:
+    using Row = std::vector<const Pattern*>;  // null is a wildcard that specialization put in for a payload
+
+    SwitchCoverage(const std::unordered_map<TypeId, const TypeName*>& types,
+                   const std::unordered_map<TypeId, const EnumerationDefinition*>& enumerations):
+            types(types), enumerations(enumerations) {}
+
+    bool covers(const std::vector<TypeId>& columns, const std::vector<Row>& rows, size_t depth = 0) {
+        if (rows.empty()) return false;
+        if (columns.empty() || std::any_of(rows.begin(), rows.end(), [](const Row& row) {
+                return std::all_of(row.begin(), row.end(), isWildcard);
+            })) {
+            return true;
+        }
+        // Past the budget the answer is "not covered". Lowered `match` dispatch never gets there: the type
+        // checker gives up on the same matrix with a smaller budget and then requires a catch-all arm, which
+        // covers at once above.
+        if (remaining == 0 || depth == 256) return false;
+        --remaining;
+
+        // The rows whose first pattern is a wildcard or one that `admits`, with the first column replaced by
+        // one column per payload: a wildcard row gets a wildcard per payload, an admitted row its payloads.
+        const auto specialize = [&](const auto& admits, const std::vector<TypeId>& payloadTypes) {
+            auto specializedColumns = payloadTypes;
+            specializedColumns.insert(specializedColumns.end(), columns.begin() + 1, columns.end());
+            std::vector<Row> specializedRows;
+            for (const auto& row : rows) {
+                Row specialized;
+                if (isWildcard(row.front())) {
+                    specialized.assign(payloadTypes.size(), nullptr);
+                } else if (admits(*row.front()) && row.front()->payloads.size() == payloadTypes.size()) {
+                    for (const auto& payload : row.front()->payloads) specialized.push_back(&payload);
+                } else {
+                    continue;
+                }
+                specialized.insert(specialized.end(), row.begin() + 1, row.end());
+                specializedRows.push_back(std::move(specialized));
+            }
+            return covers(specializedColumns, specializedRows, depth + 1);
+        };
+
+        const auto none = [](const Pattern&) { return false; };
+        const auto startsWithWildcard = [](const Row& row) { return isWildcard(row.front()); };
+        if (std::any_of(rows.begin(), rows.end(), startsWithWildcard) && specialize(none, {})) return true;
+        if (std::all_of(rows.begin(), rows.end(), startsWithWildcard)) return false;
+
+        const auto type = types.find(columns.front());
+        if (type != types.end() && type->second->kind == typing::TypeKind::boolean) {
+            const auto literal = [](int64_t value) {
+                return [value](const Pattern& pattern) {
+                    return pattern.kind == PatternKind::booleanLiteral && pattern.integerValue == value;
+                };
+            };
+            return specialize(literal(1), {}) && specialize(literal(0), {});
+        }
+        const auto enumeration = enumerations.find(columns.front());
+        if (enumeration == enumerations.end() || enumeration->second->cases.empty()) return false;
+        for (const auto& enumCase : enumeration->second->cases) {
+            const auto ofCase = [&enumCase](const Pattern& pattern) {
+                return pattern.kind == PatternKind::enumCase && pattern.symbol == enumCase.symbol;
+            };
+            if (!specialize(ofCase, enumCase.payloadTypes)) return false;
+        }
+        return true;
+    }
+
+private:
+    static bool isWildcard(const Pattern* pattern) {
+        return pattern == nullptr || pattern->kind == PatternKind::wildcard;
+    }
+
+    const std::unordered_map<TypeId, const TypeName*>& types;
+    const std::unordered_map<TypeId, const EnumerationDefinition*>& enumerations;
+    size_t remaining = size_t { 1 } << 16;
+};
 
 } // namespace
 
@@ -620,7 +706,8 @@ void FunctionVerifier::verifyConditionalBranch(const InstructionSite& site) {
     }
 }
 
-// Every case pattern matches the scrutinee's type, recursively through enum payloads.
+// Every case pattern matches the scrutinee's type, recursively through enum payloads; a top-level
+// wildcard is the last case; and the cases cover every value of the scrutinee (docs/impl/ir.md section 4).
 void FunctionVerifier::verifySwitchPattern(const InstructionSite& site) {
     const auto& block = site.block;
     const auto& instruction = site.instruction;
@@ -669,6 +756,25 @@ void FunctionVerifier::verifySwitchPattern(const InstructionSite& site) {
                 block.id,
                 location,
                 "pattern switch cases do not match the scrutinee type");
+        return;
+    }
+
+    // The backend tests the cases in order, branches to the first wildcard without testing the rest, and
+    // ends the tests with `unreachable`.
+    const auto& cases = instruction.switchCases;
+    const auto wildcard = std::find_if(cases.begin(), cases.end(), [](const SwitchCase& switchCase) {
+        return switchCase.pattern.kind == PatternKind::wildcard;
+    });
+    if (wildcard != cases.end() && std::next(wildcard) != cases.end()) {
+        report(VerificationErrorId::unreachableSwitchCase, functionId, block.id, location,
+               "pattern switch case " + std::to_string(std::distance(cases.begin(), wildcard) + 1) +
+                       " is a wildcard, so the cases after it can never be chosen");
+    }
+    std::vector<SwitchCoverage::Row> rows;
+    for (const auto& switchCase : cases) rows.push_back({ &switchCase.pattern });
+    if (!SwitchCoverage(types, context.enumerations).covers({ operands[0]->type }, rows)) {
+        report(VerificationErrorId::nonExhaustiveSwitch, functionId, block.id, location,
+               "pattern switch cases do not cover every value of the scrutinee; end them with a wildcard case");
     }
 }
 

@@ -388,10 +388,28 @@ scrutinee cannot invalidate a binding, including nested heap-backed payloads.
 A pattern that binds a noncopyable payload cannot copy it: the scrutinee is stored (the place of
 `match consume x`, or a slot that takes over an owned temporary), the arm takes the payload with
 `payload_address` and `take`, and whatever no arm binds is destroyed with that storage.
-The LLVM backend lowers the high-level pattern list into
-tag and value tests, relying on the type checker's recursive payload coverage.
-It branches on a matching tag before interpreting payloads, and recursively
-short-circuits payload tests. Case lookup uses concrete enum type identity
+
+The first matching case wins, and the case list obeys two rules the verifier enforces:
+
+- **A top-level wildcard is the last case** (`ir.unreachable-switch-case`). A wildcard or
+  binding arm matches every value, so `match` lowering ends the dispatch at the first such arm
+  and does not lower the arms after it; type checking has already checked them. A nested
+  wildcard payload may be followed by further cases, and a case that earlier cases already
+  cover is allowed.
+- **The cases cover every value of the scrutinee** (`ir.non-exhaustive-switch`). Coverage is
+  the type checker's pattern matrix over the IR patterns: a wildcard covers its position, `true`
+  and `false` together cover `Bool`, and one case per enum case covers the enum when, for each
+  case, the patterns of that case cover its payloads the same way. Integer, floating, string and
+  byte literals never cover their type, so a switch over one ends with a wildcard. An enum
+  without cases, and a case whose payload is uninhabited (`Never?`'s `.Some`), still need a
+  pattern or a wildcard. Past a fixed work budget the answer is "not covered"; lowered `match`
+  dispatch never reaches it, because the type checker gives up on the same matrix sooner and
+  then requires a catch-all arm. The `?` propagation switch names both role cases.
+
+The LLVM backend lowers the high-level pattern list into tag and value tests in order. It
+branches to the first wildcard without testing further cases, and ends the tests with
+`unreachable`, which the coverage rule makes dead. It branches on a matching tag before
+interpreting payloads, and recursively short-circuits payload tests. Case lookup uses concrete enum type identity
 plus case symbol, including distinct builtin container instantiations.
 
 ---
@@ -413,7 +431,8 @@ plus case symbol, including distinct builtin container instantiations.
   have one, and must have a `deinit`); a `copier` that is not a function borrowing the struct and returning it;
   an element address that is converted, returned, stored as a value, or used outside its dominance; a
   collection opcode outside a runtime function, or `clone_at` on a noncopyable type;
-- malformed recursive patterns;
+- malformed recursive patterns, and `switch_pattern` cases after a top-level wildcard or that
+  miss a value of the scrutinee (section 4);
 - malformed source maps, unknown source IDs, debug spans outside their own
   file's byte bounds, or locations without module source information;
 - detached/cyclic/cross-function lexical scopes, invalid parameter indices,

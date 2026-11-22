@@ -2994,15 +2994,26 @@ private:
                         expression->span))
                 : std::optional<ir::Value>();
 
-        std::vector<ir::BlockId> armBlocks;
+        // A wildcard, binding or unit arm matches every value, so no arm after it can run: the dispatch
+        // ends with it, as the IR verifier requires of a top-level wildcard, and the arms after it, which
+        // type checking has already checked, are not lowered.
+        size_t liveArms = expression->arms.size();
         for (size_t index = 0; index < expression->arms.size(); ++index) {
+            if (catchesEveryValue(expression->arms[index]->pattern)) {
+                liveArms = index + 1;
+                break;
+            }
+        }
+
+        std::vector<ir::BlockId> armBlocks;
+        for (size_t index = 0; index < liveArms; ++index) {
             armBlocks.push_back(createBlock("match.arm." + std::to_string(index)));
         }
         const auto mergeBlock = createBlock("match.merge");
 
         auto dispatch = makeInstruction(ir::Opcode::switchPattern, expression->span);
         dispatch.operands = { scrutinee->id };
-        for (size_t index = 0; index < expression->arms.size(); ++index) {
+        for (size_t index = 0; index < liveArms; ++index) {
             const auto pattern = lowerPattern(expression->arms[index]->pattern);
             if (!pattern.has_value()) return std::nullopt;
             dispatch.switchCases.push_back(ir::SwitchCase { *pattern, armBlocks[index] });
@@ -3010,7 +3021,7 @@ private:
         emit(std::move(dispatch));
 
         bool hasMergePredecessor = false;
-        for (size_t index = 0; index < expression->arms.size(); ++index) {
+        for (size_t index = 0; index < liveArms; ++index) {
             const auto& arm = expression->arms[index];
             switchToBlock(armBlocks[index]);
             DebugScopeGuard armDebugScope(
@@ -3052,6 +3063,13 @@ private:
                 ir::ValueCategory::value,
                 { resultAddress->id },
                 expression->span);
+    }
+
+    // The top-level patterns that lowerPattern() makes a wildcard.
+    static bool catchesEveryValue(const syntax::PatternPtr& pattern) {
+        return pattern != nullptr &&
+                (pattern->kind == syntax::Kind::wildcardPattern || pattern->kind == syntax::Kind::unitPattern ||
+                 pattern->kind == syntax::Kind::bindingPattern);
     }
 
     std::optional<ir::Pattern> lowerPattern(const syntax::PatternPtr& pattern) {
