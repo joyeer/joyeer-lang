@@ -3956,8 +3956,9 @@ private:
         const auto baseType = typeOf(base);
         const auto type = typeOf(expression);
         if (!baseType.has_value() || !type.has_value()) return std::nullopt;
-        // A derived conformer has no `equals` method either; its generated witness stands in (decision 0029).
-        if (model->isDerivedEquatable(*baseType)) {
+        // A derived conformer and an array have no `equals` method either; the generated witness or the
+        // `arrayEqual` instance stands in (decision 0029).
+        if (model->isDerivedEquatable(*baseType) || model->isArrayRoleType(*baseType)) {
             return lowerWitnessEquality(base, expression->arguments[0]->value, *baseType, true, *type,
                                         expression->span);
         }

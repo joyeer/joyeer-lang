@@ -1062,7 +1062,7 @@ std::vector<EquatableMember> TypeCheckedModel::equatableMembers(TypeId type) con
         const auto caseName = caseInfo == nullptr ? std::string() : caseInfo->name;
         const auto parameters = signature->parameters;
         for (size_t index = 0; index < parameters.size(); ++index) {
-            members.push_back({ parameters.size() == 1 ? caseName : caseName + "." + std::to_string(index),
+            members.push_back({ caseName + "." + std::to_string(index),
                                 memberTypeOf(type, parameters[index]) });
         }
     }
@@ -1352,7 +1352,40 @@ private:
         }
     }
 
+    // The `equatable` role (decision 0029): exactly one role-prelude protocol, whose one requirement is
+    // `func equals(other: Self): Bool` with a borrowing receiver and argument.
+    void validateEquatableRole() {
+        std::vector<const semantic::Symbol*> protocols;
+        for (const auto& symbol : model->semanticModelValue->symbols()) {
+            if (symbol.kind == semantic::SymbolKind::protocol && symbol.libraryRole == semantic::LibraryRole::equatable &&
+                model->semanticModelValue->isPreludeSource(symbol.span)) {
+                protocols.push_back(&symbol);
+            }
+        }
+        for (size_t index = 1; index < protocols.size(); ++index) {
+            report(TypeCheckingDiagnosticId::invalidPrelude, protocols[index]->span,
+                   "the compiler prelude declares a second protocol for the equatable role");
+        }
+        if (protocols.empty()) return;
+        const auto protocol = protocols.front()->id;
+        const auto requirements = requirementsOf(protocol);
+        // `Self` in a requirement is the type parameter whose symbol is the protocol (spec 20.2).
+        const auto self = model->typeContext.typeParameterType(protocol);
+        const auto shape = requirements.size() == 1 && symbolName(requirements.front()) == "equals"
+                ? methodShape(requirements.front(), {}) : std::nullopt;
+        const bool shaped = shape.has_value() && shape->receiver == syntax::AccessEffect::borrowing &&
+                shape->parameters == std::vector<TypeId> { self } &&
+                shape->labels == std::vector<std::optional<std::string>> { std::string("other") } &&
+                shape->effects == std::vector<syntax::AccessEffect> { syntax::AccessEffect::borrowing } &&
+                shape->result == model->typeContext.boolType();
+        if (!shaped) {
+            report(TypeCheckingDiagnosticId::invalidPrelude, protocols.front()->span,
+                   "the equatable role requires exactly the requirement 'func equals(other: Self): Bool'");
+        }
+    }
+
     void validatePreludeContracts() {
+        validateEquatableRole();
         const auto isRoleType = [&](TypeId id, semantic::LibraryRole role) {
             const auto* type = model->typeContext.type(id);
             const auto* symbol = type == nullptr ? nullptr : model->semanticModelValue->symbol(type->symbol);
@@ -1812,9 +1845,31 @@ private:
                 case semantic::LibraryRole::arrayEqual: {
                     // `private func name<T: Equatable>(left: [T], right: [T]): Bool` with a body (decision 0029).
                     const auto* parameters = model->genericParameters(symbol.id);
-                    if (symbol.kind != semantic::SymbolKind::function || parameters == nullptr ||
-                        parameters->size() != 1 || !symbol.callable.has_value() ||
-                        symbol.callable->parameters.size() != 2) {
+                    const auto* signature = model->callable(symbol.id);
+                    const auto function = symbol.kind == semantic::SymbolKind::function && node != nullptr &&
+                            node->kind == syntax::Kind::functionDecl
+                            ? std::static_pointer_cast<syntax::FunctionDeclSyntax>(node) : nullptr;
+                    bool shaped = function != nullptr && function->body != nullptr && parameters != nullptr &&
+                            parameters->size() == 1 && symbol.callable.has_value() && signature != nullptr &&
+                            symbol.callable->parameters.size() == 2 && signature->parameters.size() == 2 &&
+                            symbol.visibility == syntax::Visibility::private_ &&
+                            signature->result == model->typeContext.boolType();
+                    if (shaped) {
+                        const auto equatable = model->equatableProtocol();
+                        const auto& constraints = model->constraints((*parameters)[0]);
+                        const auto element = model->typeContext.typeParameterType((*parameters)[0]);
+                        shaped = equatable.has_value() &&
+                                std::find(constraints.begin(), constraints.end(), *equatable) != constraints.end();
+                        for (size_t index = 0; shaped && index < 2; ++index) {
+                            const auto& parameter = symbol.callable->parameters[index];
+                            const auto* array = model->typeContext.type(signature->parameters[index]);
+                            shaped = parameter.access == syntax::AccessEffect::borrowing &&
+                                    parameter.label == std::optional<std::string>(index == 0 ? "left" : "right") &&
+                                    model->isArrayRoleType(signature->parameters[index]) && array != nullptr &&
+                                    array->arguments.size() == 1 && array->arguments[0] == element;
+                        }
+                    }
+                    if (!shaped) {
                         roleFailure = "the array_equal role requires 'private func name<T: Equatable>(left: [T], "
                                       "right: [T]): Bool'";
                         break;
@@ -2604,8 +2659,7 @@ private:
                                    : witnessSymbol->kind == semantic::SymbolKind::builtinMember
                                    ? std::optional<std::string>("a builtin member is not a declared method and cannot be a witness")
                                    : std::optional<std::string>("'" + witnessSymbol->name + "' is not a method, and only "
-                                                                "a declared method can be a witness; rename it or "
-                                                                "declare the method"));
+                                                                "a declared method can be a witness; rename it"));
                     valid = false;
                     continue;
                 }
@@ -5037,7 +5091,7 @@ private:
                 }
                 left = leftAbsent ? absentType : valueType;
                 right = leftAbsent ? valueType : absentType;
-            } else if (lacksOwnType(expression->left) && !lacksOwnType(expression->right)) {
+            } else if (operandTypeStrength(expression->left) < operandTypeStrength(expression->right)) {
                 right = checkExpression(expression->right).value_or(model->typeContext.errorType());
                 left = checkExpression(expression->left, right).value_or(model->typeContext.errorType());
             } else {
@@ -5114,28 +5168,57 @@ private:
         return false;
     }
 
-    // An operand with no type of its own (spec 20.13.2): `nil`, an implicit member, an empty array or dictionary
-    // literal, or a numeric literal.
-    bool lacksOwnType(const syntax::ExprPtr& expression) const {
-        if (expression == nullptr) return false;
+    // How much of its own type an operand of `==` has (spec 20.13.2): the weaker operand is typed by the stronger,
+    // whichever side it is on. 0: none (`nil`, an implicit member, an empty literal, a case of a generic enum, whose
+    // arguments may leave a parameter open); 1: an integer literal; 2: a floating-point literal, so `0 == 0.5`
+    // compares two `Double`s as `0.5 == 0` does; 3: a type of its own. An array literal is as strong as its weakest
+    // element.
+    int operandTypeStrength(const syntax::ExprPtr& expression) const {
+        if (expression == nullptr) return 3;
         if (expression->kind == syntax::Kind::parenthesizedExpr) {
-            return lacksOwnType(std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+            return operandTypeStrength(
+                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
         }
-        if (isNumericLiteral(expression) || isOpenCaseReference(expression)) return true;
+        if (isNumericLiteral(expression)) return isFloatLiteral(expression) ? 2 : 1;
+        if (isOpenCaseReference(expression)) return 0;
         if (expression->kind == syntax::Kind::literalExpr) {
             const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(expression)->literal;
-            return literal != nullptr && literal->kind == nilLiteral;
+            return literal != nullptr && literal->kind == nilLiteral ? 0 : 3;
+        }
+        if (expression->kind == syntax::Kind::callExpr) {
+            const auto call = std::static_pointer_cast<syntax::CallExprSyntax>(expression);
+            const auto referenced = model->referencedSymbol(call->callee);
+            const auto* symbol = referenced.has_value() ? model->semanticModelValue->symbol(*referenced) : nullptr;
+            const bool genericCase = symbol != nullptr && symbol->kind == semantic::SymbolKind::enumCase &&
+                    symbol->containingSymbol.has_value() &&
+                    model->genericParameters(*symbol->containingSymbol) != nullptr;
+            return genericCase ? 0 : 3;
         }
         if (expression->kind == syntax::Kind::arrayExpr) {
-            const auto& elements = std::static_pointer_cast<syntax::ArrayExprSyntax>(expression)->elements;
-            return std::all_of(elements.begin(), elements.end(), [this](const auto& element) {
-                return lacksOwnType(element);
-            });
+            int strength = 0;
+            bool first = true;
+            for (const auto& element : std::static_pointer_cast<syntax::ArrayExprSyntax>(expression)->elements) {
+                const auto own = operandTypeStrength(element);
+                strength = first ? own : std::min(strength, own);
+                first = false;
+            }
+            return strength;
         }
         if (expression->kind == syntax::Kind::dictionaryExpr) {
-            return std::static_pointer_cast<syntax::DictionaryExprSyntax>(expression)->entries.empty();
+            return std::static_pointer_cast<syntax::DictionaryExprSyntax>(expression)->entries.empty() ? 0 : 3;
         }
-        return false;
+        return 3;
+    }
+
+    bool isFloatLiteral(const syntax::ExprPtr& expression) const {
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return isFloatLiteral(std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+        }
+        if (expression->kind == syntax::Kind::prefixExpr) {
+            return isFloatLiteral(std::static_pointer_cast<syntax::PrefixExprSyntax>(expression)->operand);
+        }
+        return expression->kind == syntax::Kind::literalExpr &&
+                std::static_pointer_cast<syntax::LiteralExprSyntax>(expression)->literal->kind == floatLiteral;
     }
 
     // `a == b` reaches the witness as `a.equals(other: b)` would (decision 0029), so the witness's instance is
@@ -5254,8 +5337,19 @@ private:
                 }
                 header += ">";
             }
-            return "'" + name + "' does not conform to 'Equatable'; declare 'extension " + header +
-                    ": Equatable { func equals(other: " + header + "): Bool { ... } }'";
+            // An existing `equals` method becomes the witness, and members that can all conform derive one; only
+            // otherwise must the witness be written (spec 20.13.3).
+            bool derivable = true;
+            for (const auto& member : model->equatableMembers(type)) {
+                std::vector<TypeId> inProgress { type };
+                if (!satisfiesEquatable(member.type, inProgress, true)) { derivable = false; break; }
+            }
+            if (lookupMember(type, "equals").has_value() || derivable) {
+                return "'" + name + "' does not conform to 'Equatable'; declare 'extension " + header +
+                        ": Equatable {}'";
+            }
+            return "'" + name + "' does not conform to 'Equatable', and not every member can be compared; declare "
+                   "'extension " + header + ": Equatable { func equals(other: " + header + "): Bool { ... } }'";
         }
         return "'" + name + "' does not conform to 'Equatable' (spec 20.13)";
     }
