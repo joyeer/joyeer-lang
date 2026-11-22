@@ -1,6 +1,6 @@
 # 0012: Equality through `Equatable`
 
-- Status: in progress (updated 2026-11-21); phases 1 to 4 are done; phase 5 (acceptance) is next
+- Status: in progress (updated 2026-11-22); phases 1 to 4 are done, and phase 5 is done on Windows x64; validation on the other platforms remains
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0024](../decisions/0024-library-optional-and-result.md) (rejects `==` on `Optional`/`Result`),
@@ -117,9 +117,11 @@ types it cannot compile (0024, "Equality is rejected").
   ed38353 with tests in 8be2a99, except the two items added below.
 - [x] Debug and Release CTest. Evidence: at ed38353 on Windows x64, Debug 2074 of 2074 and Release 2073
   of 2073. `scripts/validate.py` (with `fern test`) waits for phase 5.
-- [ ] Check the shape of the role prelude's `Equatable` in `validatePreludeContracts` (one borrowing
+- [x] Check the shape of the role prelude's `Equatable` in `validatePreludeContracts` (one borrowing
   `equals(other: Self): Bool`, one declaration with the role), as for the other roles. Found by the
-  type-system review; today a malformed bundle is found only by a failed lookup.
+  type-system review; today a malformed bundle is found only by a failed lookup. Evidence: aee8810 tests
+  (observed failing), 55ae981; `EquatableRoleTest.TheEquatableRoleShapeIsChecked`, and for the
+  `array_equal` function `CollectionRoleTest.TheArrayEqualRoleShapeIsChecked`.
 
 ### Phase 3: derived conformances
 
@@ -193,12 +195,25 @@ types it cannot compile (0024, "Equality is rejected").
 
 ### Phase 5: acceptance
 
-- [ ] Run the adversarial tester, then the type-system and IR/backend reviewers, each separately from
-  the author.
+- [x] Run the adversarial tester, then the type-system and IR/backend reviewers, each separately from
+  the author. Evidence: the adversarial run at 819d220 (no -O0/-O2 differences or ownership bugs; a
+  requirement call on an array instance failed in lowering, operand typing depended on the side, help
+  could suggest a duplicate method) has tests in aee8810 and fixes in 55ae981. The final reviews at
+  55ae981: IR/backend nothing above low (recorded in ir.md, backend.md and spec 20.13.4); type system
+  two medium (cascading reports, help suggesting impossible extensions) and lows, with tests in
+  bb65dbe and d41d071 and fixes in 1d9d006. The review's claimed `(1 as Float) == 0.5` regression is
+  rejected by the pre-`Equatable` compiler too (`as` is integer-only).
 - [ ] Run full `scripts/validate.py` in Debug and Release on every supported platform. Report gates
-  that were not run.
+  that were not run. Windows x64 done: at 1d9d006, Debug and Release each build, pass CTest 2140 of 2140
+  (Fern.Workspace, and in Release Fern.Manifest, passed on the validator's rerun) and `fern test` 7 of 7.
+  Not run: Linux x86_64, macOS and ARM64 (no host here).
 - [ ] Update `docs/impl/supported-features.md` and the implementation notes. Delete this plan when
   everything is checked.
+
+Follow-ups outside this plan, found during it: the IR verifier accepts `switchPattern` cases after a
+wildcard and non-exhaustive switches; derived witnesses take aggregates by value, which is slow to compile
+for deeply nested structs (ir.md, copy-elision item); the `overlapping-access` message says "in the same
+call" for `==`.
 
 ## Open questions
 
@@ -239,6 +254,9 @@ types may not; conformances stay in the type's module.
 
 ## Progress log
 
+- 2026-11-22: Phase 5 on Windows x64: the adversarial tester and the final type-system and IR/backend
+  reviews, their findings fixed (aee8810/55ae981, bb65dbe/d41d071/1d9d006), phase 2's shape check done,
+  and `scripts/validate.py` passing in Debug and Release at 1d9d006. The other platforms are not run.
 - 2026-11-22: Phase 4's benchmark ran (`benchmark_equality.py`): no regression outside noise; the one
   row whose first interval was above 1 (scalars at -O0) has identical IR and was within noise when
   rerun. Phase 4 is done.
