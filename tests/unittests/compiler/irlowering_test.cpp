@@ -975,30 +975,6 @@ true => 2,
     EXPECT_EQ(opcodeCount(function("pick"), joyeer::ir::Opcode::extractPayload), 0u);
 }
 
-// The verifier's coverage check has a work budget, and its matrix is not the type checker's: the type checker
-// gives `nil` no coverage, the IR makes it `.None`. Running out of budget must not reject a match that the type
-// checker accepted; here the sixteen `nil` rows cost the verifier 2^16 specializations.
-TEST_F(IRLoweringTest, VerifiesAMatchWhoseCoverageExceedsTheWorkBudget) {
-    std::string text = "enum S { s(Bool, Int?";
-    for (int column = 0; column < 16; ++column) text += ", Bool";
-    text += ") }\nfunc pick(v: S): Int {\nreturn match v {\n";
-    const auto row = [](const std::string& first, const std::string& second, int trueColumn) {
-        std::string arm = ".s(" + first + ", " + second;
-        for (int column = 0; column < 16; ++column) arm += column == trueColumn ? ", true" : ", _";
-        return arm + ") => 0,\n";
-    };
-    text += row("_", ".Some(_)", -1);
-    for (int column = 0; column < 16; ++column) text += row("_", "nil", column);
-    for (const auto* first : { "true", "false" }) {
-        for (const auto* second : { ".Some(_)", ".None" }) text += row(first, second, -1);
-    }
-    text += "}\n}\n";
-    lower(text);
-    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
-    const auto verification = joyeer::ir::Verifier().verify(*result.module);
-    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
-}
-
 TEST_F(IRLoweringTest, CarriesSourceLocationsAndMarksCleanupImplicit) {
     lower(R"JOYEER(func run(input: consuming String) {
 let text = "value"

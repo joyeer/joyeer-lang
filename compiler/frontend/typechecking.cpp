@@ -7095,6 +7095,9 @@ private:
                 if (literal->literal != nullptr && literal->literal->kind == booleanLiteral) {
                     coverage.booleanLiteral = literal->literal->rawValue == Literals::TRUE;
                 }
+                if (literal->literal != nullptr && literal->literal->kind == nilLiteral) {
+                    coverage.enumCase = optionalAbsentCase(expected);
+                }
                 break;
             }
             case syntax::Kind::enumCasePattern:
@@ -7364,7 +7367,26 @@ private:
                 result.push_back(memberId);
             }
         }
+        // Symbol ids only grow, and name resolution declares a type's cases in source order (builtin enums in their
+        // descriptor order), so sorting by id gives declaration order. The member
+        // map's own order depends on the hash and on how often the scope table was copied, and the exhaustiveness
+        // budget must not.
+        std::sort(result.begin(), result.end());
         return result;
+    }
+
+    // The case a `nil` pattern matches: the Optional role's case without a payload (decision 0024), as IR lowering
+    // binds it.
+    std::optional<semantic::SymbolId> optionalAbsentCase(TypeId type) const {
+        if (!model->typeContext.isOptional(type)) return std::nullopt;
+        std::optional<semantic::SymbolId> absent;
+        for (const auto caseSymbol : enumCases(type)) {
+            const auto* symbol = model->semanticModelValue->symbol(caseSymbol);
+            if (symbol == nullptr || !symbol->callable.has_value() || !symbol->callable->parameters.empty()) continue;
+            if (absent.has_value()) return std::nullopt;
+            absent = caseSymbol;
+        }
+        return absent;
     }
 
     // A place `borrow_address` may take (decision 0027): a local binding, a parameter (including `self`) or a field path

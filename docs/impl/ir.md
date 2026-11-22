@@ -422,11 +422,11 @@ The first matching case wins, and the case list obeys two rules the verifier enf
   only a wildcard covers an enum without cases. These conservative rules, which the type
   checker shares, are the only rejections without a missed value. The check has a fixed work
   budget and depth; past either it treats the rest as covered and trusts the producer, so a
-  switch is rejected otherwise only when the check found a value that no case matches. The
-  budget cannot be tied to the type checker's: the IR matrix is not the same (a `nil` pattern
-  is `.None` here but covers nothing in the type checker, and the two visit enum cases in
-  different orders), so a match that the type checker settles quickly can cost more here. The
-  `?` propagation switch names both role cases.
+  switch is rejected otherwise only when the check found a value that no case matches. The type
+  checker runs the same algorithm on the same patterns (a `nil` pattern is `.None` in both, and
+  both visit enum cases in declaration order) with a smaller budget, so the verifier settles
+  every lowered `match`; its budget only guards other producers. The `?` propagation switch
+  names both role cases.
 
 The LLVM backend lowers the high-level pattern list into tag and value tests in order. It
 branches to the first wildcard without testing further cases, and ends the tests with
