@@ -806,8 +806,8 @@ When one operand is the absent case of the `optional` role written without a pay
 on either side and also in parentheses) and the other has a type `X?`, `==` and `!=` test whether the
 other operand is present. The test is recognized from the syntax before ordinary equality, so it applies
 whatever `X` is: a function type, a noncopyable or a linear type. It never calls a witness, borrows the
-operand, and costs one tag comparison. `nil == nil` is `type-checking.missing-contextual-type`. A linear
-operand must be a place: comparing a linear temporary, such as `spawnMaybe() == nil`, drops it and is
+operand, and costs one tag comparison once optimized (unoptimized, it is a branch on the tag).
+`nil == nil` is `type-checking.missing-contextual-type`. A linear operand must be a place: comparing a linear temporary, such as `spawnMaybe() == nil`, drops it and is
 `semantic-analysis.linear-result-dropped`.
 
 #### 20.13.5 Derived and conditional conformance
@@ -845,7 +845,10 @@ the field, or the case and payload position, and its type. A field that conforms
 (`var value: T`) is checked where the conformance is needed: `Box<Fn> == Box<Fn>` is
 `type-checking.non-equatable-member` naming the field path, with a note at the extension, and a generic
 call that infers such a type for a `U: Equatable` parameter is `type-checking.unsatisfied-constraint`
-with the same field-path note.
+whose help names the same field path. `Optional`, `Result` and arrays are the exception: `==` on one whose
+payload or element does not conform is `type-checking.invalid-operator-operands`, whose help names that
+payload or element. When a derived conformance is rejected because a member's own conformance is, only
+the member's is reported.
 
 #### 20.13.6 Cost
 

@@ -2795,36 +2795,37 @@ private:
         // Every conformance is recorded, so answers can be cached; a rejected conformance changes them, so the
         // rejections are applied together at the end and the cache restarts.
         equatableCacheEnabled = true;
-        std::vector<size_t> rejected;
-        for (const auto& [subject, span, conformanceIndex] : derivedConformanceChecks) {
-            bool valid = true;
+        const auto failingMembers = [&](TypeId subject) {
+            std::vector<EquatableMember> failing;
             for (const auto& member : model->equatableMembers(subject)) {
                 if (member.type == model->typeContext.neverType()) continue;
                 std::vector<TypeId> inProgress { subject };
                 const bool conforms = satisfiesEquatable(member.type, inProgress, true);
                 equatableProvisional[1].clear();
-                if (conforms) continue;
-                valid = false;
+                if (!conforms) failing.push_back(member);
+            }
+            return failing;
+        };
+        // First every failing conformance is found, then all are marked rejected together; a rejected conformance
+        // counts as satisfied, so a member whose own conformance is the mistake is not reported a second time.
+        std::vector<size_t> rejected;
+        for (const auto& check : derivedConformanceChecks) {
+            if (!failingMembers(check.subject).empty()) rejected.push_back(check.conformance);
+        }
+        for (const auto index : rejected) model->conformanceList[index].invalid = true;
+        clearEquatableCache();
+        for (const auto& [subject, span, conformanceIndex] : derivedConformanceChecks) {
+            if (!model->conformanceList[conformanceIndex].invalid) continue;
+            for (const auto& member : failingMembers(subject)) {
                 const auto memberType = model->typeContext.displayName(member.type);
-                const auto* record = model->typeContext.type(member.type);
-                std::string help = "give '" + memberType + "' a conformance, or write 'equals(other:)' by hand";
-                if (model->isArrayRoleType(member.type) || model->typeContext.isOptional(member.type) ||
-                    model->typeContext.isResult(member.type)) {
-                    help = equatableHelp(member.type, span).value_or(help) + "; or write 'equals(other:)' by hand";
-                } else if (record != nullptr && record->kind == TypeKind::function) {
-                    help = "a function type never conforms (spec 2.3.1); write 'equals(other:)' by hand and compare "
-                           "the other members";
-                } else if (model->isDictRoleType(member.type)) {
-                    help = "a dictionary never conforms (spec 20.13.3); write 'equals(other:)' by hand";
-                }
+                const auto help = equatableHelp(member.type, span).value_or("") +
+                        "; or write 'equals(other:)' by hand";
                 report(TypeCheckingDiagnosticId::nonEquatableMember, span,
                        "'" + model->typeContext.displayName(subject) + "' cannot derive 'Equatable': its member '" +
                                member.name + "' has the type '" + memberType + "', which does not conform",
                        help);
             }
-            if (!valid) rejected.push_back(conformanceIndex);
         }
-        for (const auto index : rejected) model->conformanceList[index].invalid = true;
         clearEquatableCache();
     }
 
@@ -3197,15 +3198,9 @@ private:
                 std::optional<std::string> help;
                 if (isCopyable) {
                     if (const auto reason = model->noncopyableReason(argument)) help = *reason;
-                } else if (protocol == model->equatableProtocol() &&
-                           (model->typeContext.isOptional(argument) || model->typeContext.isResult(argument) ||
-                            model->isArrayRoleType(argument))) {
+                } else if (protocol == model->equatableProtocol()) {
+                    // Every case is explained by what would give the type equality, or why nothing can.
                     help = equatableHelp(argument, span).value_or("");
-                } else if (const auto path = protocol == model->equatableProtocol() ? nonEquatablePath(argument)
-                                                                                   : std::nullopt) {
-                    help = "'" + model->typeContext.displayName(argument) + "' derives 'Equatable', but its member '" +
-                            path->first + "' has the type '" + model->typeContext.displayName(path->second) +
-                            "', which does not conform";
                 } else if (model->typeContext.mentionsTypeParameter(argument)) {
                     help = "inside a generic function, only a type parameter whose constraint lists '" +
                             symbolName(protocol) + "' satisfies it";
@@ -5179,6 +5174,10 @@ private:
             return operandTypeStrength(
                     std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
         }
+        if (expression->kind == syntax::Kind::prefixExpr &&
+            std::static_pointer_cast<syntax::PrefixExprSyntax>(expression)->castTarget != nullptr) {
+            return 3;
+        }
         if (isNumericLiteral(expression)) return isFloatLiteral(expression) ? 2 : 1;
         if (isOpenCaseReference(expression)) return 0;
         if (expression->kind == syntax::Kind::literalExpr) {
@@ -5189,10 +5188,15 @@ private:
             const auto call = std::static_pointer_cast<syntax::CallExprSyntax>(expression);
             const auto referenced = model->referencedSymbol(call->callee);
             const auto* symbol = referenced.has_value() ? model->semanticModelValue->symbol(*referenced) : nullptr;
+            // A case or initializer of a generic type: its arguments may leave a type parameter open.
             const bool genericCase = symbol != nullptr && symbol->kind == semantic::SymbolKind::enumCase &&
                     symbol->containingSymbol.has_value() &&
                     model->genericParameters(*symbol->containingSymbol) != nullptr;
-            return genericCase ? 0 : 3;
+            const bool genericInitializer = symbol != nullptr &&
+                    ((symbol->kind == semantic::SymbolKind::structure && model->genericParameters(symbol->id) != nullptr) ||
+                     (symbol->kind == semantic::SymbolKind::synthesizedInitializer && symbol->containingSymbol.has_value() &&
+                      model->genericParameters(*symbol->containingSymbol) != nullptr));
+            return genericCase || genericInitializer ? 0 : 3;
         }
         if (expression->kind == syntax::Kind::arrayExpr) {
             int strength = 0;
@@ -5286,7 +5290,8 @@ private:
         if (record == nullptr) return std::nullopt;
         const auto name = model->typeContext.displayName(type);
         if (record->kind == TypeKind::typeParameter) {
-            return "add 'Equatable' to the constraint of '" + name + "' where it is declared";
+            return "add 'Equatable' to the constraint of '" + name + "' where it is declared (for an extension's "
+                   "parameter, in the type's own declaration)";
         }
         if (record->kind == TypeKind::function) {
             return "a function type never conforms to 'Equatable' (spec 2.3.1); compare what the functions return";
@@ -5324,6 +5329,13 @@ private:
         const auto* symbol = model->semanticModelValue->symbol(record->symbol);
         if ((record->kind == TypeKind::structure || record->kind == TypeKind::enumeration) && symbol != nullptr &&
             symbol->libraryRole == semantic::LibraryRole::none && !model->semanticModelValue->isPreludeSource(symbol->span)) {
+            if (model->equatableConformance(type) != nullptr) {
+                if (const auto path = nonEquatablePath(type)) {
+                    return "'" + name + "' derives 'Equatable', but its member '" + path->first + "' has the type '" +
+                            model->typeContext.displayName(path->second) + "', which does not conform";
+                }
+                return "'" + name + "' declares 'Equatable', but that conformance is rejected";
+            }
             if (symbol->moduleId != model->semanticModelValue->moduleOf(span)) {
                 return "'" + name + "' does not conform to 'Equatable', and only its own module can declare that "
                        "conformance (spec 20.3)";
@@ -5342,6 +5354,7 @@ private:
             bool derivable = true;
             for (const auto& member : model->equatableMembers(type)) {
                 std::vector<TypeId> inProgress { type };
+                if (member.type == model->typeContext.neverType()) continue;
                 if (!satisfiesEquatable(member.type, inProgress, true)) { derivable = false; break; }
             }
             if (lookupMember(type, "equals").has_value() || derivable) {

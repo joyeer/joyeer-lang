@@ -551,7 +551,8 @@ fixtures.
 The current IR/native pipeline intentionally leaves these to later commits:
 
 - longer-lived exclusivity beyond a single call;
-- copy-elision and ABI tuning for large aggregates;
+- copy-elision and ABI tuning for large aggregates (a derived `Equatable` witness takes both operands by value,
+  as every borrowing parameter does, so `==` on deeply nested by-value structs is slow to compile; plan 0012);
 - enum niche optimization and a stable public ABI;
 - Joyeer-specific optimization passes and an LTO policy beyond the native
   backend's explicit LLVM optimization level;
