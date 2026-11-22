@@ -209,8 +209,12 @@ types it cannot compile (0024, "Equality is rejected").
   Linux x86_64 done (Ubuntu 26.04 in WSL, GCC 15, a fresh Git clone): at 441a3d8 only the two CodeView
   equality debug compiles failed (`-gcodeview` is Windows-only), registered on Windows only in ac41037;
   at ac41037, Debug and Release each build, pass CTest 2114 of 2114 and `fern test` 7 of 7. The Windows
-  run stands, since ac41037 changes only what is registered off Windows. Not run: macOS and ARM64 (no host
-  here).
+  run stands, since ac41037 changes only what is registered off Windows. After rebasing onto main with
+  #35 to #43 (decision renumbered to 0031), at 5d75dad: Windows Debug and Release each pass CTest 2200 of
+  2200 (Debug reran Fern.Manifest, Fern.Workspace, Compression.Interoperability and three
+  E2EOptimizationEquivalence tests, Release ValidationScriptTests and Compression.Interoperability, while
+  the Linux run shared the machine) and `fern test` 7 of 7; Linux Debug and Release each pass CTest 2175 of
+  2175 and `fern test` 7 of 7. Not run: macOS and ARM64 (no host here).
 - [ ] Update `docs/impl/supported-features.md` and the implementation notes. Delete this plan when
   everything is checked.
 
