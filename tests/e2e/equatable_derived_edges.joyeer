@@ -1,0 +1,87 @@
+// Edge cases of derived `Equatable` conformances (decision 0031, spec 20.13.5): an empty struct, single-case enums,
+// `Void` members, a `deinit` struct with several fields (its hidden live flag is not a member), a noncopyable payload
+// compared by borrowing, a `String` payload whose comparison is the program's only `String ==`, a generic hand-written
+// member, a requirement call on a derived conformer, and `==` in a stored-field default.
+struct Nothing {}
+
+extension Nothing: Equatable {}
+
+enum Only {
+    One,
+}
+
+extension Only: Equatable {}
+
+enum Wrapped {
+    Value(Int),
+}
+
+extension Wrapped: Equatable {}
+
+struct Unit {
+    var tag: Int
+    var marker: Void
+}
+
+extension Unit: Equatable {}
+
+struct Resource {
+    var id: Int
+    var name: String
+    deinit() {}
+}
+
+extension Resource: Equatable {}
+
+enum Slot {
+    Held(Resource),
+    Free,
+}
+
+extension Slot: Equatable {}
+
+enum Label {
+    Text(String),
+}
+
+extension Label: Equatable {}
+
+struct Pair<T> {
+    var first: T
+}
+
+extension Pair<T>: Equatable {
+    func equals(other: Pair<T>): Bool {
+        return true
+    }
+}
+
+struct Holder {
+    var pair: Pair<Int>
+    var n: Int
+}
+
+extension Holder: Equatable {}
+
+struct Defaults {
+    var same: Bool = Wrapped.Value(1) == Wrapped.Value(1)
+}
+
+func viaRequirement<T: Equatable>(a: T, b: T): Bool {
+    return a.equals(other: b)
+}
+
+func main() {
+    print(value: Nothing() == Nothing())
+    print(value: Only.One == Only.One)
+    print(value: Wrapped.Value(1) != Wrapped.Value(2))
+    print(value: Unit(tag: 1, marker: ()) == Unit(tag: 1, marker: ()))
+    print(value: Resource(id: 1, name: "a") == Resource(id: 1, name: "a"))
+    print(value: Resource(id: 1, name: "a") == Resource(id: 1, name: "b"))
+    print(value: Slot.Held(Resource(id: 2, name: "x")) == Slot.Held(Resource(id: 2, name: "x")))
+    print(value: Slot.Held(Resource(id: 2, name: "x")) == Slot.Free)
+    print(value: Label.Text("q") == Label.Text("r"))
+    print(value: Holder(pair: Pair(first: 1), n: 5) == Holder(pair: Pair(first: 2), n: 5))
+    print(value: viaRequirement(a: Wrapped.Value(3), b: Wrapped.Value(3)))
+    print(value: Defaults().same)
+}

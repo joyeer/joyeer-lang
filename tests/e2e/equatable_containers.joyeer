@@ -1,0 +1,69 @@
+// Equality of `Optional`, `Result` and arrays (decision 0031, spec 20.13.3 items 3 and 4), the `== nil` presence
+// test on any optional (spec 20.13.4), recursive types through arrays, a noncopyable payload compared by borrowing,
+// and NaN elements with no identity shortcut.
+struct Point {
+    var x: Int
+}
+
+extension Point: Equatable {}
+
+struct Tree {
+    var value: Int
+    var kids: [Tree]
+}
+
+extension Tree: Equatable {}
+
+enum Json {
+    Number(Int),
+    List([Json]),
+}
+
+extension Json: Equatable {}
+
+struct Handle {
+    var fd: Int
+    deinit() {}
+}
+
+extension Handle: Equatable {}
+
+func square(value: Int): Int {
+    return value * value
+}
+
+func same<T: Equatable>(a: T, b: T): Bool {
+    return a == b
+}
+
+func main() {
+    let a: Int? = 1
+    let b: Int? = nil
+    print(value: a == a)
+    print(value: a == b)
+    print(value: b == nil)
+    print(value: nil != a)
+    let p: Point? = Point(x: 1)
+    print(value: p == .Some(Point(x: 1)))
+    let ok: Result<Int, String> = .Ok(3)
+    let failure: Result<Int, String> = .Err("e")
+    print(value: ok == failure)
+    print(value: failure == .Err("e"))
+    print(value: [1, 2, 3] == [1, 2, 3])
+    print(value: [1, 2] != [1, 2, 3])
+    print(value: [["a"], ["b"]] == [["a"], ["c"]])
+    let run: ((Int): Int)? = square
+    print(value: run == nil)
+    print(value: run != .None)
+    let handle: Handle? = Handle(fd: 3)
+    print(value: handle == nil)
+    print(value: handle == .Some(Handle(fd: 3)))
+    let leaf = Tree(value: 2, kids: [])
+    let tree = Tree(value: 1, kids: [leaf, Tree(value: 3, kids: [])])
+    print(value: tree == tree)
+    print(value: tree == Tree(value: 1, kids: [Tree(value: 2, kids: [])]))
+    print(value: Json.List([Json.Number(1)]) == Json.List([Json.Number(1)]))
+    print(value: same(a: [Point(x: 1)], b: [Point(x: 2)]))
+    let zero: Double = 0.0
+    print(value: [zero / zero] == [zero / zero])
+}

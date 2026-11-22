@@ -79,7 +79,6 @@ iteration, a progress log, and deletion once every item is done. Start from the
 | [0008](plan/0008-runtime-in-joyeer.md) | The plan to write the whole runtime in Joyeer: definition of done, the core dialect, open design decisions, capabilities, phases and acceptance gates |
 | [0009](plan/0009-concurrency.md) | What is left of the concurrency work (tasks, channels and the worker-pool server are done): gates not yet run, compiler gaps, deferred features |
 | [0012](plan/0012-equatable.md) | `==` and `!=` through the `Equatable` protocol: builtin, derived and generic equality, `nil` comparison |
-| [0013](plan/0013-ir-opcode-set.md) | Decision 0028 in stages: an opcode descriptor table, merged families, String out of the scalar opcodes, dense numbering |
 
 ## Decisions
 
@@ -119,6 +118,7 @@ in the spec.
 | [0028](decisions/0028-ir-opcode-set.md) | A smaller IR opcode set described by one table (accepted, in implementation) |
 | [0029](decisions/0029-contracts-and-owned-host-resources.md) | Prelude contracts, host queries and clocks, and noncopyable native resource owners |
 | [0030](decisions/0030-literal-patterns-are-not-promoted.md) | Literal patterns match only their own type; no implicit Optional promotion (accepted, implemented) |
+| [0031](decisions/0031-equatable.md) | Equality through a compiler-known `Equatable` protocol: opt-in derived conformances, `== nil` presence test (accepted, implemented; acceptance gates open) |
 
 ## Conventions
 

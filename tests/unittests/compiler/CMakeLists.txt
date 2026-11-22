@@ -334,6 +334,44 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "llvm-backend;debug-info;optimization"
     )
 
+    # Derived Equatable witnesses call other witnesses; every such call carries a debug location (decision 0031). The
+    # container fixture adds witnesses located in the role prelude and the presence test.
+    foreach(variant IN ITEMS "O0Dwarf;-O0;-gdwarf" "O2Dwarf;-O2;-gdwarf" "O0CodeView;-O0;-gfull;-gcodeview")
+        list(GET variant 0 suffix)
+        # CodeView is a Windows native format: the compiler rejects -gcodeview elsewhere.
+        if(suffix STREQUAL "O0CodeView" AND NOT WIN32)
+            continue()
+        endif()
+        list(SUBLIST variant 1 -1 arguments)
+        list(JOIN arguments ";" compiler_arguments)
+        add_test(NAME LLVMBackendContainerEqualityDebug${suffix}Validation
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DCLANG=${JOYEER_CLANG_EXECUTABLE}
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/equatable_containers.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-container-equality-${suffix}.ll
+                        "-DCOMPILER_ARGS=${compiler_arguments}"
+                        "-DEXPECTED_IR_PATTERNS=!llvm.dbg.cu;!DILocation"
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyCompilerLLVMOutput.cmake
+        )
+        set_tests_properties(LLVMBackendContainerEqualityDebug${suffix}Validation PROPERTIES
+                LABELS "llvm-backend;debug-info;equatable"
+        )
+        add_test(NAME LLVMBackendDerivedEqualityDebug${suffix}Validation
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DCLANG=${JOYEER_CLANG_EXECUTABLE}
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/equatable_derived.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-derived-equality-${suffix}.ll
+                        "-DCOMPILER_ARGS=${compiler_arguments}"
+                        "-DEXPECTED_IR_PATTERNS=!llvm.dbg.cu;!DILocation"
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyCompilerLLVMOutput.cmake
+        )
+        set_tests_properties(LLVMBackendDerivedEqualityDebug${suffix}Validation PROPERTIES
+                LABELS "llvm-backend;debug-info;equatable"
+        )
+    endforeach()
+
     add_test(NAME LLVMBackendCompilerFullDebugValidation
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
@@ -1483,6 +1521,119 @@ false
 true
 "
             0 1 2 3)
+    # Equality through `Equatable` (decision 0031, plan 0012 phase 2): builtin conformers, hand-written witnesses
+    # and generic `==`, one expected output at every level.
+    add_joyeer_native_regression(
+            E2EEquatableBuiltins equatable_builtins
+            "true
+true
+true
+false
+false
+true
+true
+false
+true
+false
+true
+false
+true
+true
+true
+false
+true
+true
+"
+            0 1 2 3)
+    # Witness instances of generic conformances, temporary operands and Void operands (decision 0031).
+    add_joyeer_native_regression(
+            E2EEquatableWitnessInstances equatable_witness_instances
+            "true
+false
+true
+false
+false
+left
+right
+true
+2
+1
+"
+            0 1 2 3)
+    # Derived Equatable conformances (decision 0031, plan 0012 phase 3).
+    add_joyeer_native_regression(
+            E2EEquatableDerived equatable_derived
+            "true
+true
+true
+false
+true
+false
+false
+false
+true
+false
+1
+false
+4
+5
+true
+"
+            0 1 2 3)
+    # Edge cases of derived Equatable conformances (decision 0031, plan 0012 phase 3 review).
+    add_joyeer_native_regression(
+            E2EEquatableDerivedEdges equatable_derived_edges
+            "true
+true
+true
+true
+true
+false
+true
+false
+false
+true
+true
+true
+"
+            0 1 2 3)
+    # Optional, Result and array equality, the presence test and recursive types (decision 0031, plan 0012 phase 4).
+    add_joyeer_native_regression(
+            E2EEquatableContainers equatable_containers
+            "true
+false
+true
+true
+true
+false
+true
+true
+true
+false
+false
+true
+false
+true
+true
+false
+true
+false
+false
+"
+            0 1 2 3)
+    # Equality borrows: noncopyable array elements and a compared temporary are each destroyed once (decision 0031).
+    add_joyeer_native_regression(
+            E2EEquatableOwnership equatable_ownership
+            "3
+1
+2
+1
+false
+false
+end
+7
+"
+            0 1 2 3)
     # String operations through the collections prelude's String roles (decision 0028 stage 3), one expected
     # output at every level.
     add_joyeer_native_regression(
@@ -1889,6 +2040,14 @@ set_tests_properties(TypeOptionalEqualityRejected TypeResultEqualityRejected Typ
         LABELS "type-checking;regression;library-containers")
 add_joyeer_rejected_regression(TypeNilPatternNotOptionalRejected type-checking
         nil_pattern_not_optional type-checking.type-mismatch)
+add_joyeer_rejected_regression(TypeGenericEqualityUnconstrained type-checking
+        generic_equality_unconstrained type-checking.invalid-operator-operands)
+add_joyeer_rejected_regression(TypeEquatableLinear type-checking
+        equatable_linear type-checking.invalid-conformance)
+add_joyeer_rejected_regression(TypeEquatableDerivedMember type-checking
+        equatable_derived_member type-checking.non-equatable-member)
+set_tests_properties(TypeGenericEqualityUnconstrained TypeEquatableLinear TypeEquatableDerivedMember PROPERTIES
+        LABELS "type-checking;regression;equatable")
 add_joyeer_rejected_regression(TypeRegressionConditionalExclusivity type-checking
         regression_type_conditional_exclusivity type-checking.overlapping-access)
 add_joyeer_rejected_regression(TypeRegressionReceiverExclusivity type-checking

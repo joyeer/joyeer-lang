@@ -336,6 +336,7 @@ enum class TypeCheckingDiagnosticId {
     instantiationLimit,
     unauthorizedIntrinsic,
     invalidPrelude,
+    nonEquatableMember,
 };
 
 // A conformance of a concrete type to a protocol (spec 20.3), with the witness of each requirement.
@@ -344,6 +345,18 @@ struct Conformance {
     semantic::SymbolId protocol = semantic::invalidSymbolId;
     std::unordered_map<semantic::SymbolId, semantic::SymbolId> witnesses;
     SourceSpan span;
+    // A derived `Equatable` conformance (decision 0031, spec 20.13.5): no witness method; it holds for an instance
+    // when every member conforms.
+    bool derived = false;
+    // A derived conformance rejected at its extension: it counts as satisfied afterwards, so the one mistake is
+    // reported once.
+    bool invalid = false;
+};
+
+// A stored field, or a payload of an enum case, that a derived `Equatable` conformance compares.
+struct EquatableMember {
+    std::string name;
+    TypeId type = invalidTypeId;
 };
 
 // A call of a generic function, with its inferred type arguments in parameter order. Inside another
@@ -458,6 +471,25 @@ public:
     // The protocols a type parameter is constrained to, `Copyable` included.
     [[nodiscard]] const std::vector<semantic::SymbolId>& constraints(semantic::SymbolId typeParameter) const;
     [[nodiscard]] std::optional<semantic::SymbolId> copyableProtocol() const;
+    // The prelude protocol bound to `==` and `!=` by the `equatable` role, and its `equals` requirement
+    // (decision 0031, spec 20.13). Absent when the role prelude does not declare it.
+    [[nodiscard]] std::optional<semantic::SymbolId> equatableProtocol() const;
+    [[nodiscard]] std::optional<semantic::SymbolId> equatableRequirement() const;
+    // The compiler's own conformers (spec 20.13.3, item 1): the integer types, `Bool`, `UInt8`, `Float`,
+    // `Double`, `String` and `Void`. Their `==` is a builtin operation, never a witness call.
+    [[nodiscard]] bool isBuiltinEquatable(TypeId type) const;
+    // The `Equatable` conformance that covers `type`, if any, and whether it is derived (spec 20.13.5).
+    [[nodiscard]] const Conformance* equatableConformance(TypeId type) const;
+    [[nodiscard]] bool isDerivedEquatable(TypeId type) const;
+    // The members a derived conformance compares, in order: a struct's stored fields, or every payload of every case
+    // of an enum. Their types are `type`'s instance of the declared ones.
+    [[nodiscard]] std::vector<EquatableMember> equatableMembers(TypeId type) const;
+    // The concrete types whose derived `Equatable` witness the program needs, found with the instances.
+    [[nodiscard]] const std::vector<TypeId>& derivedEqualities() const { return derivedEqualityList; }
+    // The collections prelude's `array_equal` function, whose instance for `X` is the witness of `[X]`.
+    [[nodiscard]] std::optional<semantic::SymbolId> arrayEqualFunction() const { return arrayEqualSymbol; }
+    // Whether `node` is a presence test `x == nil` (spec 20.13.4), and whether its `nil` is on the left.
+    [[nodiscard]] std::optional<bool> presenceTest(const syntax::NodePtr& node) const;
     // The type argument of the layout intrinsic call `node` (spec 20.12.5), as written; it may mention
     // type parameters that each instance substitutes.
     [[nodiscard]] std::optional<TypeId> layoutIntrinsicType(const syntax::NodePtr& node) const;
@@ -519,6 +551,10 @@ private:
     // The validated String role functions of the collections prelude (decision 0028 stage 3), by role.
     std::unordered_map<semantic::LibraryRole, semantic::SymbolId> stringRoles;
     std::vector<Conformance> conformanceList;
+    std::vector<TypeId> derivedEqualityList;
+    std::optional<semantic::SymbolId> arrayEqualSymbol;
+    std::unordered_map<semantic::NodeId, bool> presenceTests;
+    std::unordered_set<TypeId> derivedEqualitySet;
     std::vector<Instance> instanceList;
     std::map<std::pair<semantic::SymbolId, std::vector<TypeId>>, size_t> instanceIndices;
 };

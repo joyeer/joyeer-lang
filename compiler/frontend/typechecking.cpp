@@ -59,6 +59,8 @@ const char* collectionRoleName(semantic::LibraryRole role) {
         case semantic::LibraryRole::stringEqual: return "string_equal";
         case semantic::LibraryRole::stringOrder: return "string_order";
         case semantic::LibraryRole::stringUtf8: return "string_utf8";
+        case semantic::LibraryRole::equatable: return "equatable";
+        case semantic::LibraryRole::arrayEqual: return "array_equal";
         default: return "unknown";
     }
 }
@@ -979,6 +981,102 @@ bool TypeCheckedModel::isValueDiscarded(const syntax::NodePtr& node) const {
     return id.has_value() && discardedValues.contains(*id);
 }
 
+std::optional<semantic::SymbolId> TypeCheckedModel::equatableProtocol() const {
+    return semanticModelValue->roleSymbol(semantic::LibraryRole::equatable);
+}
+
+std::optional<semantic::SymbolId> TypeCheckedModel::equatableRequirement() const {
+    const auto protocol = equatableProtocol();
+    const auto* symbol = protocol.has_value() ? semanticModelValue->symbol(*protocol) : nullptr;
+    if (symbol == nullptr || !symbol->memberScope.has_value()) return std::nullopt;
+    const auto* members = semanticModelValue->scope(*symbol->memberScope);
+    if (members == nullptr) return std::nullopt;
+    const auto found = members->values.find("equals");
+    if (found == members->values.end()) return std::nullopt;
+    return found->second;
+}
+
+bool TypeCheckedModel::isBuiltinEquatable(TypeId type) const {
+    const auto* record = typeContext.type(type);
+    if (record == nullptr) return false;
+    switch (record->kind) {
+        case TypeKind::voidType:
+        case TypeKind::integer:
+        case TypeKind::boolean:
+        case TypeKind::string:
+        case TypeKind::uint8:
+        case TypeKind::int8:
+        case TypeKind::int16:
+        case TypeKind::int32:
+        case TypeKind::int64:
+        case TypeKind::uint16:
+        case TypeKind::uint32:
+        case TypeKind::uint64:
+        case TypeKind::unsignedInteger:
+        case TypeKind::float32:
+        case TypeKind::float64:
+            return true;
+        default:
+            return false;
+    }
+}
+
+const Conformance* TypeCheckedModel::equatableConformance(TypeId type) const {
+    const auto protocol = equatableProtocol();
+    if (!protocol.has_value()) return nullptr;
+    for (const auto& conformance : conformanceList) {
+        if (conformance.protocol == *protocol && conformanceSubjectMatches(conformance.type, type)) return &conformance;
+    }
+    return nullptr;
+}
+
+bool TypeCheckedModel::isDerivedEquatable(TypeId type) const {
+    const auto* conformance = equatableConformance(type);
+    return conformance != nullptr && conformance->derived;
+}
+
+std::vector<EquatableMember> TypeCheckedModel::equatableMembers(TypeId type) const {
+    std::vector<EquatableMember> members;
+    if (const auto structure = structureDeclaration(type)) {
+        for (const auto& field : structure->fields) {
+            const auto symbol = semanticModelValue->declaredSymbol(field);
+            const auto fieldType = symbol.has_value() ? typeOf(*symbol) : std::optional<TypeId>();
+            if (!fieldType.has_value()) continue;
+            const auto* fieldSymbol = semanticModelValue->symbol(*symbol);
+            members.push_back({ fieldSymbol == nullptr ? std::string() : fieldSymbol->name,
+                                memberTypeOf(type, *fieldType) });
+        }
+        return members;
+    }
+    const auto* record = typeContext.type(type);
+    if (record == nullptr || record->kind != TypeKind::enumeration) return members;
+    const auto* symbol = semanticModelValue->symbol(record->symbol);
+    if (symbol == nullptr || !symbol->declaration.has_value()) return members;
+    const auto declaration = semanticModelValue->node(*symbol->declaration);
+    if (declaration == nullptr || declaration->kind != syntax::Kind::enumDecl) return members;
+    for (const auto& enumCase : std::static_pointer_cast<syntax::EnumDeclSyntax>(declaration)->cases) {
+        const auto caseSymbol = semanticModelValue->declaredSymbol(enumCase);
+        const auto* signature = caseSymbol.has_value() ? callable(*caseSymbol) : nullptr;
+        if (signature == nullptr) continue;
+        const auto* caseInfo = semanticModelValue->symbol(*caseSymbol);
+        const auto caseName = caseInfo == nullptr ? std::string() : caseInfo->name;
+        const auto parameters = signature->parameters;
+        for (size_t index = 0; index < parameters.size(); ++index) {
+            members.push_back({ caseName + "." + std::to_string(index),
+                                memberTypeOf(type, parameters[index]) });
+        }
+    }
+    return members;
+}
+
+std::optional<bool> TypeCheckedModel::presenceTest(const syntax::NodePtr& node) const {
+    const auto id = semanticModelValue->nodeId(node);
+    if (!id.has_value()) return std::nullopt;
+    const auto found = presenceTests.find(*id);
+    if (found == presenceTests.end()) return std::nullopt;
+    return found->second;
+}
+
 std::optional<TypeId> TypeCheckedModel::layoutIntrinsicType(const syntax::NodePtr& node) const {
     const auto id = semanticModelValue->nodeId(node);
     if (!id.has_value()) return std::nullopt;
@@ -1078,6 +1176,8 @@ public:
                     checkConformances(std::static_pointer_cast<syntax::ExtensionDeclSyntax>(item));
                 }
             }
+            // Every conformance is known before a derived one is evaluated (spec 20.13.5).
+            validateDerivedConformances();
             checkPendingTypeArguments();
             for (const auto& [type, span] : enumPayloadChecks) requireNoLinearDictionary(type, span);
             validateNativeSymbols();
@@ -1116,6 +1216,24 @@ private:
         SourceSpan span;
     };
     std::vector<RequirementCall> requirementCalls;
+    // `==` on a concrete conformer other than a builtin: the witness it needs, found with the instances.
+    struct EqualityRoot {
+        TypeId type;
+        std::optional<semantic::SymbolId> caller;
+        SourceSpan span;
+    };
+    std::vector<EqualityRoot> equalityRoots;
+    struct DerivedConformanceCheck {
+        TypeId subject;
+        SourceSpan span;
+        size_t conformance;
+    };
+    std::vector<DerivedConformanceCheck> derivedConformanceChecks;
+    // Answers of `satisfiesEquatable` for derived conformers, by `assumeParameters` (see there).
+    mutable bool equatableCacheEnabled = false;
+    mutable std::unordered_set<TypeId> equatableTrue[2];
+    mutable std::unordered_set<TypeId> equatableFalse[2];
+    mutable std::unordered_set<TypeId> equatableProvisional[2];
     // While the methods of a struct, enum or extension are resolved: the type they belong to and the
     // type arguments `Self` stands for, which are the parameters in scope (spec 20.12).
     std::optional<semantic::SymbolId> selfOwner;
@@ -1234,7 +1352,40 @@ private:
         }
     }
 
+    // The `equatable` role (decision 0031): exactly one role-prelude protocol, whose one requirement is
+    // `func equals(other: Self): Bool` with a borrowing receiver and argument.
+    void validateEquatableRole() {
+        std::vector<const semantic::Symbol*> protocols;
+        for (const auto& symbol : model->semanticModelValue->symbols()) {
+            if (symbol.kind == semantic::SymbolKind::protocol && symbol.libraryRole == semantic::LibraryRole::equatable &&
+                model->semanticModelValue->isPreludeSource(symbol.span)) {
+                protocols.push_back(&symbol);
+            }
+        }
+        for (size_t index = 1; index < protocols.size(); ++index) {
+            report(TypeCheckingDiagnosticId::invalidPrelude, protocols[index]->span,
+                   "the compiler prelude declares a second protocol for the equatable role");
+        }
+        if (protocols.empty()) return;
+        const auto protocol = protocols.front()->id;
+        const auto requirements = requirementsOf(protocol);
+        // `Self` in a requirement is the type parameter whose symbol is the protocol (spec 20.2).
+        const auto self = model->typeContext.typeParameterType(protocol);
+        const auto shape = requirements.size() == 1 && symbolName(requirements.front()) == "equals"
+                ? methodShape(requirements.front(), {}) : std::nullopt;
+        const bool shaped = shape.has_value() && shape->receiver == syntax::AccessEffect::borrowing &&
+                shape->parameters == std::vector<TypeId> { self } &&
+                shape->labels == std::vector<std::optional<std::string>> { std::string("other") } &&
+                shape->effects == std::vector<syntax::AccessEffect> { syntax::AccessEffect::borrowing } &&
+                shape->result == model->typeContext.boolType();
+        if (!shaped) {
+            report(TypeCheckingDiagnosticId::invalidPrelude, protocols.front()->span,
+                   "the equatable role requires exactly the requirement 'func equals(other: Self): Bool'");
+        }
+    }
+
     void validatePreludeContracts() {
+        validateEquatableRole();
         const auto isRoleType = [&](TypeId id, semantic::LibraryRole role) {
             const auto* type = model->typeContext.type(id);
             const auto* symbol = type == nullptr ? nullptr : model->semanticModelValue->symbol(type->symbol);
@@ -1691,6 +1842,46 @@ private:
                     }
                     break;
                 }
+                case semantic::LibraryRole::arrayEqual: {
+                    // `private func name<T: Equatable>(left: [T], right: [T]): Bool` with a body (decision 0031).
+                    const auto* parameters = model->genericParameters(symbol.id);
+                    const auto* signature = model->callable(symbol.id);
+                    const auto function = symbol.kind == semantic::SymbolKind::function && node != nullptr &&
+                            node->kind == syntax::Kind::functionDecl
+                            ? std::static_pointer_cast<syntax::FunctionDeclSyntax>(node) : nullptr;
+                    bool shaped = function != nullptr && function->body != nullptr && parameters != nullptr &&
+                            parameters->size() == 1 && symbol.callable.has_value() && signature != nullptr &&
+                            symbol.callable->parameters.size() == 2 && signature->parameters.size() == 2 &&
+                            symbol.visibility == syntax::Visibility::private_ &&
+                            signature->result == model->typeContext.boolType();
+                    if (shaped) {
+                        const auto equatable = model->equatableProtocol();
+                        const auto& constraints = model->constraints((*parameters)[0]);
+                        const auto element = model->typeContext.typeParameterType((*parameters)[0]);
+                        shaped = equatable.has_value() &&
+                                std::find(constraints.begin(), constraints.end(), *equatable) != constraints.end();
+                        for (size_t index = 0; shaped && index < 2; ++index) {
+                            const auto& parameter = symbol.callable->parameters[index];
+                            const auto* array = model->typeContext.type(signature->parameters[index]);
+                            shaped = parameter.access == syntax::AccessEffect::borrowing &&
+                                    parameter.label == std::optional<std::string>(index == 0 ? "left" : "right") &&
+                                    model->isArrayRoleType(signature->parameters[index]) && array != nullptr &&
+                                    array->arguments.size() == 1 && array->arguments[0] == element;
+                        }
+                    }
+                    if (!shaped) {
+                        roleFailure = "the array_equal role requires 'private func name<T: Equatable>(left: [T], "
+                                      "right: [T]): Bool'";
+                        break;
+                    }
+                    if (model->arrayEqualSymbol.has_value()) {
+                        report(TypeCheckingDiagnosticId::invalidPrelude, symbol.span,
+                               "the compiler prelude declares a second function for the array_equal role");
+                    }
+                    model->arrayEqualSymbol = symbol.id;
+                    matches = true;
+                    break;
+                }
                 case semantic::LibraryRole::none:
                     break;
             }
@@ -2133,6 +2324,7 @@ private:
                 report(TypeCheckingDiagnosticId::reservedProtocolName, parameter->name->span,
                        "'Copyable' is reserved for the builtin protocol (spec 20.5)");
             }
+            rejectEquatableName(parameter->name);
             std::vector<semantic::SymbolId> protocols;
             for (const auto& constraint : parameter->constraints) {
                 if (!checkProtocolReference(constraint)) continue;
@@ -2207,10 +2399,24 @@ private:
         return first;
     }
 
+    // `Equatable` names the prelude protocol in every constraint (spec 20.2, 20.13): no user type or type parameter
+    // may take the name. The role-bound protocol declaration is the one exemption (`resolveProtocol`).
+    void rejectEquatableName(const Token::Ptr& name) {
+        if (name == nullptr || name->rawValue != "Equatable") return;
+        report(TypeCheckingDiagnosticId::reservedProtocolName, name->span,
+               "'Equatable' is reserved for the protocol of '==' and '!=' (spec 20.13)",
+               "choose another name; 'Equatable' in a constraint always means the prelude protocol");
+    }
+
     void resolveProtocol(const syntax::ProtocolDeclSyntax::Ptr& declaration) {
         const auto name = declaration->name == nullptr ? std::string() : declaration->name->rawValue;
-        if (name == "Copyable" || name == "Display" || name == "Equatable" || name == "Comparable" ||
-            name == "Any") {
+        const auto declared = model->semanticModelValue->declaredSymbol(declaration);
+        const auto* declaredSymbol = declared.has_value() ? symbolOf(*declared) : nullptr;
+        const bool roleBound = declaredSymbol != nullptr &&
+                declaredSymbol->libraryRole == semantic::LibraryRole::equatable &&
+                model->semanticModelValue->isPreludeSource(declaration->span);
+        if ((name == "Copyable" || name == "Display" || name == "Equatable" || name == "Comparable" ||
+             name == "Any") && !roleBound) {
             report(TypeCheckingDiagnosticId::reservedProtocolName,
                    declaration->name == nullptr ? declaration->span : declaration->name->span,
                    "'" + name + "' is reserved and cannot be declared (spec 20.2)",
@@ -2402,6 +2608,14 @@ private:
                 continue;
             }
             listed.push_back(*referenced);
+            if (const auto equatable = model->equatableProtocol();
+                equatable.has_value() && *referenced == *equatable && model->isLinear(subject)) {
+                report(TypeCheckingDiagnosticId::invalidConformance, conformance->span,
+                       "the linear type '" + typeSymbol->name + "' cannot conform to 'Equatable' (spec 20.13.3)",
+                       "a linear value must be ended exactly once, and its value equality has no meaning; compare "
+                       "a field instead");
+                continue;
+            }
             if (module != typeSymbol->moduleId && module != protocol->moduleId) {
                 report(TypeCheckingDiagnosticId::orphanConformance, conformance->span,
                        "a conformance of '" + typeSymbol->name + "' to '" + protocol->name +
@@ -2420,6 +2634,15 @@ private:
                        { sourceNote(duplicate->span, "the first conformance is here") });
                 continue;
             }
+            // With no member named `equals`, an `Equatable` conformance is derived (spec 20.13.3, 20.13.5).
+            if (const auto equatable = model->equatableProtocol();
+                equatable.has_value() && *referenced == *equatable && !lookupMember(*extended, "equals").has_value()) {
+                Conformance derived { subject, *referenced, {}, conformance->span };
+                derived.derived = true;
+                model->conformanceList.push_back(std::move(derived));
+                derivedConformanceChecks.push_back({ subject, conformance->span, model->conformanceList.size() - 1 });
+                continue;
+            }
             Conformance result { subject, *referenced, {}, conformance->span };
             const auto conformanceVisibility = std::min(protocol->visibility, typeSymbol->visibility);
             const std::unordered_map<semantic::SymbolId, TypeId> self { { *referenced, subject } };
@@ -2431,9 +2654,12 @@ private:
                     report(TypeCheckingDiagnosticId::missingWitness, conformance->span,
                            "'" + typeSymbol->name + "' does not implement '" + requirementTitle(requirement) +
                                    "' required by '" + protocol->name + "'",
-                           witnessSymbol != nullptr
+                           witnessSymbol == nullptr
+                                   ? std::optional<std::string>("declare the method in this extension")
+                                   : witnessSymbol->kind == semantic::SymbolKind::builtinMember
                                    ? std::optional<std::string>("a builtin member is not a declared method and cannot be a witness")
-                                   : std::optional<std::string>("declare the method in this extension"));
+                                   : std::optional<std::string>("'" + witnessSymbol->name + "' is not a method, and only "
+                                                                "a declared method can be a witness; rename it"));
                     valid = false;
                     continue;
                 }
@@ -2477,6 +2703,132 @@ private:
         }
     }
 
+    // Whether `type` conforms to `Equatable` (spec 20.13.3, 20.13.5). A derived conformance holds when every member
+    // conforms; while a type is being decided, a nested question about it is answered yes, so recursive types
+    // terminate (nothing provisional is cached). A type parameter conforms when its constraint lists `Equatable`, or,
+    // with `assumeParameters`, always: that asks whether the type can conform for some arguments.
+    bool satisfiesEquatable(TypeId type, std::vector<TypeId>& inProgress, bool assumeParameters) const {
+        if (type == model->typeContext.errorType()) return true;
+        if (model->isBuiltinEquatable(type)) return true;
+        const auto* record = model->typeContext.type(type);
+        if (record == nullptr) return false;
+        if (record->kind == TypeKind::typeParameter) {
+            if (assumeParameters) return true;
+            const auto& protocols = model->constraints(record->symbol);
+            const auto equatable = model->equatableProtocol();
+            return equatable.has_value() && std::find(protocols.begin(), protocols.end(), *equatable) != protocols.end();
+        }
+        // `[X]` conforms when `X` does, through the `array_equal` witness (spec 20.13.3, item 4).
+        if (model->isArrayRoleType(type)) {
+            const auto arguments = record->arguments;
+            return model->arrayEqualFunction().has_value() && !arguments.empty() &&
+                    satisfiesEquatable(arguments[0], inProgress, assumeParameters);
+        }
+        if (model->isDictRoleType(type)) return false;
+        const bool genericType = !record->arguments.empty() &&
+                (record->kind == TypeKind::structure || record->kind == TypeKind::enumeration);
+        if (model->typeContext.mentionsTypeParameter(type) && !genericType) return false;
+        const auto* conformance = model->equatableConformance(type);
+        if (conformance == nullptr) return false;
+        if (!conformance->derived || conformance->invalid) return true;
+        if (std::find(inProgress.begin(), inProgress.end(), type) != inProgress.end()) return true;
+        // Once every conformance is known, `false` is cached for good: it holds whatever is assumed. `true` is kept
+        // provisionally and kept for good only when the outermost question (asked with nothing in progress) is
+        // answered yes, since it may rest on an assumption about a type in progress.
+        const auto mode = assumeParameters ? 1 : 0;
+        const bool outermost = inProgress.empty();
+        if (equatableCacheEnabled) {
+            if (equatableFalse[mode].contains(type)) return false;
+            if (equatableTrue[mode].contains(type) || equatableProvisional[mode].contains(type)) return true;
+        }
+        inProgress.push_back(type);
+        bool conforms = true;
+        for (const auto& member : model->equatableMembers(type)) {
+            // `Never` has no value, so a member of that type never compares (spec 20.13.5).
+            if (member.type == model->typeContext.neverType()) continue;
+            if (!satisfiesEquatable(member.type, inProgress, assumeParameters)) { conforms = false; break; }
+        }
+        inProgress.pop_back();
+        if (equatableCacheEnabled) {
+            if (!conforms) equatableFalse[mode].insert(type);
+            else equatableProvisional[mode].insert(type);
+            if (outermost) {
+                if (conforms) equatableTrue[mode].insert(equatableProvisional[mode].begin(), equatableProvisional[mode].end());
+                equatableProvisional[mode].clear();
+            }
+        }
+        return conforms;
+    }
+
+    void clearEquatableCache() const {
+        for (int mode = 0; mode < 2; ++mode) {
+            equatableTrue[mode].clear();
+            equatableFalse[mode].clear();
+            equatableProvisional[mode].clear();
+        }
+    }
+
+    // The first member path of a derived conformer that keeps it from conforming, and that member's type:
+    // `value.run` and `(Int): Int` for a `Box<Holder>` whose `Holder` has a function field.
+    std::optional<std::pair<std::string, TypeId>> nonEquatablePath(TypeId type, size_t depth = 0) const {
+        const auto* conformance = model->equatableConformance(type);
+        if (conformance == nullptr || !conformance->derived || conformance->invalid) return std::nullopt;
+        for (const auto& member : model->equatableMembers(type)) {
+            if (member.type == model->typeContext.neverType()) continue;
+            std::vector<TypeId> inProgress { type };
+            const bool conforms = satisfiesEquatable(member.type, inProgress, false);
+            equatableProvisional[0].clear();
+            if (conforms) continue;
+            if (member.type != type && depth < 32) {
+                if (const auto inner = nonEquatablePath(member.type, depth + 1)) {
+                    return std::pair { member.name + "." + inner->first, inner->second };
+                }
+            }
+            return std::pair { member.name, member.type };
+        }
+        return std::nullopt;
+    }
+
+    // A derived conformance whose member can never conform, for any type arguments, is rejected at its extension
+    // (spec 20.13.5); one that conforms only for some arguments is checked where it is used.
+    void validateDerivedConformances() {
+        // Every conformance is recorded, so answers can be cached; a rejected conformance changes them, so the
+        // rejections are applied together at the end and the cache restarts.
+        equatableCacheEnabled = true;
+        const auto failingMembers = [&](TypeId subject) {
+            std::vector<EquatableMember> failing;
+            for (const auto& member : model->equatableMembers(subject)) {
+                if (member.type == model->typeContext.neverType()) continue;
+                std::vector<TypeId> inProgress { subject };
+                const bool conforms = satisfiesEquatable(member.type, inProgress, true);
+                equatableProvisional[1].clear();
+                if (!conforms) failing.push_back(member);
+            }
+            return failing;
+        };
+        // First every failing conformance is found, then all are marked rejected together; a rejected conformance
+        // counts as satisfied, so a member whose own conformance is the mistake is not reported a second time.
+        std::vector<size_t> rejected;
+        for (const auto& check : derivedConformanceChecks) {
+            if (!failingMembers(check.subject).empty()) rejected.push_back(check.conformance);
+        }
+        for (const auto index : rejected) model->conformanceList[index].invalid = true;
+        clearEquatableCache();
+        for (const auto& [subject, span, conformanceIndex] : derivedConformanceChecks) {
+            if (!model->conformanceList[conformanceIndex].invalid) continue;
+            for (const auto& member : failingMembers(subject)) {
+                const auto memberType = model->typeContext.displayName(member.type);
+                const auto help = equatableHelp(member.type, span).value_or("") +
+                        "; or write 'equals(other:)' by hand";
+                report(TypeCheckingDiagnosticId::nonEquatableMember, span,
+                       "'" + model->typeContext.displayName(subject) + "' cannot derive 'Equatable': its member '" +
+                               member.name + "' has the type '" + memberType + "', which does not conform",
+                       help);
+            }
+        }
+        clearEquatableCache();
+    }
+
     // Whether `type` satisfies `protocol` (spec 20.4.2). Inside a generic body a type that mentions
     // a parameter satisfies a user protocol only when it is that parameter and its constraint
     // lists the protocol.
@@ -2484,6 +2836,11 @@ private:
         if (type == model->typeContext.errorType()) return true;
         const auto copyable = model->copyableProtocol();
         if (copyable.has_value() && protocol == *copyable) return model->isCopyable(type);
+        const auto equatable = model->equatableProtocol();
+        if (equatable.has_value() && protocol == *equatable) {
+            std::vector<TypeId> inProgress;
+            return satisfiesEquatable(type, inProgress, false);
+        }
         const auto* record = model->typeContext.type(type);
         if (record == nullptr) return false;
         if (record->kind == TypeKind::typeParameter) {
@@ -2841,6 +3198,9 @@ private:
                 std::optional<std::string> help;
                 if (isCopyable) {
                     if (const auto reason = model->noncopyableReason(argument)) help = *reason;
+                } else if (protocol == model->equatableProtocol()) {
+                    // Every case is explained by what would give the type equality, or why nothing can.
+                    help = equatableHelp(argument, span).value_or("");
                 } else if (model->typeContext.mentionsTypeParameter(argument)) {
                     help = "inside a generic function, only a type parameter whose constraint lists '" +
                             symbolName(protocol) + "' satisfies it";
@@ -3117,6 +3477,54 @@ private:
         for (const auto* call : roots) {
             if (!require(*call, call->arguments, std::nullopt)) return;
         }
+        // The witness `==` needs on a concrete type (decision 0031): an instance of a generic hand-written witness,
+        // or a derived witness, which needs its members' witnesses in turn.
+        const auto equatableRequirement = model->equatableRequirement();
+        std::function<bool(TypeId, std::optional<semantic::SymbolId>, SourceSpan, std::optional<size_t>)>
+                requireEquality = [&](TypeId type, std::optional<semantic::SymbolId> caller, SourceSpan span,
+                                      std::optional<size_t> requiredBy) -> bool {
+            if (!equatableRequirement.has_value() || model->isBuiltinEquatable(type) ||
+                model->typeContext.mentionsTypeParameter(type)) {
+                return true;
+            }
+            if (model->isArrayRoleType(type)) {
+                // The instance's own `==` on its element reaches the element's witness.
+                const auto function = model->arrayEqualFunction();
+                const auto* record = model->typeContext.type(type);
+                if (!function.has_value() || record == nullptr || record->arguments.empty()) return true;
+                const std::vector<TypeId> arguments { record->arguments[0] };
+                return require(GenericCall { *function, arguments, caller, span }, arguments, requiredBy);
+            }
+            const auto* conformance = model->equatableConformance(type);
+            if (conformance == nullptr) return true;
+            if (!conformance->derived) {
+                const auto found = conformance->witnesses.find(*equatableRequirement);
+                const auto* receiver = model->typeContext.type(type);
+                if (found == conformance->witnesses.end() || receiver == nullptr || receiver->arguments.empty() ||
+                    model->genericParameters(found->second) == nullptr) {
+                    return true;
+                }
+                const auto witness = found->second;
+                const auto arguments = receiver->arguments;
+                return require(GenericCall { witness, arguments, caller, span }, arguments, requiredBy);
+            }
+            if (!model->derivedEqualitySet.insert(type).second) return true;
+            model->derivedEqualityList.push_back(type);
+            for (const auto& member : model->equatableMembers(type)) {
+                if (member.type == model->typeContext.neverType()) continue;
+                if (!requireEquality(member.type, caller, span, requiredBy)) return false;
+            }
+            return true;
+        };
+        // A root in a generic body is reached only when that body is instantiated (spec 20.6).
+        std::unordered_map<semantic::SymbolId, std::vector<const EqualityRoot*>> equalityRootsIn;
+        for (const auto& root : equalityRoots) {
+            if (root.caller.has_value() && model->genericParameters(*root.caller) != nullptr) {
+                equalityRootsIn[*root.caller].push_back(&root);
+                continue;
+            }
+            if (!requireEquality(root.type, root.caller, root.span, std::nullopt)) return;
+        }
         // The `deinit` of every concrete instance of a generic struct is an instance too (spec 20.12);
         // finding one can intern new types, so the two are run until neither adds anything.
         const auto requireDeinitInstances = [&]() -> std::optional<bool> {
@@ -3208,6 +3616,10 @@ private:
                 if (requirementCall.caller != function) continue;
                 const auto concrete = model->typeContext.substitute(
                         requirementCall.base, model->instanceList[index].substitution);
+                if (equatableRequirement.has_value() && requirementCall.requirement == *equatableRequirement) {
+                    if (!requireEquality(concrete, function, requirementCall.span, index)) return;
+                    continue;
+                }
                 const auto witness = model->witness(concrete, requirementCall.requirement);
                 const auto* receiver = model->typeContext.type(concrete);
                 if (!witness.has_value() || receiver == nullptr || receiver->arguments.empty() ||
@@ -3216,6 +3628,11 @@ private:
                 }
                 const GenericCall call { *witness, receiver->arguments, function, requirementCall.span };
                 if (!require(call, receiver->arguments, index)) return;
+            }
+            if (const auto found = equalityRootsIn.find(function); found != equalityRootsIn.end()) {
+                for (const auto* root : found->second) {
+                    if (!requireEquality(root->type, function, root->span, index)) return;
+                }
             }
         }
         internInstanceTypes();
@@ -3620,9 +4037,19 @@ private:
         const auto owner = model->semanticModelValue->referencedSymbol(declaration->extendedType);
         if (!owner.has_value()) return;
         const auto* ownerSymbol = symbolOf(*owner);
+        // The one extension the role enums admit is the empty `Equatable` conformance (decision 0031, amending 0024).
+        const auto onlyEquatable = [&]() {
+            const auto equatable = model->equatableProtocol();
+            if (!equatable.has_value() || !declaration->methods.empty() || declaration->conformances.size() != 1) {
+                return false;
+            }
+            return model->semanticModelValue->referencedSymbol(declaration->conformances.front()) == equatable;
+        };
+        const bool roleEnum = ownerSymbol != nullptr &&
+                (ownerSymbol->libraryRole == semantic::LibraryRole::optional ||
+                 ownerSymbol->libraryRole == semantic::LibraryRole::result);
         if (ownerSymbol != nullptr &&
-            (ownerSymbol->libraryRole == semantic::LibraryRole::optional ||
-             ownerSymbol->libraryRole == semantic::LibraryRole::result ||
+            ((roleEnum && !onlyEquatable()) ||
              ownerSymbol->libraryRole == semantic::LibraryRole::arrayType ||
              ownerSymbol->libraryRole == semantic::LibraryRole::dictType ||
              ownerSymbol->libraryRole == semantic::LibraryRole::dictEntry) &&
@@ -3700,6 +4127,7 @@ private:
     void resolveStructure(const syntax::StructDeclSyntax::Ptr& declaration) {
         const auto structure = model->semanticModelValue->declaredSymbol(declaration);
         if (!structure.has_value()) return;
+        rejectEquatableName(declaration->name);
         for (const auto& attribute : declaration->attributes) {
             const auto name = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
             if ((name == "compiler_role" || name == "compiler_transfer") &&
@@ -3747,6 +4175,7 @@ private:
     void resolveEnumeration(const syntax::EnumDeclSyntax::Ptr& declaration) {
         const auto enumeration = model->semanticModelValue->declaredSymbol(declaration);
         if (!enumeration.has_value()) return;
+        rejectEquatableName(declaration->name);
         for (const auto& attribute : declaration->attributes) {
             const auto name = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
             if ((name == "compiler_role" || name == "compiler_transfer") &&
@@ -4558,6 +4987,13 @@ private:
         return kind == decimalLiteral || kind == floatLiteral;
     }
 
+    // Whether `type` conforms to `Equatable` (spec 20.13.3). Without the prelude protocol only the builtin
+    // conformers do.
+    bool isEquatable(TypeId type) const {
+        const auto equatable = model->equatableProtocol();
+        return equatable.has_value() ? satisfies(type, *equatable) : model->isBuiltinEquatable(type);
+    }
+
     // Result type of `left op right`, or nullopt if the operands are invalid.
     std::optional<TypeId> binaryResult(TokenKind op, TypeId left, TypeId right) {
         switch (op) {
@@ -4595,18 +5031,9 @@ private:
                 break;
             case equalEqual:
             case notEqual:
-                // A noncopyable value (a task handle, a handle with `deinit`) cannot be compared: the
-                // comparison would have to copy it.
-                // Function types have no equality: identity is not stable across optimization
-                // (spec 2.3.1).
-                if (left == right && left != model->typeContext.voidType() && model->isCopyable(left) &&
-                    !containsFunctionType(left) &&
-                    !model->typeContext.mentionsTypeParameter(left) &&
-                    model->typeContext.type(left) != nullptr &&
-                    model->typeContext.type(left)->kind != TypeKind::enumeration &&
-                    model->typeContext.type(left)->kind != TypeKind::structure) {
-                    return model->typeContext.boolType();
-                }
+                // Equality is defined through `Equatable` (decision 0031, spec 20.13): both operands have one
+                // type that conforms. Equality only borrows, so a noncopyable conformer compares too.
+                if (left == right && isEquatable(left)) return model->typeContext.boolType();
                 break;
             case andAnd:
             case orOr:
@@ -4631,6 +5058,41 @@ private:
             // The shifted value takes the contextual type; the count is independent.
             left = checkExpression(expression->left, expected).value_or(model->typeContext.errorType());
             right = checkExpression(expression->right).value_or(model->typeContext.errorType());
+        } else if (expression->op != nullptr &&
+                   (expression->op->kind == equalEqual || expression->op->kind == notEqual)) {
+            // `x == nil` and `x == .None` on an optional test presence, whatever the payload (spec 20.13.4).
+            const bool leftAbsent = isAbsentLiteral(expression->left);
+            if (leftAbsent != isAbsentLiteral(expression->right)) {
+                const auto& value = leftAbsent ? expression->right : expression->left;
+                const auto& absent = leftAbsent ? expression->left : expression->right;
+                const auto valueType = checkExpression(value).value_or(model->typeContext.errorType());
+                if (valueType != model->typeContext.errorType() && !model->typeContext.isOptional(valueType) &&
+                    !isContextualNone(absent)) {
+                    report(TypeCheckingDiagnosticId::invalidOperatorOperands, expression->span,
+                           "'nil' cannot be compared with a value of the type '" +
+                                   model->typeContext.displayName(valueType) + "', which is not optional",
+                           "only an optional can be absent; compare with a value of the type instead");
+                    return model->typeContext.errorType();
+                }
+                const auto absentType = checkExpression(absent, valueType).value_or(model->typeContext.errorType());
+                if (valueType == model->typeContext.errorType() || absentType == model->typeContext.errorType()) {
+                    return model->typeContext.errorType();
+                }
+                if (model->typeContext.isOptional(valueType) && absentType == valueType) {
+                    if (const auto node = model->semanticModelValue->nodeId(expression)) {
+                        model->presenceTests[*node] = leftAbsent;
+                    }
+                    return model->typeContext.boolType();
+                }
+                left = leftAbsent ? absentType : valueType;
+                right = leftAbsent ? valueType : absentType;
+            } else if (operandTypeStrength(expression->left) < operandTypeStrength(expression->right)) {
+                right = checkExpression(expression->right).value_or(model->typeContext.errorType());
+                left = checkExpression(expression->left, right).value_or(model->typeContext.errorType());
+            } else {
+                left = checkExpression(expression->left).value_or(model->typeContext.errorType());
+                right = checkExpression(expression->right, left).value_or(model->typeContext.errorType());
+            }
         } else if (isNumericLiteral(expression->left) && !isNumericLiteral(expression->right)) {
             right = checkExpression(expression->right, expected).value_or(model->typeContext.errorType());
             left = checkExpression(expression->left, right).value_or(model->typeContext.errorType());
@@ -4644,10 +5106,152 @@ private:
         }
 
         const auto op = expression->op == nullptr ? invalid : expression->op->kind;
-        if (const auto result = binaryResult(op, left, right); result.has_value()) return *result;
+        if (const auto result = binaryResult(op, left, right); result.has_value()) {
+            if ((op == equalEqual || op == notEqual) && !model->isBuiltinEquatable(left)) {
+                validateEqualityExclusivity(expression);
+                requireEqualityWitness(expression, left);
+            }
+            return *result;
+        }
 
+        if ((op == equalEqual || op == notEqual) && left == right && !model->typeContext.isOptional(left) &&
+            !model->typeContext.isResult(left)) {
+            if (const auto path = nonEquatablePath(left)) {
+                const auto* conformance = model->equatableConformance(left);
+                const auto* leaf = model->typeContext.type(path->second);
+                const auto help = leaf != nullptr && leaf->kind == TypeKind::typeParameter
+                        ? std::optional<std::string>("add 'Equatable' to the constraint of '" +
+                                                     model->typeContext.displayName(path->second) +
+                                                     "' where it is declared (for an extension's parameter, in the "
+                                                     "type's own declaration)")
+                        : std::nullopt;
+                report(TypeCheckingDiagnosticId::nonEquatableMember, expression->span,
+                       "'" + model->typeContext.displayName(left) + "' does not conform to 'Equatable': its member '" +
+                               path->first + "' has the type '" + model->typeContext.displayName(path->second) +
+                               "', which does not conform",
+                       help, std::nullopt,
+                       { sourceNote(conformance->span, "the derived conformance is declared here") });
+                return model->typeContext.errorType();
+            }
+        }
         reportInvalidOperator(expression->op, { left, right }, expression->span);
         return model->typeContext.errorType();
+    }
+
+    bool isContextualNone(const syntax::ExprPtr& expression) const {
+        if (expression == nullptr) return false;
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return isContextualNone(std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+        }
+        return expression->kind == syntax::Kind::contextualCaseExpr;
+    }
+
+    // `nil` or `.None` with no payload, in parentheses or not (spec 20.13.4).
+    bool isAbsentLiteral(const syntax::ExprPtr& expression) const {
+        if (expression == nullptr) return false;
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return isAbsentLiteral(std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+        }
+        if (expression->kind == syntax::Kind::literalExpr) {
+            const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(expression)->literal;
+            return literal != nullptr && literal->kind == nilLiteral;
+        }
+        if (expression->kind == syntax::Kind::contextualCaseExpr) {
+            const auto member = std::static_pointer_cast<syntax::ContextualCaseExprSyntax>(expression);
+            return member->name != nullptr && member->name->rawValue == "None" && !member->hasPayloadClause;
+        }
+        return false;
+    }
+
+    // How much of its own type an operand of `==` has (spec 20.13.2): the weaker operand is typed by the stronger,
+    // whichever side it is on. 0: none (`nil`, an implicit member, an empty literal, a case of a generic enum, whose
+    // arguments may leave a parameter open); 1: an integer literal; 2: a floating-point literal, so `0 == 0.5`
+    // compares two `Double`s as `0.5 == 0` does; 3: a type of its own. An array literal is as strong as its weakest
+    // element.
+    int operandTypeStrength(const syntax::ExprPtr& expression) const {
+        if (expression == nullptr) return 3;
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return operandTypeStrength(
+                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+        }
+        if (expression->kind == syntax::Kind::prefixExpr &&
+            std::static_pointer_cast<syntax::PrefixExprSyntax>(expression)->castTarget != nullptr) {
+            return 3;
+        }
+        if (isNumericLiteral(expression)) return isFloatLiteral(expression) ? 2 : 1;
+        if (isOpenCaseReference(expression)) return 0;
+        if (expression->kind == syntax::Kind::literalExpr) {
+            const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(expression)->literal;
+            return literal != nullptr && literal->kind == nilLiteral ? 0 : 3;
+        }
+        if (expression->kind == syntax::Kind::callExpr) {
+            const auto call = std::static_pointer_cast<syntax::CallExprSyntax>(expression);
+            const auto referenced = model->referencedSymbol(call->callee);
+            const auto* symbol = referenced.has_value() ? model->semanticModelValue->symbol(*referenced) : nullptr;
+            // A case or initializer of a generic type: its arguments may leave a type parameter open.
+            const bool genericCase = symbol != nullptr && symbol->kind == semantic::SymbolKind::enumCase &&
+                    symbol->containingSymbol.has_value() &&
+                    model->genericParameters(*symbol->containingSymbol) != nullptr;
+            const bool genericInitializer = symbol != nullptr &&
+                    ((symbol->kind == semantic::SymbolKind::structure && model->genericParameters(symbol->id) != nullptr) ||
+                     (symbol->kind == semantic::SymbolKind::synthesizedInitializer && symbol->containingSymbol.has_value() &&
+                      model->genericParameters(*symbol->containingSymbol) != nullptr));
+            return genericCase || genericInitializer ? 0 : 3;
+        }
+        if (expression->kind == syntax::Kind::arrayExpr) {
+            int strength = 0;
+            bool first = true;
+            for (const auto& element : std::static_pointer_cast<syntax::ArrayExprSyntax>(expression)->elements) {
+                const auto own = operandTypeStrength(element);
+                strength = first ? own : std::min(strength, own);
+                first = false;
+            }
+            return strength;
+        }
+        if (expression->kind == syntax::Kind::dictionaryExpr) {
+            return std::static_pointer_cast<syntax::DictionaryExprSyntax>(expression)->entries.empty() ? 0 : 3;
+        }
+        return 3;
+    }
+
+    bool isFloatLiteral(const syntax::ExprPtr& expression) const {
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return isFloatLiteral(std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+        }
+        if (expression->kind == syntax::Kind::prefixExpr) {
+            return isFloatLiteral(std::static_pointer_cast<syntax::PrefixExprSyntax>(expression)->operand);
+        }
+        return expression->kind == syntax::Kind::literalExpr &&
+                std::static_pointer_cast<syntax::LiteralExprSyntax>(expression)->literal->kind == floatLiteral;
+    }
+
+    // `a == b` reaches the witness as `a.equals(other: b)` would (decision 0031), so the witness's instance is
+    // required in the same way: through a requirement call when the operand type mentions a type parameter, else
+    // through a call of the generic witness with the operand's type arguments.
+    void requireEqualityWitness(const syntax::BinaryExprSyntax::Ptr& expression, TypeId operand) {
+        const auto requirement = model->equatableRequirement();
+        if (!requirement.has_value()) return;
+        if (model->typeContext.mentionsTypeParameter(operand)) {
+            if (currentFunction.has_value()) {
+                requirementCalls.push_back({ *currentFunction, *requirement, operand, expression->span });
+            }
+            return;
+        }
+        equalityRoots.push_back({ operand, currentFunction, expression->span });
+    }
+
+    // `a == b` on a conformer other than a builtin is analyzed like the call `a.equals(other: b)`: the left
+    // operand stays borrowed while the right is evaluated (spec 20.13.2), so the right may not write or move it.
+    void validateEqualityExclusivity(const syntax::BinaryExprSyntax::Ptr& expression) {
+        std::vector<CallAccess> accesses;
+        if (const auto path = storagePath(expression->left)) {
+            collectSubscriptIndexAccesses(expression->left, accesses);
+            accesses.push_back(CallAccess { *path, syntax::AccessEffect::borrowing, expression->left->span, true });
+        } else {
+            collectEvaluationAccesses(expression->left, accesses);
+        }
+        collectEvaluationAccesses(expression->right, accesses);
+        validateCallExclusivity(accesses);
     }
 
     void reportInvalidOperator(
@@ -4663,17 +5267,104 @@ private:
         }
         std::optional<std::string> help;
         const bool equality = op != nullptr && (op->rawValue == "==" || op->rawValue == "!=");
-        if (equality && std::any_of(operands.begin(), operands.end(), [this](TypeId operand) {
-                return model->typeContext.isOptional(operand) || model->typeContext.isResult(operand);
-            })) {
-            // Equality on the role-bound enums is not defined (decision 0024, spec 5.2).
-            // The common `x == nil` has a drop-in replacement.
-            help = std::any_of(operands.begin(), operands.end(),
-                               [this](TypeId operand) { return model->typeContext.isOptional(operand); })
-                    ? "compare with 'match', for example 'match x { .None => true, .Some(_) => false }' for 'x == nil'"
-                    : "compare with 'match', for example 'match x { .Ok(_) => ..., .Err(_) => ... }'";
+        if (equality && operands.size() == 2 && operands[0] == operands[1]) {
+            help = equatableHelp(operands[0], span);
+        } else if (equality && operands.size() == 2) {
+            // No wrapping between the operands (spec 20.13.2): `opt == 5` compares with `.Some(5)`.
+            for (size_t index = 0; index < 2; ++index) {
+                const auto* optional = model->typeContext.type(operands[index]);
+                if (model->typeContext.isOptional(operands[index]) && optional != nullptr &&
+                    !optional->arguments.empty() && optional->arguments[0] == operands[1 - index]) {
+                    help = "the operands have different types; wrap the plain one as '.Some(...)' to compare it "
+                           "with the optional, or compare with 'nil' to test for a value";
+                }
+            }
         }
         report(TypeCheckingDiagnosticId::invalidOperatorOperands, span, std::move(message), std::move(help));
+    }
+
+    // Why `type` has no `==`, and what would give it one (spec 20.13). It suggests only a conformance the
+    // compiler accepts at `span`.
+    std::optional<std::string> equatableHelp(TypeId type, SourceSpan span) const {
+        const auto* record = model->typeContext.type(type);
+        if (record == nullptr) return std::nullopt;
+        const auto name = model->typeContext.displayName(type);
+        if (record->kind == TypeKind::typeParameter) {
+            return "add 'Equatable' to the constraint of '" + name + "' where it is declared (for an extension's "
+                   "parameter, in the type's own declaration)";
+        }
+        if (record->kind == TypeKind::function) {
+            return "a function type never conforms to 'Equatable' (spec 2.3.1); compare what the functions return";
+        }
+        // A container conforms when its components do (spec 20.13.3): name the first that does not. A component that
+        // already has a conformance is explained by its failing member, never told to declare another.
+        if (model->isArrayRoleType(type) || model->typeContext.isOptional(type) || model->typeContext.isResult(type)) {
+            const auto arguments = record->arguments;
+            for (const auto argument : arguments) {
+                if (argument == model->typeContext.neverType() || isEquatable(argument)) continue;
+                std::optional<std::string> inner;
+                if (model->equatableConformance(argument) != nullptr) {
+                    if (const auto path = nonEquatablePath(argument)) {
+                        inner = "its member '" + path->first + "' has the type '" +
+                                model->typeContext.displayName(path->second) + "', which does not conform";
+                    }
+                } else {
+                    inner = equatableHelp(argument, span);
+                }
+                const auto what = model->isArrayRoleType(type) ? "element" : "payload";
+                std::string help = "'" + name + "' compares its " + what + "s, and its " + what + " type '" +
+                        model->typeContext.displayName(argument) + "' does not conform to 'Equatable'";
+                if (inner.has_value()) help += "; " + *inner;
+                if (model->typeContext.isOptional(type)) help += "; to test for a value, compare with 'nil'";
+                return help;
+            }
+        }
+        if (model->isLinear(type)) {
+            return "'" + name + "' is linear, and a linear type never conforms to 'Equatable' (spec 20.13.3); "
+                   "compare a field instead";
+        }
+        if (model->isDictRoleType(type)) {
+            return "a dictionary never conforms to 'Equatable' (spec 20.13.3)";
+        }
+        const auto* symbol = model->semanticModelValue->symbol(record->symbol);
+        if ((record->kind == TypeKind::structure || record->kind == TypeKind::enumeration) && symbol != nullptr &&
+            symbol->libraryRole == semantic::LibraryRole::none && !model->semanticModelValue->isPreludeSource(symbol->span)) {
+            if (model->equatableConformance(type) != nullptr) {
+                if (const auto path = nonEquatablePath(type)) {
+                    return "'" + name + "' derives 'Equatable', but its member '" + path->first + "' has the type '" +
+                            model->typeContext.displayName(path->second) + "', which does not conform";
+                }
+                return "'" + name + "' declares 'Equatable', but that conformance is rejected";
+            }
+            if (symbol->moduleId != model->semanticModelValue->moduleOf(span)) {
+                return "'" + name + "' does not conform to 'Equatable', and only its own module can declare that "
+                       "conformance (spec 20.3)";
+            }
+            auto header = symbol->name;
+            if (!symbol->typeParameters.empty()) {
+                header += "<";
+                for (size_t index = 0; index < symbol->typeParameters.size(); ++index) {
+                    if (index != 0) header += ", ";
+                    header += symbolName(symbol->typeParameters[index]);
+                }
+                header += ">";
+            }
+            // An existing `equals` method becomes the witness, and members that can all conform derive one; only
+            // otherwise must the witness be written (spec 20.13.3).
+            bool derivable = true;
+            for (const auto& member : model->equatableMembers(type)) {
+                std::vector<TypeId> inProgress { type };
+                if (member.type == model->typeContext.neverType()) continue;
+                if (!satisfiesEquatable(member.type, inProgress, true)) { derivable = false; break; }
+            }
+            if (lookupMember(type, "equals").has_value() || derivable) {
+                return "'" + name + "' does not conform to 'Equatable'; declare 'extension " + header +
+                        ": Equatable {}'";
+            }
+            return "'" + name + "' does not conform to 'Equatable', and not every member can be compared; declare "
+                   "'extension " + header + ": Equatable { func equals(other: " + header + "): Bool { ... } }'";
+        }
+        return "'" + name + "' does not conform to 'Equatable' (spec 20.13)";
     }
 
     TypeId commonType(TypeId left, TypeId right, SourceSpan mismatchSpan) {
@@ -5994,6 +6685,18 @@ private:
         const auto value = isExpressionKind(expression->kind)
                 ? std::static_pointer_cast<syntax::ExprSyntax>(expression)
                 : nullptr;
+        // `consume place` moves the place, so it conflicts with a sustained access of it, such as the borrowed left
+        // operand of a non-builtin `==` (spec 20.13.2).
+        if (expression->kind == syntax::Kind::accessExpr) {
+            const auto access = std::static_pointer_cast<syntax::AccessExprSyntax>(expression);
+            const auto moved = access->marker != nullptr && access->marker->kind == kwConsume
+                    ? storagePath(access->operand) : std::nullopt;
+            if (moved.has_value()) {
+                collectSubscriptIndexAccesses(access->operand, accesses);
+                accesses.push_back(CallAccess { *moved, syntax::AccessEffect::consuming, expression->span, false });
+                return;
+            }
+        }
         const auto path = storagePath(value);
         if (path.has_value()) {
             collectSubscriptIndexAccesses(value, accesses);
@@ -7703,6 +8406,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.reserved-protocol-name";
         case TypeCheckingDiagnosticId::invalidConformance:
             return "type-checking.invalid-conformance";
+        case TypeCheckingDiagnosticId::nonEquatableMember:
+            return "type-checking.non-equatable-member";
         case TypeCheckingDiagnosticId::missingWitness:
             return "type-checking.missing-witness";
         case TypeCheckingDiagnosticId::witnessMismatch:

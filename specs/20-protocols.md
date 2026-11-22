@@ -33,7 +33,8 @@ them useful.
 | `Self` in requirements | Initializer, static, property, and subscript requirements |
 | Static dispatch by monomorphization | Existential values (`any P`), dynamic dispatch |
 | Builtin marker protocol `Copyable` | Generic structs, enums, methods, and extensions |
-| Orphan rule for conformances | Operator-backed protocols (`Equatable`, `Comparable`, `Display`) |
+| Orphan rule for conformances | Operator-backed `Comparable` and `Display` |
+| `Equatable`, the protocol of `==` and `!=` (§20.13) | |
 | | Explicit type arguments at call sites |
 
 ### 20.2 Protocol declarations
@@ -76,8 +77,12 @@ public protocol Shape {
 A protocol is a **type-namespace** declaration (§13.1): it may not share a
 name with a struct, enum, or another protocol in the same scope. The names
 `Display`, `Equatable`, `Comparable`, `Any`, and `Copyable` cannot be declared
-by user code (`type-checking.reserved-protocol-name`); `Copyable` is the
-builtin protocol of §20.5 and the others stay reserved (§12.4, Appendix A).
+by user code (`type-checking.reserved-protocol-name`). `Equatable` is also
+rejected as the name of a user `struct`, `enum` or type parameter, so the name
+in a constraint always means the prelude protocol. `Copyable` is the builtin
+protocol of §20.5, `Equatable` is the prelude protocol of §20.13 (whose
+compiler-bundled declaration is exempt), and the others stay reserved (§12.4,
+Appendix A).
 
 A protocol has no stored state and no instances. It is **not a type**: using
 a protocol name where a type is expected is an error
@@ -103,7 +108,8 @@ There is exactly one way to declare a conformance: an `extension` with a
 conformance list. Struct and enum declarations do not list protocols. The
 extended type may be a user `struct`/`enum` or a builtin nominal such as
 `Int`, `String`, or `Array<Int>` (a concrete instantiation); it is not a
-function type or an optional. A protocol named twice in one list, or a name
+function type or an optional. The compiler-bundled `Equatable` conformances of
+`Optional` and `Result` (§20.13.3) are the one exception. A protocol named twice in one list, or a name
 in the list that is not a protocol, is an error.
 
 ```joyeer
@@ -122,7 +128,8 @@ method of the extended type, found by name, declared in the conformance
 extension or elsewhere in the type or its other extensions. Only declared
 methods are witnesses. The library `Array` and `Dict` belong to the bundled prelude and cannot be
 extended, so their methods (such as `removeLast` or `get`) never witness a user protocol's
-requirement. A requirement with no witness is
+requirement. The one kind of witness that is not a declared method is the compiler-provided witness of
+`Equatable` (§20.13.3). A requirement with no witness is
 `type-checking.missing-witness`. The witness must match the requirement
 exactly after substituting `Self` with the extended type
 (`type-checking.witness-mismatch` otherwise):
@@ -276,7 +283,10 @@ satisfies:
   lists `P`. A type built from a parameter (`[T]`, `T?`) satisfies no user
   protocol in v1, with one exception: a generic type `Box<...>` with an
   `extension Box<T>: P` (§20.12.2) satisfies `P`, since that extension
-  declares the conformance for every argument.
+  declares the conformance for every argument;
+- `Equatable` by the structural rule of §20.13.5, so `[T]`, `T?`,
+  `Result<T, E>` and a generic type with a derived conformance satisfy it when
+  their components do.
 
 ### 20.5 What generic code may do
 
@@ -294,8 +304,8 @@ exist for it are:
 3. destroying it when its owner's scope ends (§4.7), using whatever
    destruction the concrete type has.
 
-Field access, `match` on a `T`, construction, literals, operators (`+`, `==`,
-`<`), string interpolation, `print`, `as` conversions, and subscripts are not
+Field access, `match` on a `T`, construction, literals, operators (`+`, `<`;
+`==` and `!=` only when `T` satisfies `Equatable`, §20.13.5), string interpolation, `print`, `as` conversions, and subscripts are not
 available on `T`
 (`type-checking.unknown-member-on-type-parameter` for a member, the ordinary
 type error otherwise). A type parameter, and `Self` in a requirement, may not
@@ -344,7 +354,9 @@ that type-checks is valid for every type argument that satisfies them. Every
 name, member, literal type, copy and move decision, and access check in the
 body is fixed then; no diagnostic depends on a type argument, except the
 instantiation limit below. There is no specialization: a generic function
-cannot behave differently for a particular type argument.
+cannot behave differently for a particular type argument. A derived `Equatable`
+witness (§20.13.5) is generated per concrete type, like a copy or a destruction;
+it is not a specialization of a checked body.
 
 The function is then **instantiated once per distinct tuple of concrete type
 arguments** used by the program. An instance differs from the checked body in
@@ -414,8 +426,9 @@ Diagnostics follow the stable-ID and source-span rules of
 | `type-checking.protocol-used-as-type` | A protocol name used where a type is required |
 | `name-resolution.self-outside-type` | `Self` outside a struct, enum, extension, or protocol body (§3.9) |
 | `type-checking.invalid-protocol-member` | A requirement with a body, visibility, attribute, default, or type parameters |
-| `type-checking.reserved-protocol-name` | User declaration of `Copyable`, `Display`, `Equatable`, `Comparable`, or `Any` |
-| `type-checking.invalid-conformance` | A conformance list naming a non-protocol, `Copyable`, or one protocol twice; a constraint repeating a protocol or with conflicting requirements |
+| `type-checking.reserved-protocol-name` | User declaration of a protocol `Copyable`, `Display`, `Equatable`, `Comparable`, or `Any`, or of a struct, enum or type parameter `Equatable` |
+| `type-checking.invalid-conformance` | A conformance list naming a non-protocol, `Copyable`, or one protocol twice; a constraint repeating a protocol or with conflicting requirements; a linear type conforming to `Equatable` (§20.13.3) |
+| `type-checking.non-equatable-member` | A derived `Equatable` conformance with a field or payload that does not conform (§20.13.5) |
 | `type-checking.missing-witness` | A conformance without a witness for a requirement |
 | `type-checking.witness-mismatch` | A witness whose effect, labels, types, or result differ |
 | `type-checking.witness-not-accessible` | A witness less accessible than the conformance |
@@ -439,7 +452,8 @@ Diagnostics follow the stable-ID and source-span rules of
 
 - `protocol` is in the **Declarations** row of §1.4. `trait` stays reserved;
   there is one spelling for the concept (§0.1, principle 4).
-- [Appendix C](appendix-c-grammar.md) has `protocol_decl` as a `top_decl`,
+- [Appendix C](appendix-c-grammar.md) has `protocol_decl` (and, in the
+  compiler-bundled prelude only, `prelude_protocol`, §20.13) as a `top_decl`,
   the optional `generic_params` in `func_decl`, and the optional conformance
   list in `extension_decl`, all as given in §20.2 to §20.4.
 - `extension_decl` still admits only `func_decl` and `subscript_decl` bodies;
@@ -449,9 +463,12 @@ Diagnostics follow the stable-ID and source-span rules of
 
 1. ~~Generic structs and enums~~ (specified in §20.12). Still deferred: generic
    methods, `where` clauses and conditional conformance
-   (`extension Array<T>: P where T: P`).
-2. **Operator-backed protocols**: `Equatable`, `Comparable`, `Display`, with
-   `==`, `<`, and string interpolation (§1.7) defined through them.
+   (`extension Array<T>: P where T: P`); the derived `Equatable` conformance
+   of §20.13.5 is the one conditional form.
+2. **Operator-backed protocols**: ~~`Equatable`~~ (specified in §20.13).
+   Still deferred: `Comparable` and `Display`, with `<` and string
+   interpolation (§1.7) defined through them, and `Hashable` for dictionary
+   keys (§2.6).
 3. **Default implementations and refinement** (`protocol A: B`).
 4. **Associated types**, then a user-extensible iteration protocol for
    `for ... in` (§6.3).
@@ -541,6 +558,8 @@ specialization (§20.6); each is `type-checking.invalid-extension-header`. The c
 **unconditional**: `Box<X>` conforms to `P` for every `X` that satisfies `Box`'s constraints. Witnesses are
 checked once against the parameters' declared constraints. The conformance is keyed by `(type, protocol)`,
 so two such extensions in one module are `type-checking.duplicate-conformance` whatever the parameter names.
+The one exception is a derived `Equatable` conformance, which holds for `Box<X>` only when the fields do
+(§20.13.5).
 
 #### 20.12.3 Ownership
 
@@ -631,6 +650,10 @@ compiler creates for `as?`, `removeLast` and `get`) to their declarations; they 
 layout. This amends [decision 0023](../docs/decisions/0023-library-concurrency.md), whose contracts
 did not construct results.
 
+The `equatable` role marks the prelude protocol `Equatable` and binds `==` and `!=` to it (§20.13); the
+`array_equal` role marks the collections prelude's generic function that is the `Equatable` witness of
+`[X]` (§20.13.3). Neither selects layout.
+
 **Provisional collection capabilities** ([0025](../docs/decisions/0025-library-collection-capabilities.md)):
 the role `array_type` marks a bundled `public struct Array<T>` with exactly one type parameter and the
 `private` stored fields `address: Int`, `count: Int`, `capacity: Int`, in that order. It is the one
@@ -704,3 +727,132 @@ mutating and copying forms are those of a builtin subscript. No source form name
 reaches elements through `self[i]`, `move_in`, `move_out` and `destroy_at`. `consume a[i]` of a linear
 element is `semantic-analysis.consume-of-linear-element`. These capabilities add no source syntax and make
 no memory-safety claim about an address held across a reallocation.
+
+### 20.13 `Equatable`
+
+[Decision 0031](../docs/decisions/0031-equatable.md). **Implementation status:** in part
+([plan 0012](../docs/plan/0012-equatable.md)). Implemented: the protocol, the builtin conformers,
+hand-written and derived conformances, the conformances of `Optional`, `Result` and arrays, `==` in
+generic code, and the presence test. Recursive types need arrays until `indirect` cases are implemented.
+
+#### 20.13.1 The protocol
+
+The compiler-bundled role prelude declares
+
+```joyeer
+@compiler_role(equatable)
+public protocol Equatable {
+    func equals(other: Self): Bool
+}
+```
+
+`==` and `!=` bind to the declaration with the `equatable` role (§20.12.5), never to the name. The
+receiver and the argument are borrowed (§3.2.4, §4.2). `Equatable` states no law that the compiler
+checks; a witness decides what equality means for its type.
+
+#### 20.13.2 `==` and `!=`
+
+For two operands of one type `X`, `a == b` type-checks exactly when `X` conforms to `Equatable`, and is
+true when `X`'s witness returns `true`. `a != b` is the negation of `a == b`; there is no separate
+requirement for it. Otherwise the operands are `type-checking.invalid-operator-operands`, whose help names
+`Equatable` and, for a user type of the current module without a conformance, the extension to add.
+
+**Typing.** Neither operand is given the enclosing expression's expected type. An operand that has a type
+of its own is checked first; an operand without one (`nil`, an implicit member such as `.Red`, an array
+literal whose elements have none either, an empty dictionary literal, a numeric literal, a case of a
+generic enum named without type arguments) is then checked against that type, on either side. If neither operand has a type of
+its own, it is `type-checking.missing-contextual-type`, except that two numeric literals take their default
+types, a floating-point literal first (`0 == 0` compares two `Int`s, `0 == 0.5` two `Double`s). There is no conversion or
+implicit wrapping between the operands: `opt == 5` is rejected, with help suggesting `.Some(5)`.
+
+**Evaluation and access.** The left operand is evaluated, then the right, then the result. For a builtin
+conformer (§20.13.3, item 1) the left operand is read as a value before the right is evaluated, so
+`n == bump(&n)` compares the old value of `n`. For every other conformer, and for every `==` and `!=` in
+a generic body, `a == b` is analyzed exactly like the call `a.equals(other: b)`: the left operand is a
+borrow that stays active while the right is evaluated (§4.4). So `p == bump(&p)` is an overlapping access
+and `a == reopen(t: consume a)` uses `a` after it is moved, while `a == a` is two shared borrows.
+
+#### 20.13.3 Conforming types
+
+1. **Builtin conformers.** Every integer type, `Bool`, `UInt8`, `Float`, `Double`, `String` and `Void`
+   conform by the compiler, and `Char` conforms when it is implemented. Integer, `Bool` and `String`
+   equality compare values. `Float` and `Double` use IEEE 754 equality: a NaN is not equal to itself, and
+   `-0.0 == 0.0`. All `Void` values are equal. A user extension of a builtin type is
+   `name-resolution.invalid-extension-target` while such extensions are not implemented (§3.5), and would
+   be `type-checking.orphan-conformance` after that (§20.3).
+2. **User structs and enums** conform only by an `extension X: Equatable { ... }` in their own module
+   (§20.3). If the type or one of its extensions declares a member named `equals`, the conformance is
+   **hand-written**: that member is the witness, checked as any witness (`witness-mismatch` when its
+   labels, effects or types differ). Otherwise the conformance is **derived** (§20.13.5).
+3. **`Optional` and `Result`** conform by derived conformances that the role prelude declares
+   (`extension Optional<T>: Equatable {}`, `extension Result<T, E>: Equatable {}`): `X?` conforms when `X`
+   does, and `Result<X, Y>` when `X` and `Y` do.
+4. **Arrays.** `[X]` conforms when `X` does. Its witness is the instance for `X` of the collections
+   prelude's generic function with the `array_equal` role, which compares the counts and then the elements
+   in index order with `==`, stopping at the first that differs.
+5. **Never conforming:** a function type (§2.3.1); a `Dict` (§2.6), until a `Hashable` decision; a
+   linear type, including a type that is linear because of a field or payload (§4.1.1), whose conformance
+   is `type-checking.invalid-conformance`, reported instead of any `non-equatable-member` for the same
+   extension. A noncopyable type may conform: equality only borrows. A struct with a function or `Dict`
+   field may conform with a hand-written `equals`, but cannot derive one.
+
+Only a hand-written witness is a member: `x.equals(other: y)` on a concrete type is an unknown member
+unless `equals` is declared, so `==` is the spelling for builtin, derived and array equality. `match`
+patterns are structural and need no conformance.
+
+#### 20.13.4 Presence test
+
+When one operand is the absent case of the `optional` role written without a payload (`nil` or `.None`,
+on either side and also in parentheses) and the other has a type `X?`, `==` and `!=` test whether the
+other operand is present. The test is recognized from the syntax before ordinary equality, so it applies
+whatever `X` is: a function type, a noncopyable or a linear type. It never calls a witness, borrows the
+operand, and costs one tag comparison once optimized (unoptimized, it is a branch on the tag).
+`nil == nil` is `type-checking.missing-contextual-type`. A linear operand must be a place: comparing a linear temporary, such as `spawnMaybe() == nil`, drops it and is
+`semantic-analysis.linear-result-dropped`.
+
+#### 20.13.5 Derived and conditional conformance
+
+A derived witness compares, for a struct, its stored fields in declaration order, and for an enum, its
+tags and then, for equal tags, the payloads in order; it stops at the first pair that differs. A struct
+with no stored fields is always equal. Floating-point fields are compared one by one with no identity
+shortcut, so a value holding a NaN is not equal to itself. Every stored field and payload type must
+conform; a `Never` payload counts as conforming, since it has no value.
+
+A derived conformance is **structural and conditional**: for a generic type, `Box<X>` conforms when
+every field and payload type, with `X` substituted, conforms. This is the one exception to the
+unconditional conformance of §20.12.2; a hand-written `equals` on a generic type stays unconditional.
+
+- **Order.** All conformance declarations of the program are known before any derived conformance is
+  evaluated, so the order of extensions within or across files does not matter.
+- **Recursion.** While `X: Equatable` is being decided, a nested question about the same `X` is answered
+  yes. Recursive types such as `indirect enum List { Nil, Cons(Int, List) }` or
+  `struct Node { var kids: [Node] }`, and mutually recursive generic types, therefore conform when their
+  other fields do. Types whose arguments grow are rejected by §20.12.4.
+- **Generic code** (§20.4.2, §20.5). Inside a generic body, a type parameter conforms exactly when its
+  constraint lists `Equatable`, and the structural rule applies to every type built from it: `[T]`, `T?`,
+  `Result<T, E>` and a `Box<T>` with a derived conformance. A type that conforms under `T`'s constraint
+  conforms for every type argument that satisfies it, so the body is still checked once (§20.6).
+  `func f<T>(a: T?, b: T?): Bool { return a == b }` is rejected; with `<T: Equatable>` it is accepted.
+  Without the constraint, `==` on `T` is `invalid-operator-operands` with a note suggesting `Equatable` in
+  `T`'s constraint. A requirement call `a.equals(other: b)` on a `T: Equatable` is allowed and calls the
+  same witness as `a == b` in each instance.
+- **The derived witness has no checked body.** It is generated for each concrete type whose conformance
+  holds, like a copy or a destruction (§20.6).
+
+**Diagnostics.** A field or payload whose type cannot conform for any type argument (a function type, a
+`Dict`, a non-conforming concrete type) is `type-checking.non-equatable-member` at the extension, naming
+the field, or the case and payload position, and its type. A field that conforms only for some arguments
+(`var value: T`) is checked where the conformance is needed: `Box<Fn> == Box<Fn>` is
+`type-checking.non-equatable-member` naming the field path, with a note at the extension, and a generic
+call that infers such a type for a `U: Equatable` parameter is `type-checking.unsatisfied-constraint`
+whose help names the same field path. `Optional`, `Result` and arrays are the exception: `==` on one whose
+payload or element does not conform is `type-checking.invalid-operator-operands`, whose help names that
+payload or element. When a derived conformance is rejected because a member's own conformance is, only
+the member's is reported.
+
+#### 20.13.6 Cost
+
+A builtin conformer's `==` compiles exactly as before `Equatable` existed: a scalar comparison, or the
+inlined `String` comparison. Every other `==` is a direct call of its witness, which may be inlined; `!=`
+adds one Boolean negation. There is no protocol table, boxing or dynamic dispatch. A derived or array
+comparison costs one comparison per field or element compared.

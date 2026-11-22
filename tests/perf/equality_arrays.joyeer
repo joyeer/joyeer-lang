@@ -1,0 +1,34 @@
+// Array equality (decision 0031, plan 0012 phase 4): `[Int] == [Int]` through the collections prelude's
+// `arrayEqual`. The baseline compiler has no array `==`, so it compiles `equality_arrays_loop.joyeer`, the same
+// comparison written by hand. Elements change every round, so no comparison can leave the loop. Not a test; see
+// README.md.
+func build(size: Int, last: Int): [Int] {
+    var values: [Int] = []
+    var index = 0
+    while index < size - 1 {
+        &values.append(element: index * 3)
+        index = index + 1
+    }
+    &values.append(element: last)
+    return values
+}
+
+func main() {
+    let a = build(size: 64, last: 7)
+    var b = build(size: 64, last: 7)
+    var c = build(size: 64, last: 8)
+    var total = 0
+    var round = 0
+    while round < 1000000 {
+        &b[63] = round % 2 + 7
+        &c[0] = round % 3
+        if a == b {
+            total = total + 1
+        }
+        if a != c {
+            total = total + 2
+        }
+        round = round + 1
+    }
+    print(value: total)
+}

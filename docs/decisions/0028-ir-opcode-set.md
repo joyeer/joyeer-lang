@@ -2,8 +2,8 @@
 
 - Status: accepted (2026-11-20, by the user). Stages 0 (wire 26), 1, 2 (wire 27), 4 (wire 28) and 3 (wire 29) are
   implemented; stage 4 ran before stage 3, because with dense numbering stage 3 removes opcodes by deleting rows.
-  Stage 3's mechanism, a String projection plus a bundled prelude, was chosen by the user on 2026-11-20. Progress is
-  tracked in [plan 0013](../plan/0013-ir-opcode-set.md).
+  Stage 3's mechanism, a String projection plus a bundled prelude, was chosen by the user on 2026-11-20. Every stage
+  is implemented and validated (see [Evidence](#evidence)); plan 0013 tracked the work and was deleted when done.
 - Spec: none. The IR is not part of the language; [IR](../impl/ir.md) changes with each stage.
 - Builds on [0025](0025-library-collection-capabilities.md), [0026](0026-library-array.md) and
   [0027](0027-library-dict.md), which moved Array and Dict out of the instruction set.
@@ -229,3 +229,12 @@ The user accepted these answers on 2026-11-21; each keeps the opcode set as stag
   `logicalAnd` was the only opcode with no producer.
 - 0026 and 0027 removed eight opcodes and two type kinds without changing what programs observe. They showed that
   library code using the collection capabilities can replace builtin opcodes within the cost gates.
+- Stage 3 cost gates (Windows x64, baseline d7a246f against the stage 3 tree, both built with the same options,
+  `tests/perf/benchmark_strings.py`, 30 interleaved repetitions, paired bootstrap): at -O0 `string_bytes` 1.119
+  [1.113, 1.127], concat 0.967, compare 0.997 and `utf8` 1.009, all within 0026's 1.15; at -O2 concat 0.952,
+  compare 1.004 [0.995, 1.008], `utf8` 1.002, and `string_bytes` as accepted above. Executable sizes were unchanged
+  except `string_utf8`, which grew by 512 bytes at -O0 and -O2. The `hello` front end (`--emit-llvm`, 30 paired runs)
+  measured 1.012.
+- Each stage had its own `ir-backend-reviewer` pass, and stage 3 also a `type-system-reviewer` pass; none found a
+  critical or high issue. `scripts/validate.py --llvm-root` at 025d80b, with every stage in place, passed on Windows
+  AMD64 in Debug and Release: CTest 2045 of 2045 and `fern test` 7 of 7.

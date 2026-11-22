@@ -2505,4 +2505,26 @@ TEST_F(SemanticAnalysisTest, CallsThroughFunctionValuesConsumeAndInitializeArgum
             << joyeer::analysis::dump(result.diagnostics);
 }
 
+// Spec 20.13.4: a presence test borrows its operand, so a linear temporary compared with `nil` is dropped.
+TEST_F(SemanticAnalysisTest, APresenceTestOnALinearTemporaryDropsIt) {
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func optionalToken(): Token? { return nil }\n"
+                     "func run(): Bool {\n    return optionalToken() == nil\n}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+// A presence test on a linear place borrows the place (spec 20.13.4): neither it nor the `nil` is dropped.
+TEST_F(SemanticAnalysisTest, APresenceTestOnALinearPlaceIsAccepted) {
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func run(): Int {\n"
+                     "    let t: Token? = .Some(mint())\n"
+                     "    if t == nil { return 0 }\n"
+                     "    if t != .None { let n = 1 }\n"
+                     "    return match consume t { .Some(k) => consume k.finish(), .None => 0 }\n"
+                     "}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
 } // namespace

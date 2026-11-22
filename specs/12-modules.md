@@ -143,6 +143,7 @@ The draft standard-library prelude includes:
 - `Array`, `Dict`, `Tuple`
 - `print`, `assert`, `precondition`, `fatalError`
 - `Copyable`, the builtin marker protocol of §20.5
+- `Equatable`, the protocol of `==` and `!=` (§20.13)
 
 The prelude holds the language's own vocabulary: types and the few functions
 every program needs without an import. Operations on the host are **not**
@@ -156,9 +157,11 @@ For example, the compiler does not yet supply general tuple support. See the
 [implemented name-resolution prelude](../docs/impl/name-resolution.md#3-scopes-and-symbols)
 for the authoritative current list.
 
-The names `Display`, `Equatable`, `Comparable` are reserved for future
-operator-backed protocols (§20.10) and are **not** usable as constraints or
-conformances in v1; user code may not declare them (§20.2).
+`Equatable` (§20.13) is a prelude protocol bound to `==` and `!=`; user code
+may name it in constraints and conformance lists but may not declare a type or
+type parameter of that name (§20.2). The names `Display` and `Comparable` are
+reserved for future operator-backed protocols (§20.10) and are **not** usable as
+constraints or conformances; user code may not declare them (§20.2).
 
 ### 12.5 Standard modules
 

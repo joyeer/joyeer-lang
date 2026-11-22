@@ -1,0 +1,27 @@
+// Derived struct equality (decision 0031, plan 0012 phase 4): `==` and `!=` on a struct with a derived `Equatable`
+// conformance, a generated `Point.equals`. The baseline compiler compiles `equality_derived_fields.joyeer`, the same
+// comparison written field by field. Not a test; see README.md.
+struct Point {
+    var x: Int
+    var y: Int
+    var z: Int
+}
+
+extension Point: Equatable {}
+
+func main() {
+    let base = Point(x: 1, y: 2, z: 3)
+    var total = 0
+    var round = 0
+    while round < 50000000 {
+        let other = Point(x: 1, y: 2, z: round % 4)
+        if base == other {
+            total = total + 1
+        }
+        if base != other {
+            total = total + 2
+        }
+        round = round + 1
+    }
+    print(value: total)
+}

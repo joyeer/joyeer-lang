@@ -302,6 +302,23 @@ to its header. Both emit cleanup only for scopes deeper than the loop's saved
 scope depth, including pending expression temporaries and match bindings.
 The jump keeps its explicit source location; generated cleanup is implicit.
 
+`==` and `!=` ([0031](../decisions/0031-equatable.md)) on a builtin conformer lower as before: the left operand
+is read as a value before the right is evaluated, then `compare` (or the `String` prelude call), and `Void`
+equality is a `literal` after both operands. In a generic body the left operand stays borrowed, as the checked
+body decided. On a hand-written conformance, `==` is a `call` of the witness (or of its instance for a generic
+type, which type checking requires like a call of `equals`) with both operands borrowed, and `!=` adds `compare
+eq` with `false`. `t.equals(other: u)` in an instance whose `T` is a builtin conformer is the builtin `==`. A derived
+conformance has a generated function `Type.equals(self, other)` per concrete type the program compares (found
+with the instances): a struct's `extractField`s each stored field (not the hidden live flag) of both operands
+and compares them in declaration order, an enum's `switchPattern`s on both tags and `extractPayload`s the
+payloads of equal tags; each `conditionalBranch`es to a shared `false` return at the first difference, and
+`Void` and `Never` members are skipped. Its instructions are located at the type's declaration in the
+function's root scope. `Optional` and `Result` instances use the same generated witnesses (the role
+prelude's `Equatable` extensions are derived), and `[X] == [X]` calls the `arrayEqual` instance for `X`
+from the collections prelude. A presence test `x == nil` is a `switchPattern` on the borrowed optional
+into blocks that store `true` or `false` in a Bool slot, then a `load`; it calls nothing. No opcode is
+added.
+
 `&&` and `||` emit conditional right-hand blocks and Boolean merge slots.
 Their right operands and temporaries are evaluated only on the true-left and
 false-left paths respectively. Prefix `!` lowers to Boolean equality with
@@ -534,7 +551,8 @@ fixtures.
 The current IR/native pipeline intentionally leaves these to later commits:
 
 - longer-lived exclusivity beyond a single call;
-- copy-elision and ABI tuning for large aggregates;
+- copy-elision and ABI tuning for large aggregates (a derived `Equatable` witness takes both operands by value,
+  as every borrowing parameter does, so `==` on deeply nested by-value structs is slow to compile; plan 0012);
 - enum niche optimization and a stable public ABI;
 - Joyeer-specific optimization passes and an LTO policy beyond the native
   backend's explicit LLVM optimization level;

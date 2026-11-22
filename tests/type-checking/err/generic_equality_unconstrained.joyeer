@@ -1,0 +1,4 @@
+// `==` on a type parameter needs `Equatable` in its constraint (spec 20.13.5).
+func same<T>(left: T, right: T): Bool {
+    return left == right
+}

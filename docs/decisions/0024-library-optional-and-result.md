@@ -3,6 +3,8 @@
 - Status: accepted by the user (2026-11-14) after three language-designer reviews (see "Review").
   Implemented in [#26](https://github.com/joyeer/joyeer-lang/pull/26); see the
   [collection validation](../impl/runtime.md#collection-validation).
+  Amended by [0031](0031-equatable.md) (2026-11-21): the role prelude's empty `Equatable` extensions of both enums
+  are admitted, and `==` on them is defined through `Equatable` instead of rejected.
 - Spec: [§2.4–2.6, §2.9](../../specs/02-types.md), [§4.1.1](../../specs/04-memory.md), [§5.2, §5.4.1](../../specs/05-expressions.md), [§8.3](../../specs/08-error-handling.md), [§19.4.7](../../specs/19-c-interop.md), [§20.12](../../specs/20-protocols.md), [Appendix C](../../specs/appendix-c-grammar.md) amended 2026-11-14. The `docs/impl/` notes change with the implementation.
 
 ## Context
@@ -189,6 +191,9 @@ The declaration must be `public`. Payloads must be unlabelled and exactly a para
 `extension` of either enum (the only way to give it a conformance, since `enum_decl` has no
 conformance clause and the same-module rule permits a prelude extension) are rejected. So `Result<String, String>`
 is unambiguous: success and failure are the declaration's cases, whatever the arguments are.
+**Amended by [0031](0031-equatable.md):** the one admitted extension is the role prelude's
+`extension Optional<T>: Equatable {}` or `extension Result<T, E>: Equatable {}`, with an empty body and
+no other conformance; methods stay rejected.
 `Optional<Void>` works as today (`.Some(())` and `.None`).
 
 ### Type identity and sugar
@@ -267,6 +272,10 @@ These sites test for the old kinds today and would silently change if they only 
 
 ### Equality is rejected
 
+Superseded by [0031](0031-equatable.md): once implemented, `X?` and `Result<X, Y>` conform to `Equatable` when their
+payloads do, and `x == nil` is a presence test on every optional. The record below stays as the reason for the
+interim rule.
+
 `==` and `!=` are rejected on role-bound instances, as on user enums and structs. This is the one
 intentional change to accepted programs:
 
@@ -325,11 +334,13 @@ line-level inventory.
   compiler"; state the sugar binding and the no-look-through rule.
 - §2.9: `Never` as an argument of a role-bound enum.
 - §4.1.1: the copyability and linearity paragraphs name role-bound enums instead of builtins.
-- §5.2: `==` and `!=` are not defined on `Optional` or `Result` (until [plan 0012](../plan/0012-equatable.md)).
+- §5.2: `==` and `!=` are not defined on `Optional` or `Result` (until [plan 0012](../plan/0012-equatable.md);
+  [0031](0031-equatable.md) defines them through `Equatable`).
 - §5.4, §5.4.1, §5.6.1, §7.1.2, §8.3, §8.5: refer to the `optional` and `result` roles.
 - §19.4.7: core units still cannot use these types; the stated reason changes.
 - §20.4.2, §20.5: `T?` is a role-bound enum instance, not a builtin container. It still satisfies no
-  user protocol, since conformances are rejected on these declarations.
+  user protocol, since conformances are rejected on these declarations ([0031](0031-equatable.md) admits
+  the derived `Equatable` conformance only).
 - §20.12.3: role-bound enums are a second exception to both the linear-argument and the
   `Never`-argument rules, keyed on the role; reword "the sole exception". (The opening paragraph
   concerns parameters inside the declaration and does not change.)

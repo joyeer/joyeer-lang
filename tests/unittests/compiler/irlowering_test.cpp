@@ -2804,4 +2804,232 @@ TEST_F(NewOpcodeVerifierTest, FunctionTypesNeedOneValidEffectPerParameter) {
     integer->effects.push_back(joyeer::syntax::AccessEffect::inout);
     EXPECT_FALSE(joyeer::ir::Verifier().verify(strayEffects).succeeded());
 }
+
+// Equality through `Equatable` (decision 0031, spec 20.13.6), plan 0012 phase 2: a builtin conformer compiles as it
+// did before, with no call; a hand-written conformance calls its witness with both operands borrowed; `!=` negates
+// with `compare eq` against false; and each generic instance calls its own type's equality.
+TEST_F(IRLoweringTest, LowersEqualityToTheBuiltinOperationOrTheWitness) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"JOYEER(struct Money {
+    var cents: Int
+}
+extension Money: Equatable {
+    func equals(other: Money): Bool { return self.cents == other.cents }
+}
+struct Handle {
+    var fd: Int
+    deinit() {}
+}
+extension Handle: Equatable {
+    func equals(other: Handle): Bool { return self.fd == other.fd }
+}
+func same(a: Money, b: Money): Bool { return a == b }
+func differ(a: Money, b: Money): Bool { return a != b }
+func handles(a: Handle, b: Handle): Bool { return a == b }
+func unit(): Bool { return () == () }
+func generic<T: Equatable>(a: T, b: T): Bool { return a == b }
+func viaRequirement<T: Equatable>(a: T, b: T): Bool { return a.equals(other: b) }
+func main() {
+    let i = generic(a: 1, b: 2)
+    let m = generic(a: Money(cents: 1), b: Money(cents: 2))
+    let s = generic(a: "a", b: "b")
+    let r = viaRequirement(a: 1, b: 2)
+}
+)JOYEER"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+
+    EXPECT_EQ(callsNamed(function("same"), "Money.equals"), 1u);
+    EXPECT_EQ(opcodeCount(function("same"), joyeer::ir::Opcode::compare), 0u);
+    EXPECT_EQ(callsNamed(function("differ"), "Money.equals"), 1u);
+    EXPECT_EQ(compareCount(function("differ"), joyeer::ir::ComparePredicate::equal), 1u);
+    EXPECT_EQ(callsNamed(function("handles"), "Handle.equals"), 1u);
+    EXPECT_EQ(opcodeCount(function("handles"), joyeer::ir::Opcode::copyValue), 0u);
+    EXPECT_EQ(opcodeCount(function("unit"), joyeer::ir::Opcode::call), 0u);
+    EXPECT_EQ(opcodeCount(function("unit"), joyeer::ir::Opcode::compare), 0u);
+
+    EXPECT_EQ(opcodeCount(function("generic<Int>"), joyeer::ir::Opcode::call), 0u);
+    EXPECT_EQ(compareCount(function("generic<Int>"), joyeer::ir::ComparePredicate::equal), 1u);
+    EXPECT_EQ(callsNamed(function("generic<Money>"), "Money.equals"), 1u);
+    EXPECT_EQ(callsNamed(function("generic<String>"), "equals"), 1u);
+    EXPECT_EQ(opcodeCount(function("viaRequirement<Int>"), joyeer::ir::Opcode::call), 0u);
+    EXPECT_EQ(compareCount(function("viaRequirement<Int>"), joyeer::ir::ComparePredicate::equal), 1u);
+}
+
+// `==` on a generic type whose `equals` is hand-written needs that witness's instance even when no call names it
+// (decision 0031): from concrete code, from a generic function and from a method of the type. An owned temporary
+// operand is destroyed once, after the witness call, and the borrowed place is neither copied nor destroyed.
+TEST_F(IRLoweringTest, EqualityReachesGenericWitnessInstancesAndDestroysTemporariesAfterTheCall) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"JOYEER(struct Box<T: Equatable> {
+    var value: T
+}
+extension Box<T>: Equatable {
+    func equals(other: Box<T>): Bool { return self.value == other.value }
+}
+extension Box<T> {
+    func matches(other: Box<T>): Bool { return self == other }
+}
+struct Ticket {
+    var id: Int
+    deinit() {}
+}
+extension Ticket: Equatable {
+    func equals(other: Ticket): Bool { return self.id == other.id }
+}
+func same<T: Equatable>(a: T, b: T): Bool { return a == b }
+func compare(ticket: Ticket): Bool { return ticket == Ticket(id: 2) }
+func main() {
+    let a = Box(value: 1) == Box(value: 1)
+    let b = same(a: Box(value: "a"), b: Box(value: "b"))
+    let c = Box(value: 3).matches(other: Box(value: 3))
+}
+)JOYEER"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    EXPECT_EQ(callsTo(function("main"), "equals"), 1u);
+    EXPECT_EQ(callsTo(function("same<Box<String>>"), "equals"), 1u);
+
+    const auto& compare = function("compare");
+    EXPECT_EQ(opcodeCount(compare, joyeer::ir::Opcode::copyValue), 0u);
+    EXPECT_EQ(opcodeCount(compare, joyeer::ir::Opcode::destroy), 1u);
+    bool called = false;
+    bool destroyedAfterCall = false;
+    for (const auto& block : compare.blocks) {
+        for (const auto& instruction : block.instructions) {
+            if (instruction.opcode == joyeer::ir::Opcode::call) called = true;
+            if (instruction.opcode == joyeer::ir::Opcode::destroy) destroyedAfterCall = called;
+        }
+    }
+    EXPECT_TRUE(destroyedAfterCall);
+}
+
+// A derived conformance (decision 0031, spec 20.13.5) is a generated function per concrete type: `==` calls it; a
+// struct's compares its fields in order and stops at the first that differs; an enum's dispatches on both tags and
+// compares the payloads of equal tags; a generic instance gets its own.
+TEST_F(IRLoweringTest, DerivedEqualityIsAGeneratedFunctionPerConcreteType) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"JOYEER(struct Point {
+    var x: Int
+    var label: String
+}
+extension Point: Equatable {}
+enum Shape {
+    Circle(Point),
+    Empty,
+}
+extension Shape: Equatable {}
+struct Box<T> {
+    var value: T
+}
+extension Box<T>: Equatable {}
+func points(a: Point, b: Point): Bool { return a == b }
+func shapes(a: Shape, b: Shape): Bool { return a != b }
+func boxes(a: Box<Int>, b: Box<Int>): Bool { return a == b }
+func same<T: Equatable>(a: T, b: T): Bool { return a == b }
+func main() {
+    let p = Point(x: 1, label: "a")
+    let r = same(a: p, b: p)
+}
+)JOYEER"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+
+    EXPECT_EQ(callsNamed(function("points"), "Point.equals"), 1u);
+    EXPECT_EQ(callsNamed(function("same<Point>"), "Point.equals"), 1u);
+    const auto& point = function("Point.equals");
+    EXPECT_EQ(point.parameters.size(), 2u);
+    EXPECT_EQ(opcodeCount(point, joyeer::ir::Opcode::extractField), 4u);
+    EXPECT_EQ(compareCount(point, joyeer::ir::ComparePredicate::equal), 1u);
+    EXPECT_EQ(callsNamed(point, "equals"), 1u);
+    EXPECT_EQ(opcodeCount(point, joyeer::ir::Opcode::conditionalBranch), 1u);
+    EXPECT_EQ(opcodeCount(point, joyeer::ir::Opcode::copyValue), 0u);
+    EXPECT_EQ(opcodeCount(point, joyeer::ir::Opcode::destroy), 0u);
+
+    EXPECT_EQ(callsNamed(function("shapes"), "Shape.equals"), 1u);
+    const auto& shape = function("Shape.equals");
+    EXPECT_EQ(opcodeCount(shape, joyeer::ir::Opcode::switchPattern), 3u);
+    EXPECT_EQ(opcodeCount(shape, joyeer::ir::Opcode::extractPayload), 2u);
+    EXPECT_EQ(callsNamed(shape, "Point.equals"), 1u);
+    EXPECT_EQ(callsNamed(function("boxes"), "Box<Int>.equals"), 1u);
+    EXPECT_EQ(opcodeCount(function("Box<Int>.equals"), joyeer::ir::Opcode::call), 0u);
+}
+
+// Review findings on plan 0012 phase 3: `==` in a stored-field default reaches its witness; a concrete `==` in a
+// generic body that nothing instantiates generates no witness (spec 20.6); an `equals` method in a later extension is
+// the only `Point.equals`.
+TEST_F(IRLoweringTest, DerivedWitnessesFollowWhatTheProgramReaches) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"JOYEER(struct Point {
+    var x: Int
+}
+extension Point: Equatable {}
+struct Unused {
+    var y: Int
+}
+extension Unused: Equatable {}
+struct Manual {
+    var z: Int
+}
+extension Manual: Equatable {}
+extension Manual {
+    func equals(other: Manual): Bool { return true }
+}
+struct Defaults {
+    var same: Bool = Point(x: 1) == Point(x: 1)
+}
+func never<T>(value: T): Bool { return Unused(y: 1) == Unused(y: 2) }
+func manual(a: Manual): Bool { return a == a }
+func main() {
+    let d = Defaults()
+}
+)JOYEER"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto named = [&](const std::string& name) {
+        return std::count_if(result.module->functions.begin(), result.module->functions.end(),
+                [&](const auto& candidate) { return candidate.name == name; });
+    };
+    EXPECT_EQ(named("Point.equals"), 1);
+    EXPECT_EQ(named("Unused.equals"), 0);
+    EXPECT_EQ(named("Manual.equals"), 1);
+    EXPECT_EQ(callsNamed(function("manual"), "Manual.equals"), 1u);
+}
+
+// Plan 0012 phase 4: `Optional` equality calls its derived witness, `[X]` equality the `array_equal` instance, and a
+// presence test is a tag test with no call (decision 0031, spec 20.13.4).
+TEST_F(IRLoweringTest, LowersContainerEqualityAndPresenceTests) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"JOYEER(func square(value: Int): Int { return value }
+func optionals(a: Int?, b: Int?): Bool { return a == b }
+func arrays(a: [Int], b: [Int]): Bool { return a != b }
+func presence(run: ((Int): Int)?): Bool { return run == nil }
+)JOYEER"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    EXPECT_EQ(callsTo(function("optionals"), ".equals"), 1u);
+    EXPECT_EQ(callsTo(function("arrays"), "arrayEqual<Int>"), 1u);
+    EXPECT_EQ(opcodeCount(function("presence"), joyeer::ir::Opcode::call), 0u);
+    EXPECT_EQ(opcodeCount(function("presence"), joyeer::ir::Opcode::switchPattern), 1u);
+}
+
+// Adversarial finding on plan 0012 (phase 5): `a.equals(other: b)` on a type parameter instantiated with an array
+// calls the `arrayEqual` instance, as `a == b` does (spec 20.13.5).
+TEST_F(IRLoweringTest, ARequirementCallOnAnArrayInstanceCallsArrayEqual) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"JOYEER(func eq<U: Equatable>(a: U, b: U): Bool { return a.equals(other: b) }
+func outer<V: Equatable>(a: [V]): Bool { return eq(a: a, b: a) }
+func main() {
+    let x = eq(a: [1], b: [1])
+    let y = outer(a: ["s"])
+}
+)JOYEER"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    size_t arrayInstances = 0;
+    for (const auto& candidate : result.module->functions) {
+        if (candidate.name.rfind("eq<", 0) == 0) arrayInstances += callsTo(candidate, "arrayEqual");
+    }
+    EXPECT_EQ(arrayInstances, 2u);
+}
 } // namespace

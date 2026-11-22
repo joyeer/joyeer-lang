@@ -17,3 +17,16 @@ public enum Result<T, E> {
     Ok(T),
     Err(E),
 }
+
+// `==` and `!=` bind to this protocol by its role (decision 0031, spec 20.13). The integer types, `Bool`, `UInt8`,
+// `Float`, `Double`, `String` and `Void` conform by the compiler, with no witness method.
+@compiler_role(equatable)
+public protocol Equatable {
+    func equals(other: Self): Bool
+}
+
+// `X?` and `Result<X, Y>` conform when their payloads do: derived, they compare the tags and then the payloads
+// (decision 0031, spec 20.13.3). These two empty extensions are the one extension the role enums admit.
+extension Optional<T>: Equatable {}
+
+extension Result<T, E>: Equatable {}

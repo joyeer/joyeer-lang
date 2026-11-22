@@ -1,0 +1,7 @@
+// A derived `Equatable` conformance needs every stored field to conform (spec 20.13.5); a function field never does.
+struct Handler {
+    var name: String
+    var run: (Int): Int
+}
+
+extension Handler: Equatable {}

@@ -36,10 +36,15 @@ to v0.2).
 
 Comparisons are non-chaining: `1 < x < 10` is a syntax error.
 
-`==` and `!=` are not defined on `Optional` or `Result` (§2.4, §2.5), as they are not on user
-structures and enumerations; the operands are rejected with `type-checking.invalid-operator-operands`.
-Compare with `match`, for example `match x { .Some(_) => …, .None => … }`. Equality through a protocol
-is the subject of [plan 0012](../docs/plan/0012-equatable.md).
+`==` and `!=` are defined through the `Equatable` protocol (§20.13): they take two operands of one
+type that conforms, and `!=` is the negation of `==`. The builtin scalars, `String` and `Void` conform; a
+user structure or enumeration conforms only by declaring it, `X?`, `Result<X, Y>` and `[X]` conform when
+their components do, and function types and `Dict` never conform. Other operands are rejected with
+`type-checking.invalid-operator-operands`. Neither operand takes the enclosing expected type: an operand
+with no type of its own (`nil`, `.Red`, `[]`, a literal) is typed by the other operand, on either side.
+The left operand is evaluated before the right; how each is accessed is in §20.13.2. `x == nil` and
+`x != nil` test an optional's presence whatever its payload (§20.13.4). `Float` and `Double` equality
+is IEEE 754 equality: a NaN is not equal to itself, and `-0.0 == 0.0`.
 Signed `Int` division (`/`) truncates toward zero. The remainder (`%`) is
 zero or has the sign of the dividend; when defined, `a == (a / b) * b + a % b`.
 Both operators trap when the divisor is zero. Both also trap for the minimum

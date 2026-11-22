@@ -253,7 +253,8 @@ syntax::NodePtr Parser::parseTopLevelItem() {
         if (!cursor.at(kwFunc) && compilerAttributes) {
             auto declaration = parseTopLevelItem();
             if (declaration != nullptr &&
-                (declaration->kind == syntax::Kind::structDecl || declaration->kind == syntax::Kind::enumDecl)) {
+                (declaration->kind == syntax::Kind::structDecl || declaration->kind == syntax::Kind::enumDecl ||
+                 declaration->kind == syntax::Kind::protocolDecl)) {
                 std::static_pointer_cast<syntax::DeclSyntax>(declaration)->attributes = std::move(attributes);
                 if (modifier != nullptr) {
                     declaration->visibility = visibilityFor(modifier->kind);
@@ -263,7 +264,7 @@ syntax::NodePtr Parser::parseTopLevelItem() {
                 return declaration;
             }
             report(DiagnosticId::unsupportedSyntax, spanFrom(start),
-                   "compiler prelude annotations require a struct, enum or function");
+                   "compiler prelude annotations require a struct, enum, protocol or function");
             return declaration;
         }
         if (!cursor.at(kwFunc)) {

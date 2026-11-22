@@ -1,0 +1,28 @@
+// Ownership of equality (decision 0031, spec 20.13.2, 20.13.4): comparing arrays of a noncopyable type borrows the
+// elements, so each is destroyed once, when its array is; a temporary optional compared with `nil` is destroyed once.
+// `deinit` prints the id, so a copy or a double destroy would change the output; an array destroys its elements in
+// reverse order, `right` before `left`.
+struct Handle {
+    var id: Int
+    deinit() {
+        print(value: self.id)
+    }
+}
+
+extension Handle: Equatable {}
+
+func makeHandle(id: Int): Handle? {
+    return .Some(Handle(id: id))
+}
+
+func compareArrays(): Bool {
+    let left = [Handle(id: 1), Handle(id: 2)]
+    let right = [Handle(id: 1), Handle(id: 3)]
+    return left == right
+}
+
+func main() {
+    print(value: compareArrays())
+    print(value: makeHandle(id: 7) == nil)
+    print(value: "end")
+}

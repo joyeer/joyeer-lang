@@ -1,0 +1,46 @@
+// The baseline of `equality_arrays.joyeer` (plan 0012 phase 4): the same comparison as the collections prelude's
+// `arrayEqual`, written by hand, for a compiler without array `==`. Not a test; see README.md.
+func same(left: [Int], right: [Int]): Bool {
+    if left.count != right.count {
+        return false
+    }
+    var index = 0
+    while index < left.count {
+        if left[index] != right[index] {
+            return false
+        }
+        index = index + 1
+    }
+    return true
+}
+
+func build(size: Int, last: Int): [Int] {
+    var values: [Int] = []
+    var index = 0
+    while index < size - 1 {
+        &values.append(element: index * 3)
+        index = index + 1
+    }
+    &values.append(element: last)
+    return values
+}
+
+func main() {
+    let a = build(size: 64, last: 7)
+    var b = build(size: 64, last: 7)
+    var c = build(size: 64, last: 8)
+    var total = 0
+    var round = 0
+    while round < 1000000 {
+        &b[63] = round % 2 + 7
+        &c[0] = round % 3
+        if same(left: a, right: b) {
+            total = total + 1
+        }
+        if !same(left: a, right: c) {
+            total = total + 2
+        }
+        round = round + 1
+    }
+    print(value: total)
+}
