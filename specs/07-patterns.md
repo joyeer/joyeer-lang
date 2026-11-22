@@ -145,6 +145,7 @@ match reading {
 arm. Missing cases are a compile error with a list of the missing
 constructors. Over an Optional, the literal pattern `nil` matches `None`
 and covers it just as `.None` does, so `nil => 0, .Some(x) => x` is
-exhaustive.
+exhaustive. Over any other type, including a user enum named `Optional`
+(§2.4), a `nil` pattern is a type error.
 
 ---

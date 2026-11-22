@@ -1571,6 +1571,41 @@ TEST_F(TypeCheckingTest, NilPatternOnANonOptionalIsATypeMismatch) {
     }
 }
 
+TEST_F(TypeCheckingTest, NilPatternMismatchExplainsOnlyAnOptionalShadow) {
+    for (const auto* text : {
+            "enum Result<T, E> { Ok(T), Err(E) }\n"
+            "func f(value: Result<Int, Int>): Int { return match value { nil => 0, _ => 1 } }\n",
+            "func f(value: Result<Int, String>): Int { return match value { nil => 0, _ => 1 } }\n",
+            "func f(value: Bool): Int { return match value { nil => 0 } }\n",
+        }) {
+        SCOPED_TRACE(text);
+        ASSERT_NO_FATAL_FAILURE(check(text));
+        ASSERT_EQ(checking.diagnostics.size(), 1u) << joyeer::typing::dump(checking.diagnostics);
+        const auto& diagnostic = checking.diagnostics.front();
+        EXPECT_EQ(diagnostic.id, joyeer::typing::TypeCheckingDiagnosticId::typeMismatch);
+        ASSERT_TRUE(diagnostic.help.has_value()) << diagnostic.message;
+        EXPECT_NE(diagnostic.help->find("'nil' matches only an Optional"), std::string::npos) << *diagnostic.help;
+        EXPECT_EQ(diagnostic.help->find("not the prelude's"), std::string::npos) << *diagnostic.help;
+    }
+}
+
+TEST_F(TypeCheckingTest, NilPatternAcceptsEveryPreludeOptionalSpelling) {
+    ASSERT_NO_FATAL_FAILURE(check(R"JOYEER(
+enum Optional<T> { None, Some(T) }
+enum Box<T> { Of(T) }
+func sugar(value: Int?): Int { return match value { nil => 0, .Some(x) => x } }
+func payload(value: Box<Int?>): Int { return match value { .Of(nil) => 0, .Of(.Some(x)) => x } }
+func generic<T>(value: T?): Int { return match value { nil => 0, .Some(_) => 1 } }
+func genericPayload<T>(value: Box<T?>): Int { return match value { .Of(nil) => 0, .Of(.Some(_)) => 1 } }
+func main() {
+    let box: Box<Int?> = .Of(nil)
+    let some: Int? = sugar(value: nil)
+    print(value: generic(value: some) + genericPayload(value: box) + payload(value: box))
+}
+)JOYEER"));
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
 TEST_F(TypeCheckingTest, NilPatternUnderAnUnknownCaseReportsOnlyTheUnknownCase) {
     ASSERT_NO_FATAL_FAILURE(check(R"JOYEER(
 enum Pair { Of(Int) }
