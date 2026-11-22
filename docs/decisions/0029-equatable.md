@@ -269,3 +269,8 @@ choices.
   that choice, only enables a later `Hashable` one.
 - Swift's synthesized `Equatable` and Rust's `#[derive(PartialEq)]` both require an explicit opt-in for the same review
   reason, and both keep IEEE semantics for floats.
+- The cost gate (plan 0012 phase 4, `tests/perf/benchmark_equality.py`, Windows x64, 2026-11-22): against a compiler
+  from before this decision, scalar and `String` `==` are unchanged in speed and size at -O0 and -O2 (every paired
+  median ratio within noise; scalars at -O0 emit identical IR); array `==` costs the same as the same loop written
+  by hand (0.993 at -O0, 0.988 at -O2), and derived struct `==` the same as a hand-written field comparison at -O2
+  (1.005) and less at -O0 (0.677).

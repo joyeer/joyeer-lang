@@ -1,6 +1,6 @@
 # 0012: Equality through `Equatable`
 
-- Status: in progress (updated 2026-11-21); phases 1 to 4 are implemented (phase 4's benchmark is open); phase 5 (acceptance) is next
+- Status: in progress (updated 2026-11-21); phases 1 to 4 are done; phase 5 (acceptance) is next
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0024](../decisions/0024-library-optional-and-result.md) (rejects `==` on `Optional`/`Result`),
@@ -181,7 +181,15 @@ types it cannot compile (0024, "Equality is rejected").
   cases after a wildcard and non-exhaustive switches (older than this plan).
 - [x] Debug and Release CTest of phase 4. Evidence: at f984011 on Windows x64, Debug 2128 of 2128 and
   Release 2127 of 2127.
-- [ ] Benchmark scalar, string and array equality in both profiles against the pre-change baseline.
+- [x] Benchmark scalar, string and array equality in both profiles against the pre-change baseline.
+  Evidence: `tests/perf/benchmark_equality.py`, Windows x64, baseline compiler cf4fc78 (before phase 2)
+  against be17da5, both Release builds, 30 interleaved repetitions, paired median ratio and 95% bootstrap
+  interval. Arrays and derived structs have no baseline `==`, so the baseline compiles a hand-written
+  loop and field comparison. -O0: scalars 1.019 [1.009, 1.029], rerun at 60 repetitions 1.005 [0.998,
+  1.013] (the two compilers emit identical IR for it); strings 1.005 [0.994, 1.010]; arrays 0.993
+  [0.983, 1.000]; derived 0.677 [0.669, 0.681]. -O2: scalars 1.000 [0.981, 1.033]; strings 1.008
+  [0.997, 1.017]; arrays 0.988 [0.963, 1.053]; derived 1.005 [0.927, 1.033]. Executable sizes are
+  equal in every row. Raw reports in `out/perf-gate/equality`.
 
 ### Phase 5: acceptance
 
@@ -230,6 +238,10 @@ types may not; conformances stay in the type's module.
 - Existential `any Equatable`.
 
 ## Progress log
+
+- 2026-11-22: Phase 4's benchmark ran (`benchmark_equality.py`): no regression outside noise; the one
+  row whose first interval was above 1 (scalars at -O0) has identical IR and was within noise when
+  rerun. Phase 4 is done.
 
 - 2026-11-22: Phase 4 implemented (51b9953 tests, 872a1b2, bf42aa7 and f984011 review findings).
   Recursion through arrays closes phase 3's open item. A replacement role prelude must now declare

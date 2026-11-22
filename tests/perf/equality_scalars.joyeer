@@ -1,0 +1,30 @@
+// Scalar equality (decision 0029, plan 0012 phase 4): `Int`, `Bool` and `Double` `==` and `!=`, the builtin
+// comparison before and after `Equatable`. The same program is compiled by both compilers. Not a test; see README.md.
+func main() {
+    var total = 0
+    var index = 0
+    var real: Double = 0.0
+    while index < 70000000 {
+        let seven = index % 7
+        let five = index % 5
+        if seven == five {
+            total = total + 1
+        }
+        if seven != 3 {
+            total = total + 2
+        }
+        let even = index % 2 == 0
+        if even == true {
+            total = total + 4
+        }
+        if real == 3.5 {
+            total = total + 8
+        }
+        real = real + 0.5
+        if real == 10.0 {
+            real = 0.0
+        }
+        index = index + 1
+    }
+    print(value: total)
+}
