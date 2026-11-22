@@ -3012,4 +3012,24 @@ func presence(run: ((Int): Int)?): Bool { return run == nil }
     EXPECT_EQ(opcodeCount(function("presence"), joyeer::ir::Opcode::call), 0u);
     EXPECT_EQ(opcodeCount(function("presence"), joyeer::ir::Opcode::switchPattern), 1u);
 }
+
+// Adversarial finding on plan 0012 (phase 5): `a.equals(other: b)` on a type parameter instantiated with an array
+// calls the `arrayEqual` instance, as `a == b` does (spec 20.13.5).
+TEST_F(IRLoweringTest, ARequirementCallOnAnArrayInstanceCallsArrayEqual) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"JOYEER(func eq<U: Equatable>(a: U, b: U): Bool { return a.equals(other: b) }
+func outer<V: Equatable>(a: [V]): Bool { return eq(a: a, b: a) }
+func main() {
+    let x = eq(a: [1], b: [1])
+    let y = outer(a: ["s"])
+}
+)JOYEER"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    size_t arrayInstances = 0;
+    for (const auto& candidate : result.module->functions) {
+        if (candidate.name.rfind("eq<", 0) == 0) arrayInstances += callsTo(candidate, "arrayEqual");
+    }
+    EXPECT_EQ(arrayInstances, 2u);
+}
 } // namespace

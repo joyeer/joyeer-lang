@@ -4417,7 +4417,12 @@ namespace {
 
 class RolePreludeTest : public testing::Test {
 protected:
-    void load(const std::string& roles, const std::string& user) {
+    static std::string equatableDeclaration() {
+        return "@compiler_role(equatable)\npublic protocol Equatable {\n    func equals(other: Self): Bool\n}\n";
+    }
+
+    void load(const std::string& roles, const std::string& user,
+              const std::string& equatable = equatableDeclaration()) {
         Diagnostics lexerDiagnostics;
         LexParser lexer(&lexerDiagnostics);
         userSource = std::make_shared<SourceFile>(user);
@@ -4428,8 +4433,7 @@ protected:
 
         // The collections prelude constrains `arrayEqual` by `Equatable` (decision 0029), so every replacement role
         // prelude declares it too.
-        roleSource = std::make_shared<SourceFile>(
-                roles + "@compiler_role(equatable)\npublic protocol Equatable {\n    func equals(other: Self): Bool\n}\n");
+        roleSource = std::make_shared<SourceFile>(roles + equatable);
         lexer.parse(roleSource);
         ASSERT_TRUE(lexerDiagnostics.errors.empty());
         for (auto& token : roleSource->tokens) token->span.sourceId = 1;
@@ -4443,8 +4447,9 @@ protected:
         if (resolution.succeeded()) checking = joyeer::typing::TypeChecker().check(resolution.model);
     }
 
-    bool rejectedAsInvalidPrelude(const std::string& roles, const std::string& needle) {
-        load(roles, "func main() {}\n");
+    bool rejectedAsInvalidPrelude(const std::string& roles, const std::string& needle,
+                                  const std::string& equatable = equatableDeclaration()) {
+        load(roles, "func main() {}\n", equatable);
         if (!resolution.succeeded()) return false;
         for (const auto& diagnostic : checking.diagnostics) {
             if (diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::invalidPrelude &&
@@ -5011,5 +5016,68 @@ TEST_F(TypeCheckingTest, AConsumedMemberCallIsNotAnEqualityOperand) {
           "struct Holder {\n    var t: Token?\n    consuming func take(): Token? {\n        return consume self.t\n    }\n}\n"
           "func run(h: consuming Holder): Bool {\n    return (consume h.take()) == nil\n}\n");
     EXPECT_TRUE(hasTypeDiagnostic(checking, joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+namespace {
+
+// The `equatable` role binds `==` (decision 0029): the role prelude's protocol must have exactly the requirement
+// `func equals(other: Self): Bool`, and only one protocol may carry the role (plan 0012 phase 2).
+class EquatableRoleTest : public RolePreludeTest {};
+
+TEST_F(EquatableRoleTest, TheEquatableRoleShapeIsChecked) {
+    const auto roles = optionalDeclaration() + resultDeclaration();
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            roles, "equatable", "@compiler_role(equatable)\npublic protocol Equatable {\n    func equals(other: Int): Bool\n}\n"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            roles, "equatable", "@compiler_role(equatable)\npublic protocol Equatable {\n    func equals(to: Self): Bool\n}\n"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            roles, "equatable", "@compiler_role(equatable)\npublic protocol Equatable {\n    func equals(other: Self): Int\n}\n"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            roles, "equatable",
+            "@compiler_role(equatable)\npublic protocol Equatable {\n    mutating func equals(other: Self): Bool\n}\n"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            roles, "equatable",
+            "@compiler_role(equatable)\npublic protocol Equatable {\n    func equals(other: Self): Bool\n    func hash(): Int\n}\n"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            roles, "second",
+            equatableDeclaration() + "@compiler_role(equatable)\npublic protocol Same {\n    func equals(other: Self): Bool\n}\n"));
+    load(roles, "func main() {}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+}  // namespace
+
+// Adversarial findings on plan 0012 (phase 5): operand typing does not depend on the side, help suggests the
+// conformance that works, and a payload is named by its case and position.
+TEST_F(TypeCheckingTest, OperandTypingIsTheSameOnEitherSide) {
+    check("enum Pair<A, B> {\n    Left(A),\n    Right(B),\n}\nextension Pair<A, B>: Equatable {}\n"
+          "func cases(r: Result<Int, String>, p: Pair<Int, String>, a: Optional<Int?>): Bool {\n"
+          "    return Result.Ok(1) == r && Result.Err(\"x\") == r && Pair.Left(1) == p && Optional.Some(nil) == a\n"
+          "}\n"
+          "func literals(): Bool { return [[]] == [[1]] && [[1]] == [[]] && 0 == 0.5 && 0.5 == 0 }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ConformanceHelpSuggestsTheExtensionThatWorks) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("struct T {\n    var x: Int\n}\nextension T {\n    func equals(other: T): Bool { return true }\n}\n"
+          "func f(): Bool { return T(x: 1) == T(x: 2) }\n");
+    EXPECT_TRUE(diagnosticHelpContains(checking, Id::invalidOperatorOperands, "extension T: Equatable {}"))
+            << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_FALSE(diagnosticHelpContains(checking, Id::invalidOperatorOperands, "func equals"))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("struct Plain {\n    var x: Int\n    var y: String\n}\nfunc f(a: Plain): Bool { return a == a }\n");
+    EXPECT_TRUE(diagnosticHelpContains(checking, Id::invalidOperatorOperands, "extension Plain: Equatable {}"))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("struct Point {\n    var equals: Int\n}\nextension Point: Equatable {}\n");
+    EXPECT_FALSE(diagnosticHelpContains(checking, Id::missingWitness, "declare the method"))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, APayloadIsNamedByItsCaseAndPosition) {
+    check("struct Holder {\n    var run: (Int): Int\n}\n"
+          "enum Job {\n    Wrap(Holder),\n    Idle,\n}\nextension Job: Equatable {}\n");
+    EXPECT_NE(joyeer::typing::dump(checking.diagnostics).find("'Wrap.0'"), std::string::npos)
             << joyeer::typing::dump(checking.diagnostics);
 }

@@ -2289,3 +2289,35 @@ TEST_F(CollectionRoleTest, ExpandingRecursionThroughARoleArrayIsRejected) {
 }
 
 } // namespace
+
+namespace {
+
+// The `array_equal` role (decision 0029) is `private func name<T: Equatable>(left: [T], right: [T]): Bool` with a
+// body, declared once (plan 0012 phase 2).
+std::string arrayEqualDeclaration(const std::string& head, const std::string& body = "return true") {
+    return "\n@compiler_role(array_equal)\n" + head + " {\n    " + body + "\n}\n";
+}
+
+TEST_F(CollectionRoleTest, TheArrayEqualRoleShapeIsChecked) {
+    const std::string good = "private func same<T: Equatable>(left: [T], right: [T]): Bool";
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            buffer() + arrayEqualDeclaration("private func same<T>(left: [T], right: [T]): Bool"), "array_equal"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            buffer() + arrayEqualDeclaration("private func same<T: Equatable>(a: [T], b: [T]): Bool"), "array_equal"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            buffer() + arrayEqualDeclaration("private func same<T: Equatable>(left: [T], right: T): Bool"),
+            "array_equal"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            buffer() + arrayEqualDeclaration("private func same<T: Equatable>(left: [T], right: [T]): Int", "return 0"),
+            "array_equal"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            buffer() + arrayEqualDeclaration("public func same<T: Equatable>(left: [T], right: [T]): Bool"),
+            "array_equal"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            buffer() + arrayEqualDeclaration(good) +
+                    arrayEqualDeclaration("private func other<T: Equatable>(left: [T], right: [T]): Bool"),
+            "second"));
+    EXPECT_FALSE(rejectedAsInvalidPrelude(buffer() + arrayEqualDeclaration(good), "array_equal"));
+}
+
+}  // namespace
