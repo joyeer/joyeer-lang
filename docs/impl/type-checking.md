@@ -194,9 +194,12 @@ The current checker validates:
   Exhaustiveness uses a recursive pattern matrix rather than a set of outer
   constructor names. Refutable payloads do not cover their whole constructor;
   complementary Boolean and nested enum patterns can cover it collectively.
-  Wildcards stay symbolic rather than enumerating payload products. Analysis
-  is bounded to 4096 specializations and depth 256; an otherwise unproved
-  pathological matrix conservatively requires a catch-all arm.
+  Wildcards stay symbolic rather than enumerating payload products. A `nil`
+  pattern over an Optional covers its absent case, exactly like `.None`.
+  Analysis is bounded to 4096 specializations and depth 256; an otherwise
+  unproved pathological matrix conservatively requires a catch-all arm. Enum
+  cases are specialized in declaration order, so whether a match fits the
+  budget does not depend on hash-map iteration order or the platform.
 
 A method call checks its receiver like an argument: the written marker
 (`&` or `consume`, or none) must match the method's receiver effect, a
@@ -323,7 +326,7 @@ The intended rules above must not be weakened to describe these bugs:
 |---|---|---|
 | Writable argument types | Optional value promotion can be accepted for `inout` or `initializing` storage and rejected only by IR verification. | Writable storage types are invariant unless explicit writeback conversion semantics exist. |
 | Contextual branch results | Expected types can be lost when checking block and `if` results. | Propagate context into reachable trailing expressions. |
-| `nil` patterns | Optional `nil` does not contribute `.None` coverage, while nonoptional `nil` can produce an error type without a diagnostic. | Normalize optional coverage and diagnose invalid pattern types at this stage. |
+| `nil` patterns | A `nil` pattern whose expected type is not the prelude's Optional (in any pattern position, including a user enum named `Optional`) gets an error type without a type-checking diagnostic and fails only in IR lowering, without a stage-appropriate message. | Diagnose invalid pattern types at this stage. |
 
 These remaining issues concern stage-appropriate diagnostics and contextual
 typing. Passing the current tests is not a proof that every possible

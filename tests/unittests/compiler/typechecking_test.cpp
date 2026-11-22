@@ -1515,19 +1515,37 @@ func absentOnly(value: Int?): Int {
 func refutablePresent(value: Bool?): Int {
     return match value { nil => 0, .Some(true) => 1 }
 }
+func outerAbsentOnly(value: Optional<Int?>): Int {
+    return match value { nil => 1, .Some(.Some(x)) => x }
+}
+enum Pair { Of(Int?, Int?) }
+func payloadPosition(value: Pair): Int {
+    return match value { .Of(nil, _) => 0, .Of(.Some(x), nil) => x }
+}
 )JOYEER"));
-    ASSERT_EQ(checking.diagnostics.size(), 2u) << joyeer::typing::dump(checking.diagnostics);
+    ASSERT_EQ(checking.diagnostics.size(), 4u) << joyeer::typing::dump(checking.diagnostics);
     for (const auto& diagnostic : checking.diagnostics) {
         EXPECT_EQ(diagnostic.id, joyeer::typing::TypeCheckingDiagnosticId::nonExhaustiveMatch);
     }
+}
+
+TEST_F(TypeCheckingTest, NilPatternDoesNotCoverAUserEnumNamedOptional) {
+    ASSERT_NO_FATAL_FAILURE(check(R"JOYEER(
+enum Optional<T> { None, Some(T) }
+func unwrap(value: Optional<Int>): Int {
+    return match value { nil => 0, .Some(x) => x }
+}
+)JOYEER"));
+    EXPECT_FALSE(checking.succeeded());
 }
 
 // Case specialization follows declaration order, so the 4096-specialization budget does not depend on how a hash map
 // orders an enum's members. In declaration order the failing default matrix below stops at `Missing` after one
 // specialization and the whole match costs 3 + t + t*k*(2^n - 1) = 3 + 8 + 8*2*255 = 4091. Visiting a wide case
 // before `Missing` adds 255 and runs out of budget, which would wrongly report the match as non-exhaustive.
-// A member map's order can shift with unrelated declarations: with MSVC's library `Beta` shares `Missing`'s bucket,
-// and each copy of the scope table swaps the two, so the trailing functions here put `Beta` first.
+// A member map's order can shift with unrelated declarations. At the time of writing, with MSVC's standard library,
+// `Beta` shares `Missing`'s bucket and each copy of the scope table swaps the two, so the trailing functions here put
+// `Beta` first; other libraries may happen to pass without declaration order.
 TEST_F(TypeCheckingTest, SpecializesEnumCasesInDeclarationOrder) {
     constexpr size_t tops = 8;
     constexpr size_t bits = 8;

@@ -121,6 +121,8 @@ match reading {
 
 `match` over an enum or `Bool` must cover all cases or include a `_`
 arm. Missing cases are a compile error with a list of the missing
-constructors.
+constructors. Over an Optional, the literal pattern `nil` matches `None`
+and covers it just as `.None` does, so `nil => 0, .Some(x) => x` is
+exhaustive.
 
 ---
