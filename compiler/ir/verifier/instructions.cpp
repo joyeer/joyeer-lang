@@ -32,8 +32,8 @@ bool validFloatingLiteral(typing::TypeKind kind, std::string_view text) {
 // The type checker's pattern matrix (`patternMatrixIsExhaustive` in compiler/frontend/typechecking.cpp)
 // over IR patterns of verified types: whether the rows cover every tuple of values of the column types.
 // A wildcard covers its column; `true` and `false` together cover `Bool`; one case pattern per case
-// covers an enum when the rows of each case cover its payloads. Other literals cover nothing alone, and
-// neither does an enum without cases or an uninhabited payload: those need a wildcard.
+// covers an enum when the rows of each case cover its payloads. Other literals cover nothing alone, an
+// uninhabited payload still needs a pattern, and only a wildcard covers an enum without cases.
 class SwitchCoverage {
 public:
     using Row = std::vector<const Pattern*>;  // null is a wildcard that specialization put in for a payload
@@ -49,10 +49,10 @@ public:
             })) {
             return true;
         }
-        // Past the budget the answer is "not covered". Lowered `match` dispatch never gets there: the type
-        // checker gives up on the same matrix with a smaller budget and then requires a catch-all arm, which
-        // covers at once above.
-        if (remaining == 0 || depth == 256) return false;
+        // Past the budget or the depth the answer is "covered", so a switch is rejected only for a value that
+        // no case matches. The type checker's matrix is not this one (it gives `nil` no coverage and visits
+        // enum cases in another order), so a match it accepts can still cost more here.
+        if (remaining == 0 || depth == 256) return true;
         --remaining;
 
         // The rows whose first pattern is a wildcard or one that `admits`, with the first column replaced by

@@ -1173,6 +1173,8 @@ TEST(IRModelTest, SwitchPatternRejectsCasesThatMissAValue) {
         { "None alone", switchModule(4, { enumCase(4, 12) }) },
         { "Some(true), None", switchModule(4, { someBool(boolean(true)), enumCase(4, 12) }) },
         { "Bool: true", switchModule(2, { boolean(true) }) },
+        // The backend truncates a Boolean literal to its low bit, so only 0 and 1 count as `false` and `true`.
+        { "Bool: 2, false", switchModule(2, { literal(PatternKind::booleanLiteral, 2, 2), boolean(false) }) },
         { "Int literals", switchModule(1, { integer(1), integer(2) }) },
         // An uninhabited payload does not remove its case: every case still needs a pattern.
         { "Never?: None alone", switchModule(5, { enumCase(5, 12) }) },

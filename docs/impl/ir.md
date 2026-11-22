@@ -396,15 +396,18 @@ The first matching case wins, and the case list obeys two rules the verifier enf
   and does not lower the arms after it; type checking has already checked them. A nested
   wildcard payload may be followed by further cases, and a case that earlier cases already
   cover is allowed.
-- **The cases cover every value of the scrutinee** (`ir.non-exhaustive-switch`). Coverage is
-  the type checker's pattern matrix over the IR patterns: a wildcard covers its position, `true`
-  and `false` together cover `Bool`, and one case per enum case covers the enum when, for each
-  case, the patterns of that case cover its payloads the same way. Integer, floating, string and
-  byte literals never cover their type, so a switch over one ends with a wildcard. An enum
-  without cases, and a case whose payload is uninhabited (`Never?`'s `.Some`), still need a
-  pattern or a wildcard. Past a fixed work budget the answer is "not covered"; lowered `match`
-  dispatch never reaches it, because the type checker gives up on the same matrix sooner and
-  then requires a catch-all arm. The `?` propagation switch names both role cases.
+- **The cases cover every value of the scrutinee** (`ir.non-exhaustive-switch`). Coverage uses
+  the type checker's pattern-matrix algorithm over the IR patterns: a wildcard covers its
+  position, `true` and `false` together cover `Bool`, and one case per enum case covers the enum
+  when, for each case, the patterns of that case cover its payloads the same way. Integer,
+  floating, string and byte literals never cover their type, so a switch over one ends with a
+  wildcard. A case whose payload is uninhabited (`Never?`'s `.Some`) still needs a pattern, and
+  only a wildcard covers an enum without cases. The check has a fixed work budget and depth;
+  past either it treats the rest as covered, so it rejects only a switch where it found a value
+  that no case matches. The budget cannot be tied to the type checker's: the IR matrix is not
+  the same (a `nil` pattern is `.None` here but covers nothing in the type checker, and the two
+  visit enum cases in different orders), so a match that the type checker settles quickly can
+  cost more here. The `?` propagation switch names both role cases.
 
 The LLVM backend lowers the high-level pattern list into tag and value tests in order. It
 branches to the first wildcard without testing further cases, and ends the tests with
