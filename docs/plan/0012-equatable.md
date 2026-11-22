@@ -1,6 +1,6 @@
 # 0012: Equality through `Equatable`
 
-- Status: in progress (updated 2026-11-22); phases 1 to 4 are done, and phase 5 is done on Windows x64; validation on the other platforms remains
+- Status: in progress (updated 2026-11-22); phases 1 to 4 are done, and phase 5 is done on Windows x64 and Linux x86_64; validation on macOS and ARM64 remains
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0024](../decisions/0024-library-optional-and-result.md) (rejects `==` on `Optional`/`Result`),
@@ -206,7 +206,11 @@ types it cannot compile (0024, "Equality is rejected").
 - [ ] Run full `scripts/validate.py` in Debug and Release on every supported platform. Report gates
   that were not run. Windows x64 done: at 1d9d006, Debug and Release each build, pass CTest 2140 of 2140
   (Fern.Workspace, and in Release Fern.Manifest, passed on the validator's rerun) and `fern test` 7 of 7.
-  Not run: Linux x86_64, macOS and ARM64 (no host here).
+  Linux x86_64 done (Ubuntu 26.04 in WSL, GCC 15, a fresh Git clone): at 441a3d8 only the two CodeView
+  equality debug compiles failed (`-gcodeview` is Windows-only), registered on Windows only in ac41037;
+  at ac41037, Debug and Release each build, pass CTest 2114 of 2114 and `fern test` 7 of 7. The Windows
+  run stands, since ac41037 changes only what is registered off Windows. Not run: macOS and ARM64 (no host
+  here).
 - [ ] Update `docs/impl/supported-features.md` and the implementation notes. Delete this plan when
   everything is checked.
 
@@ -254,6 +258,8 @@ types may not; conformances stay in the type's module.
 
 ## Progress log
 
+- 2026-11-22: Linux x86_64 validation in WSL: the CodeView equality debug compiles were registered on every
+  platform (ac41037 restricts them to Windows); then `scripts/validate.py` passes in Debug and Release.
 - 2026-11-22: Phase 5 on Windows x64: the adversarial tester and the final type-system and IR/backend
   reviews, their findings fixed (aee8810/55ae981, bb65dbe/d41d071/1d9d006), phase 2's shape check done,
   and `scripts/validate.py` passing in Debug and Release at 1d9d006. The other platforms are not run.
