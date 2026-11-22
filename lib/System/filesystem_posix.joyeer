@@ -167,49 +167,39 @@ func nativeOpenNew(path: [UInt8]): Int {
     return stream
 }
 
-// A stream's error is retried when it was only an interrupted system call.
+// Check the stream error even after a partial transfer. Clear EINTR before
+// returning progress so the next call does not inherit the sticky error.
+@platform(macos)
+private func transferError(handle: Int): Int {
+    if ferrorP(stream: handle) == 0 { return 0 }
+    let code = cErrno() as Int
+    if code == interrupted { clearerrP(stream: handle) }
+    if code == 0 { return writeFaultCode() }
+    return code
+}
+
 @platform(macos)
 func nativeRead(handle: Int, buffer: inout [UInt8], count: Int): Int {
-    var outcome = 0
-    var retry = true
-    while retry {
-        retry = false
-        let got = freadP(buffer: &buffer, size: 1, count: count, stream: handle)
-        if got > 0 {
-            outcome = got
-        } else if ferrorP(stream: handle) != 0 {
-            let code = 0 - lastFailure()
-            if code == interrupted {
-                clearerrP(stream: handle)
-                retry = true
-            } else {
-                outcome = 0 - code
-            }
-        }
+    var got = 0
+    var code = interrupted
+    while got == 0 && code == interrupted {
+        got = freadP(buffer: &buffer, size: 1, count: count, stream: handle)
+        code = transferError(handle: handle)
     }
-    return outcome
+    if code != 0 && code != interrupted { return 0 - code }
+    return got
 }
 
 @platform(macos)
 func nativeWrite(handle: Int, buffer: [UInt8], count: Int): Int {
-    var outcome = 0
-    var retry = true
-    while retry {
-        retry = false
-        let written = fwriteP(buffer: buffer, size: 1, count: count, stream: handle)
-        if written > 0 {
-            outcome = written
-        } else if ferrorP(stream: handle) != 0 {
-            let code = 0 - lastFailure()
-            if code == interrupted {
-                clearerrP(stream: handle)
-                retry = true
-            } else {
-                outcome = 0 - code
-            }
-        }
+    var written = 0
+    var code = interrupted
+    while written == 0 && code == interrupted {
+        written = fwriteP(buffer: buffer, size: 1, count: count, stream: handle)
+        code = transferError(handle: handle)
     }
-    return outcome
+    if code != 0 && code != interrupted { return 0 - code }
+    return written
 }
 
 @platform(macos)

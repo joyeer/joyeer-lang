@@ -4,7 +4,7 @@
   declarations remain as C (`lib/Runtime/include/joyeer/`). Tier 1 and Tier 2 are done on Windows x64
   and Linux x86-64 (stages 0 to 10 of the [todo list](#11-todo)). macOS ARM64 passes functional
   validation and the archive audit, but linked `System` programs still import stdio. Open:
-  remaining platform and POSIX acceptance (9.4) and the Tier 2 import gates for macOS `System`,
+  remaining platform acceptance (9.4) and the Tier 2 import gates for macOS `System`,
   Windows ARM64, and Linux AArch64 (10.7, 10.8).
 - Decisions: [0005](../decisions/0005-runtime-unsafe-memory.md), [0008](../decisions/0008-runtime-core-build-shape.md)
   to [0011](../decisions/0011-runtime-without-the-c-library.md)
@@ -107,7 +107,7 @@ state, and the change is its own phase (R12).
 | User generics | [§20](../../specs/20-protocols.md) (proposed) | Lets D2 move to compiler-specialized containers |
 | Runtime archive in `lib/` | [toolchain libraries](0006-toolchain-libraries.md#todo) | Do it with R9, when the compiler builds the archive |
 | Sanitizer builds | [test audit](0005-test-audit.md) item 3 | The main safety net for unchecked address code |
-| POSIX verification of `System` | [filesystem plan](0007-filesystem.md#verify-the-posix-variants-blocks-claiming-linux-and-macos) | Same hosts and gates as this plan's platform acceptance |
+| POSIX verification of `System` | [host-operation validation](../impl/supported-features.md#host-operation-validation) | Full Linux x86_64 and macOS ARM64 functional runs; remaining platform evidence is tracked in 9.4 |
 
 ## 3. Inventory
 
@@ -579,14 +579,17 @@ Start any time after 5.3.
   Release `InstalledCompilerNativeHello` and `Fern.Installed` passed; a relocated Debug installer
   prefix compiled and ran `hello`. `StandardLibrary` does not install a second copy.
 - [ ] 9.4 Platform acceptance (§8) on Windows x64 and ARM64, Linux and macOS,
-  together with the POSIX verification of `System` ([filesystem plan](0007-filesystem.md#verify-the-posix-variants-blocks-claiming-linux-and-macos)).
+  together with [host-operation validation](../impl/supported-features.md#host-operation-validation).
   Recorded on Windows x64 and Linux x86-64 (Debug and Release, 1188 tests on Linux under WSL2).
   A clean macOS ARM64 checkout at `9b334ec` passed full Debug and Release validation using
   LLVM 22.1.8 and the macOS 26.5 SDK/deployment target: unfiltered CTest 2019/2019 and
   `fern test` 7/7 in each configuration, including `SystemTests`, Compression, moss, and
   the fern bootstrap. Both installed configurations from the code-identical `799dce4` build
-  compiled and ran `hello` after relocation. Open: Windows ARM64, Linux AArch64, and the
-  remaining POSIX checks in plan 0007.
+  compiled and ran `hello` after relocation. The later macOS host-operation run also passed
+  CTest 2023/2023 and `fern test` 7/7 in both configurations.
+  The maintainer handles Windows and Linux coverage separately. Native Windows ARM64 and Linux
+  AArch64 run details, Linux `statx`/`getdents64` ABI checks, child environment and exact error-code
+  evidence, and the minimum Linux kernel and toolchain libc versions are not recorded here.
 
 ### Stage 10: No C library (Tier 2: R10 to R12)
 
@@ -624,6 +627,9 @@ Start any time after 5.3.
 
 ## Progress log
 
+- 2026-11-22: Retired the host-operations plan after macOS ARM64 validation and reader
+  allocation measurements. Kept remaining Windows and Linux platform evidence under 9.4;
+  the separate macOS no-stdio gate (10.7) remains open.
 - 2026-11-22: Completed 9.3. The macOS ARM64 Debug and Release validator passed CTest 2019/2019
   and `fern test` 7/7 in each configuration without reruns. The packaging tests failed before
   the move and passed afterward. A clean Debug build without Compression also passed the

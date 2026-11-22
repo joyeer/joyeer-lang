@@ -1,9 +1,9 @@
 # 0004: Replace the compiler-known host built-ins with the System library
 
-- Status: accepted and implemented (decided and built 2026-11-07), verified on
-  Windows x64 Debug only.
-  The Joyeer variants for Linux and macOS have not run, so those platforms are
-  unverified; the C implementations were removed with the built-ins.
+- Status: accepted and implemented (decided and built 2026-11-07).
+  The C implementations were removed with the built-ins. See
+  [host-operation validation](../impl/supported-features.md#host-operation-validation)
+  for current platform results.
 - Spec: [§18](../../specs/18-host.md) now says the operations are `System` functions
   and no longer calls them compiler-known.
 
@@ -63,9 +63,8 @@ Order, because each step must keep the suite green:
 
 ## As built
 
-Step 3 was done without step 2, at the owner's request, so Linux and macOS now
-run only Joyeer code that has never executed there
-([filesystem plan](../plan/0007-filesystem.md#verify-the-posix-variants-blocks-claiming-linux-and-macos)).
+The built-ins were removed before POSIX verification. The Joyeer
+implementation has since passed full Linux x86_64 and macOS ARM64 validation.
 
 - **Enumerations stay in the prelude on purpose.** `FileSystemError`, `FileKind`,
   `ProcessStatus`, `ProcessError`, `StderrError`, `StdinError` and `IOError` are

@@ -77,7 +77,6 @@ iteration, a progress log, and deletion once every item is done. Start from the
 | [0004](plan/0004-native-link-inputs.md) | Linking native libraries by logical name and search path (proposed) |
 | [0005](plan/0005-test-audit.md) | Test coverage gaps: fuzzing, sanitizers, CI, ownership generators, spec traceability |
 | [0006](plan/0006-toolchain-libraries.md) | How the compiler finds standard modules (implemented) and what is left: the runtime in `lib/`, `--sysroot` in fern, precompiled modules |
-| [0007](plan/0007-filesystem.md) | Remaining work after the host operations moved into `System`: POSIX verification, Compression/moss verification, and the allocation contract |
 | [0008](plan/0008-runtime-in-joyeer.md) | The plan to write the whole runtime in Joyeer: definition of done, the core dialect, open design decisions, capabilities, phases and acceptance gates |
 | [0009](plan/0009-concurrency.md) | What is left of the concurrency work (tasks, channels and the worker-pool server are done): gates not yet run, compiler gaps, deferred features |
 | [0012](plan/0012-equatable.md) | `==` and `!=` through the `Equatable` protocol: builtin, derived and generic equality, `nil` comparison |

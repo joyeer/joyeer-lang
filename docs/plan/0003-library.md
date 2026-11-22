@@ -1,6 +1,6 @@
 # 0003: Library Modules and fern
 
-- Status: in progress (updated 2026-11-12)
+- Status: in progress (updated 2026-11-22)
 - Decisions: [0004](../decisions/0004-remove-host-builtins.md), [0015](../decisions/0015-noncopyable-and-linear-types.md)
 - Spec: [§9](../../specs/09-contracts.md), [§12.5](../../specs/12-modules.md#125-standard-modules),
   [§18](../../specs/18-host.md)
@@ -68,7 +68,8 @@ Follow [building](../building.md) and record evidence in the implementation note
 - [ ] System owned OS resources: open files, directory handles and child processes as values. `deinit`
   and noncopyable types now exist (decision 0015); design the handles. Until then every operation opens
   and closes within one call.
-- [ ] Verify the POSIX variants of `System` ([filesystem plan](0007-filesystem.md)).
+- [x] Verify the POSIX variants of `System` on Linux x86_64 and macOS ARM64.
+  Evidence: [full Debug and Release validation](../impl/supported-features.md#host-operation-validation).
 - [ ] `Collections`, when a concrete consumer needs it.
 - [ ] `Testing`, when a concrete consumer needs it; then use it in test modules.
 
@@ -94,5 +95,6 @@ Registry packages and a binary-library ABI are in [package manager](0001-package
 
 ## Progress log
 
+- 2026-11-22: Recorded the Linux x86_64 and macOS ARM64 `System` validation.
 - 2026-11-12: converted to the plan template; the owned-resources item now notes that `deinit` and
   noncopyable types are implemented.

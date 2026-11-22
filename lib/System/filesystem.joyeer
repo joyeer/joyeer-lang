@@ -59,11 +59,13 @@ func firstFailure(work: Int, closed: Int): Int {
 // Reads from the start until end of file, or until `maximum` bytes when
 // `bounded`. Returns 0, or the native error code.
 func readLoop(handle: Int, data: inout [UInt8], maximum: Int, bounded: Bool): Int {
-    var chunk = zeroBuffer(count: chunkSize)
+    if bounded && maximum == 0 { return 0 }
+    let capacity = if bounded && maximum < chunkSize { maximum } else { chunkSize }
+    var chunk = zeroBuffer(count: capacity)
     var code = 0
     var done = false
     while !done {
-        var wanted = chunkSize
+        var wanted = capacity
         if bounded {
             let remaining = maximum - data.count
             if remaining <= 0 {

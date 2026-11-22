@@ -76,7 +76,7 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Processes (`System`) | Synchronous `runProcess` with explicit executable, argument array and child directory; typed completion and launch/wait errors; no implicit shell or PATH lookup |
 | Compiler output | Frontend validation, textual LLVM IR, native executables, optimization flags, debug information, and native debug artifacts |
 | Internal C bindings | Explicitly authorized scalar imports/exports, restricted borrowed/initializing buffer imports, bare `[UInt8]` data pointers (`pointer:`, borrowed or `inout`), runtime-only memory intrinsics (`joyeer_intrinsic_*`: address-of, loads, stores, atomic add), scalar or `Void` results, runtime-object output, and explicit native-library link inputs |
-| System library (Joyeer) | `import System` provides the nine §18.2 filesystem operations, legacy `readFile`, `runProcess` (§18.3), `writeStderr` (§18.4) and `readStdinLine` (§18.5), written in Joyeer over kernel32 (Windows) or libc (POSIX; processes use `posix_spawn`; the standard streams use the C library's own stdio) through `@platform` variants. They are no longer compiler-known built-ins and the C runtime has no filesystem, process, stderr, stdin or `readFile` code. Verified by `SystemTests` and the end-to-end fixtures on Windows x64 Debug. The POSIX variants type-check for Linux and macOS but have not run there |
+| System library (Joyeer) | `import System` provides the nine §18.2 filesystem operations, legacy `readFile`, `runProcess` (§18.3), `writeStderr` (§18.4) and `readStdinLine` (§18.5). The platform variants use Win32, Linux system calls, or macOS libSystem. Standard input and error use the runtime's streams; macOS file I/O still uses stdio. See [host-operation validation](#host-operation-validation) |
 | Platform selection | `@platform(windows, linux, macos, posix)` (one or more names) on top-level functions ([§11.5](../../specs/11-annotations.md#115-platform)). The selected variant is kept and the others are removed before name resolution; the target is the host. `CompileOptions.targetPlatform` can name another, but only for `validate` output (`driver.unsupported-target-platform` otherwise); there is no command-line option. Dropped variants must parse and keep valid annotations but are not resolved or type-checked; a failed selection reports only `platform.*` diagnostics |
 | Top-level constants | Top-level `let` with an explicit type and a compile-time initializer: `Bool`, numbers, `String`, and nested arrays of those, up to 1 MiB of data per constant; `public` constants work across modules. Overflow and other evaluation errors are compile-time errors (`ir-lowering.invalid-constant`). Structs, enums, dictionaries and function calls are not supported |
 | Optional Compression library | Separately built miniz-backed classic ZIP creation, listing, and bounded in-memory extraction; see [Compression](compression.md) |
@@ -126,6 +126,21 @@ fast-math assumptions. Floating remainder and unsigned unary minus are not
 supported. New scalars can be stored in arrays, fields, and enum/optional/result
 payloads; dictionary keys support only `Int`, `Bool`, `UInt8`, and `String`, and any other key type is
 rejected at the type (`type-checking.invalid-type-argument`).
+
+### Host-operation validation
+
+The filesystem, process and standard-stream fixtures, `SystemTests`, and fern
+bootstrap passed full Debug and Release validation on Windows x64 and Linux
+x86_64 (WSL2) at [`a14b5f2`](runtime.md#collection-validation). On macOS ARM64,
+the filesystem retry and prefix-reader changes based on `8289622` passed
+CTest 2023/2023 and `fern test` 7/7 in each configuration, without reruns,
+using LLVM 22.1.8 and SDK 26.5. The run covered Compression, moss, and the
+macOS ABI, exact error-code and interrupted-call checks. Intel and universal
+macOS builds are rejected at configure time. Windows and Linux platform
+acceptance beyond the recorded runs is tracked in the
+[runtime plan](../plan/0008-runtime-in-joyeer.md#stage-9-remove-the-c-r9).
+See [reader allocation costs](runtime.md#reader-allocation-costs) for the
+measured prefix and stdin tradeoffs.
 
 ## Source-implemented local project tool
 

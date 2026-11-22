@@ -29,6 +29,18 @@ if(WIN32)
     endif()
 endif()
 
+if(APPLE)
+    if(CMAKE_OSX_ARCHITECTURES)
+        set(_joyeer_macos_arch "${CMAKE_OSX_ARCHITECTURES}")
+    else()
+        set(_joyeer_macos_arch "${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+    if(NOT _joyeer_macos_arch STREQUAL "arm64")
+        message(FATAL_ERROR
+            "Joyeer supports native macOS ARM64 builds only; System uses the ARM64 filesystem ABI.")
+    endif()
+endif()
+
 cmake_policy(SET CMP0110 NEW)
 if(POLICY CMP0135)
     cmake_policy(SET CMP0135 NEW)

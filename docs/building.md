@@ -12,7 +12,10 @@ development SDK** matching the native architecture.
 |---|---|
 | Windows | Visual Studio Desktop development with C++, MSVC, Windows SDK, and DIA SDK |
 | Linux | libc development files and startup objects; LLVM, LLD, and Clang development libraries from the same SDK |
-| macOS | Xcode Command Line Tools, a compatible macOS SDK, and matching LLVM/LLD development packages |
+| macOS ARM64 | Xcode Command Line Tools, a compatible macOS SDK, and matching LLVM/LLD development packages |
+
+Intel and universal macOS builds are not supported. The `System` file bindings use
+the native ARM64 filesystem ABI.
 
 On Windows, use the full `clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz`
 or `clang+llvm-22.1.8-aarch64-pc-windows-msvc.tar.xz` archive, not the

@@ -58,10 +58,17 @@ platform code (or the platform's invalid-input code for rejected input).
   `.Err(.Other(code))` with `ERROR_INVALID_PARAMETER` on Windows or `EINVAL`
   on POSIX, before path resolution; it does not add an error case or classify
   the limit as `InvalidPath`. Read and close failures discard partial contents.
-  Content storage grows only up to the limit, with fixed empty-string/native
-  bookkeeping overhead and separate path conversion storage, never according
-  to the whole file's size. Reaching the limit is success and does not probe
-  another byte or report whether EOF was reached. For a 65,536-byte manifest
+  Each logical content read requests at most the remaining byte budget, and
+  any accumulating buffer holds only bytes accepted by the read. Reaching the
+  limit is success and neither triggers an extra read to check for EOF nor
+  reports whether EOF was reached. Host buffering may read ahead.
+
+  Live storage for file contents, including the owned result, is bounded by
+  fixed overhead plus space proportional to the bytes accepted; it does not
+  grow with the unread remainder of the file. The implementation may use
+  fixed-size I/O scratch, rounded-up buffer capacity, a separate result copy,
+  and separate path and host bookkeeping. The limit does not guarantee exact
+  capacity, an allocation count, or zero-copy behavior. For a 65,536-byte manifest
   ceiling, request `maximumBytes: 65537` and reject a returned byte count above
   65,536. This is a bounded first interface, not streaming or generic I/O.
 - `writeFileNew` creates a new file exclusively and writes the supplied bytes.

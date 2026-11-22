@@ -299,6 +299,44 @@ the whole of `System` now calls only `kernel32`, including the legacy narrow-pat
 codes). On Linux the file, directory and process operations are system calls
 (`filesystem_linux.joyeer`, `process_linux.joyeer`); macOS calls libSystem.
 
+On macOS ARM64, file I/O still uses stdio. The file primitives check the
+stream error even after a short transfer. They clear `EINTR` before
+returning progress so the next call can resume without repeating bytes.
+The [native fixture](../../tests/lib/System/macos-fixture.c) checks the
+filesystem and spawn layouts against the SDK headers and injects `EINTR`
+before and after partial file transfers and before `waitpid` succeeds.
+
+### Reader allocation costs
+
+The [prefix limit](../../specs/18-host.md#182-filesystem-operations) bounds
+the bytes accepted, not the exact allocation capacity. `readFilePrefix` uses
+at most 64 KiB of read scratch, reduced for smaller limits and omitted for a
+zero limit. It accumulates the accepted bytes in an array and copies them
+into an owned `String`. `readStdinLine` uses a separate buffered input path
+and also copies its accumulated line into an owned `String`.
+
+A macOS ARM64 `-O2` comparison used the C readers at `4f4a469` and the
+Joyeer readers based on `8289622` with the scratch limit above. Hooks around
+allocation calls recorded the peak sum of live requested bytes (including
+path conversion) and bytes copied by string-clone calls during each read.
+These figures exclude host buffering, allocator rounding, and transient
+storage inside a resize; they are not RSS measurements.
+
+| Read | C peak bytes | Joyeer peak bytes | String-clone bytes, C to Joyeer |
+|---|---:|---:|---:|
+| Zero-byte prefix | 10 | 88 | 0 to 0 |
+| 16-byte prefix | 16 | 138 | 0 to 32 |
+| 65,537-byte prefix | 65,537 | 262,204 | 0 to 131,074 |
+| 65,537-byte whole file | 196,609 | 262,204 | 65,537 to 131,074 |
+| 16-byte stdin line | 33 | 72 | 16 to 32 |
+| 65,537-byte stdin line | 131,075 | 262,170 | 65,537 to 131,074 |
+
+The 65,537-byte prefix had identical allocation results on files of 65,537
+bytes and 8 MiB with the same prefix: 2 new allocations and 6 resize
+requests in C, versus 9 new allocations and 32 resize requests in Joyeer.
+Capping the scratch size reduced the Joyeer peak from 131,178 bytes to 88
+for a zero limit and to 138 for a 16-byte limit.
+
 ## Limits and validation
 
 The native pipeline supports compiler-known heap-backed values and recursive

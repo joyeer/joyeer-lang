@@ -1,0 +1,28 @@
+import System
+
+@c_extern(symbol: "system_macos_retries_observed")
+private func retriesObserved(): Int32
+
+func main(args: [String]): Int {
+    let read = match System.readFileUtf8(path: "interrupted-read") {
+        .Ok(text) => text == "retry-data",
+        .Err(_) => false,
+    }
+    if !read { return 1 }
+    let written = match System.writeFileNew(path: "interrupted-write", contents: "retry-data") {
+        .Ok(_) => true,
+        .Err(_) => false,
+    }
+    if !written { return 2 }
+    let waited = match System.runProcess(executable: "/usr/bin/false", arguments: [], workingDirectory: ".") {
+        .Ok(status) => match status {
+            .Exited(code) => code == 1,
+            _ => false,
+        },
+        .Err(_) => false,
+    }
+    if !waited { return 3 }
+    if retriesObserved() != 1 { return 4 }
+    print(value: "macOS interrupted calls retried")
+    return 0
+}

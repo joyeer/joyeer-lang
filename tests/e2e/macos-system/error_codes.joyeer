@@ -1,0 +1,38 @@
+import System
+
+private func invalidPath(path: String, expected: Int): Bool {
+    return match System.readFileUtf8(path: path) {
+        .Ok(_) => false,
+        .Err(error) => match error {
+            .InvalidPath(code) => code == expected,
+            _ => false,
+        },
+    }
+}
+
+func main(args: [String]): Int {
+    if !invalidPath(path: "bad" + byteToString(value: 255), expected: 92) { return 1 }
+    var longName = ""
+    while longName.count < 512 {
+        longName = longName + "0123456789abcdef"
+    }
+    if !invalidPath(path: longName, expected: 63) { return 2 }
+    let missing = match System.readFileUtf8(path: "absent") {
+        .Ok(_) => false,
+        .Err(error) => match error {
+            .NotFound(code) => code == 2,
+            _ => false,
+        },
+    }
+    if !missing { return 3 }
+    let directory = match System.readFileUtf8(path: ".") {
+        .Ok(_) => false,
+        .Err(error) => match error {
+            .IsDirectory(code) => code == 21,
+            _ => false,
+        },
+    }
+    if !directory { return 4 }
+    print(value: "macOS filesystem error codes passed")
+    return 0
+}
