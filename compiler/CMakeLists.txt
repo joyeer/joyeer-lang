@@ -83,6 +83,23 @@ add_library(JoyeerCompilerCore OBJECT
 	ir/ir.h
 	ir/irlowering.cpp
 	ir/irlowering.h
+	ir/lowering/calls.cpp
+	ir/lowering/collections.cpp
+	ir/lowering/constants.cpp
+	ir/lowering/debuginfo.cpp
+	ir/lowering/definitions.cpp
+	ir/lowering/emission.cpp
+	ir/lowering/enums.cpp
+	ir/lowering/equality.cpp
+	ir/lowering/expressions.cpp
+	ir/lowering/functions.cpp
+	ir/lowering/internal.h
+	ir/lowering/intrinsics.cpp
+	ir/lowering/module.cpp
+	ir/lowering/ownership.cpp
+	ir/lowering/patterns.cpp
+	ir/lowering/places.cpp
+	ir/lowering/statements.cpp
 	ir/module.h
 	ir/opcode.h
 	ir/value.h
