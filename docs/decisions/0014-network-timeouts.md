@@ -97,3 +97,21 @@ the readiness set (1b).
   other client out.
 - The concurrency plan lists 1a first because it needs no language change and
   helps every later design.
+
+## Bounded readiness follow-up
+
+[`tcpPoll`](../../specs/18-host.md#polling-several-sockets) selects ready indices for up to
+64 borrowed sockets on Windows and Linux. Splitting the inputs and outputs by kind avoids copying
+owners or exposing native descriptors. Returning indices also makes a timeout an empty set rather
+than a per-socket error. This does not change socket mode or promise that a later blocking call
+cannot wait. Scalable readiness remains separate.
+
+## Bounded send and connect follow-up
+
+`tcpSendWithin` and `tcpConnectWithin` use nonblocking sockets with a single
+operation deadline. Separate names preserve the existing function types and
+avoid relying on unimplemented default arguments. The timed send takes `inout`
+because a failure to restore blocking mode must invalidate and close the owner.
+Winsock uses the write and exception sets of `select` for pending connects,
+then reads `SO_ERROR`; older Winsock versions need not report failed connects
+through `WSAPoll`. Linux uses writable/error `ppoll` and `SO_ERROR`.

@@ -8,8 +8,10 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <thread>
 
 namespace {
 
@@ -213,6 +215,18 @@ struct Waiter {
     std::atomic<int> result {-1};
 };
 
+struct ReadyWaiter {
+    void* ends[2];
+    std::atomic<bool> entered {false};
+    std::atomic<int64_t> index {-1};
+};
+
+void waitForReadiness(void* argument) {
+    auto* waiter = static_cast<ReadyWaiter*>(argument);
+    waiter->entered = true;
+    waiter->index = joyeer_channel_wait_ready_abi(waiter->ends, 2);
+}
+
 void waitToReceive(void* argument) {
     auto* waiter = static_cast<Waiter*>(argument);
     int64_t value = 0;
@@ -236,6 +250,34 @@ TEST(ChannelTest, ClosingTheSenderWakesABlockedReceiver) {
     ASSERT_EQ(joyeer_thread_join_abi(&thread), 0);
     EXPECT_EQ(waiter.result.load(), 0);
     joyeer_channel_close_abi(pair.receiver);
+}
+
+TEST(ChannelTest, ReadinessWaitWakesOnEitherQueueAndKeepsItsValue) {
+    const auto baseline = joyeer_runtime_active_allocations();
+    for (int selected = 0; selected < 2; ++selected) {
+        const Pair pairs[] {make(1), make(1)};
+        ReadyWaiter waiter {{pairs[0].receiver, pairs[1].receiver}};
+        Thread thread;
+        start(thread, waitForReadiness, &waiter);
+        while (!waiter.entered) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(4));
+        EXPECT_EQ(waiter.index.load(), -1);
+        if (selected == 0) {
+            EXPECT_EQ(send(pairs[selected].sender, 42), 1);
+        } else {
+            joyeer_channel_close_abi(pairs[selected].sender);
+        }
+        ASSERT_EQ(joyeer_thread_join_abi(&thread), 0);
+        EXPECT_EQ(waiter.index.load(), selected);
+        int64_t result = 0;
+        EXPECT_EQ(receive(pairs[selected].receiver, result), selected == 0);
+        if (selected == 0) EXPECT_EQ(result, 42);
+        joyeer_channel_close_abi(pairs[0].sender);
+        if (selected == 0) joyeer_channel_close_abi(pairs[1].sender);
+        joyeer_channel_close_abi(pairs[0].receiver);
+        joyeer_channel_close_abi(pairs[1].receiver);
+    }
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
 }
 
 TEST(ChannelTest, ClosingTheReceiverWakesABlockedSenderAndDestroysTheQueue) {

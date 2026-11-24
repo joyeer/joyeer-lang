@@ -96,12 +96,16 @@ std::optional<ir::Value> Builder::acquireOwned(ir::Value value, SourceSpan span)
 std::optional<ir::Value> Builder::lowerTake(const syntax::ExprPtr& expression) {
     const auto address = lowerAddress(expression);
     if (!address.has_value()) return std::nullopt;
+    return takeFromPlace(*address, expression->span);
+}
+
+ir::Value Builder::takeFromPlace(ir::Value address, SourceSpan span) {
     return emitValue(
             ir::Opcode::take,
-            address->type,
+            address.type,
             ir::ValueCategory::value,
-            { address->id },
-            expression->span);
+            { address.id },
+            span);
 }
 
 bool Builder::movesArgument(const syntax::CallArgumentSyntax& argument) {
@@ -119,6 +123,24 @@ std::optional<ir::Value> Builder::prepareOperand(
     value = coerce(*value, destination, expression->span);
     if (!value.has_value()) return std::nullopt;
     return prepareOwned(*value, expression->span);
+}
+
+std::optional<Builder::ConstructionOperand> Builder::prepareConstructionOperand(
+        const syntax::ExprPtr& expression, typing::TypeId destination, bool marked) {
+    if (const auto source = model->linearConstructionMoveSource(expression, marked)) {
+        const auto address = lowerAddress(source);
+        if (!address.has_value()) return std::nullopt;
+        return ConstructionOperand { *address, source->span, true };
+    }
+    const auto value = prepareOperand(expression, destination, marked);
+    if (!value.has_value()) return std::nullopt;
+    return ConstructionOperand { *value, expression->span, false };
+}
+
+std::optional<ir::Value> Builder::commitConstructionOperand(
+        ConstructionOperand operand, typing::TypeId destination) {
+    if (!operand.deferredTake) return operand.value;
+    return coerce(takeFromPlace(operand.value, operand.span), destination, operand.span);
 }
 
 bool Builder::transferOperands(

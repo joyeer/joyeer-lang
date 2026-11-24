@@ -1,7 +1,81 @@
-// macOS placeholders for network.joyeer. TCP is implemented for Windows and Linux
-// (decision 0012); every operation here fails with ENOSYS, reported as `.Other(38)`,
-// so that `System` type-checks and links on macOS and a program fails cleanly instead
-// of failing to build. libSystem calls replace these.
+// Darwin TCP over libSystem. Scalar results use the negated errno convention of network.joyeer.
+
+private let interrupted: Int = 4
+private let solSocket: Int32 = 0xffff
+private let addressBytes: Int = 16
+private let eventBytes: Int = 48
+
+@platform(macos)
+@c_extern(symbol: "socket")
+private func socketP(family: Int32, kind: Int32, proto: Int32): Int32
+
+@platform(macos)
+@c_extern(symbol: "bind", pointer: "address")
+private func bindP(socket: Int32, address: [UInt8], length: UInt32): Int32
+
+@platform(macos)
+@c_extern(symbol: "listen")
+private func listenP(socket: Int32, backlog: Int32): Int32
+
+@platform(macos)
+@c_extern(symbol: "accept")
+private func acceptP(socket: Int32, address: Int, length: Int): Int32
+
+@platform(macos)
+@c_extern(symbol: "connect", pointer: "address")
+private func connectP(socket: Int32, address: [UInt8], length: UInt32): Int32
+
+@platform(macos)
+@c_extern(symbol: "getsockname", pointer: "address", pointer: "length")
+private func nameP(socket: Int32, address: inout [UInt8], length: inout [UInt8]): Int32
+
+@platform(macos)
+@c_extern(symbol: "setsockopt", pointer: "value")
+private func setSocketOptionP(socket: Int32, level: Int32, option: Int32, value: [UInt8], length: UInt32): Int32
+
+@platform(macos)
+@c_extern(symbol: "getsockopt", pointer: "value", pointer: "length")
+private func getSocketOptionP(socket: Int32, level: Int32, option: Int32, value: inout [UInt8],
+    length: inout [UInt8]): Int32
+
+@platform(macos)
+@c_extern(symbol: "joyeer_intrinsic_darwin_fcntl_int")
+private func controlP(descriptor: Int32, command: Int32, argument: Int32): Int32
+
+@platform(macos)
+@c_extern(symbol: "recv", pointer: "buffer")
+private func receiveP(socket: Int32, buffer: inout [UInt8], count: Int, flags: Int32): Int
+
+@platform(macos)
+@c_extern(symbol: "send", pointer: "buffer")
+private func sendP(socket: Int32, buffer: [UInt8], count: Int, flags: Int32): Int
+
+@platform(macos)
+@c_extern(symbol: "poll", pointer: "fds")
+private func pollP(fds: inout [UInt8], count: UInt32, timeout: Int32): Int32
+
+@platform(macos)
+@c_extern(symbol: "close")
+private func closeSocketP(descriptor: Int32): Int32
+
+@platform(macos)
+@c_extern(symbol: "kqueue")
+private func kqueueP(): Int32
+
+@platform(macos)
+@c_extern(symbol: "kevent64")
+private func keventP(queue: Int32, changes: Int, changeCount: Int32, events: Int, eventCount: Int32,
+    flags: UInt32, timeout: Int): Int32
+
+@platform(macos)
+@c_extern(symbol: "joyeer_intrinsic_address_of", pointer: "bytes")
+private func bufferAddress(bytes: inout [UInt8]): Int
+
+@platform(macos)
+private func outcome(status: Int): Int {
+    if status < 0 { return 0 - (cErrno() as Int) }
+    return status
+}
 
 @platform(macos)
 func networkInvalidCode(): Int { return 22 }
@@ -12,38 +86,316 @@ func networkTimeoutCode(): Int { return 60 }
 @platform(macos)
 func classifyNetworkError(code: Int): NetworkError {
     if code == 22 { return .InvalidInput(code) }
+    if code == 48 { return .AddressInUse(code) }
+    if code == 49 { return .AddressNotAvailable(code) }
+    if code == 1 || code == 13 { return .PermissionDenied(code) }
+    if code == 61 { return .ConnectionRefused(code) }
+    if code == 32 || code == 53 || code == 54 { return .ConnectionReset(code) }
+    if code == 60 { return .TimedOut(code) }
     return .Other(code)
 }
 
+// Darwin's sockaddr_in starts with the length byte, unlike Linux and Winsock.
 @platform(macos)
-func nativeTcpOpen(): Int { return -38 }
+private func socketAddress(address: Int, port: Int): [UInt8] {
+    var bytes = zeroBuffer(count: addressBytes)
+    &bytes[0] = addressBytes as UInt8
+    &bytes[1] = 2  // AF_INET
+    &bytes[2] = ((port >> 8) & 255) as UInt8
+    &bytes[3] = (port & 255) as UInt8
+    &bytes[4] = ((address >> 24) & 255) as UInt8
+    &bytes[5] = ((address >> 16) & 255) as UInt8
+    &bytes[6] = ((address >> 8) & 255) as UInt8
+    &bytes[7] = (address & 255) as UInt8
+    return bytes
+}
 
 @platform(macos)
-func nativeTcpPrepareListener(handle: Int): Int { return -38 }
+private func setCloseOnExec(handle: Int): Int {
+    // F_SETFD, FD_CLOEXEC. Darwin has no SOCK_CLOEXEC bit on socket/accept.
+    var status = 0 - interrupted
+    while status == 0 - interrupted {
+        status = outcome(status: controlP(descriptor: handle as Int32, command: 2, argument: 1) as Int)
+    }
+    return status
+}
 
 @platform(macos)
-func nativeTcpBind(handle: Int, address: Int, port: Int): Int { return -38 }
+private func setSocketFlag(handle: Int, option: Int32): Int {
+    let one: [UInt8] = [1, 0, 0, 0]
+    return outcome(status: setSocketOptionP(socket: handle as Int32, level: solSocket,
+        option: option, value: one, length: 4) as Int)
+}
 
 @platform(macos)
-func nativeTcpListen(handle: Int, backlog: Int): Int { return -38 }
+private func configureSocket(handle: Int, accepted: Bool): Int {
+    var status = setCloseOnExec(handle: handle)
+    if status >= 0 { status = setSocketFlag(handle: handle, option: 0x1022) }  // SO_NOSIGPIPE
+    // A nonblocking listener may pass its flags to the accepted socket.
+    if status >= 0 && accepted { status = nativeTcpSetNonblocking(handle: handle, enabled: false) }
+    if status < 0 {
+        if nativeTcpClose(handle: handle) < 0 { }
+        return status
+    }
+    return handle
+}
 
 @platform(macos)
-func nativeTcpAccept(handle: Int): Int { return -38 }
+func nativeTcpOpen(): Int {
+    let handle = outcome(status: socketP(family: 2, kind: 1, proto: 6) as Int)
+    if handle < 0 { return handle }
+    return configureSocket(handle: handle, accepted: false)
+}
 
 @platform(macos)
-func nativeTcpConnect(handle: Int, address: Int, port: Int): Int { return -38 }
+func nativeTcpPrepareListener(handle: Int): Int {
+    let reused = setSocketFlag(handle: handle, option: 4)  // SO_REUSEADDR
+    if reused < 0 { return reused }
+    // A peer can abandon its pending connection between poll and accept.
+    return nativeTcpSetNonblocking(handle: handle, enabled: true)
+}
 
 @platform(macos)
-func nativeTcpPort(handle: Int): Int { return -38 }
+func nativeTcpBind(handle: Int, address: Int, port: Int): Int {
+    let name = socketAddress(address: address, port: port)
+    return outcome(status: bindP(socket: handle as Int32, address: name, length: addressBytes as UInt32) as Int)
+}
 
 @platform(macos)
-func nativeTcpReceive(handle: Int, buffer: inout [UInt8], count: Int): Int { return -38 }
+func nativeTcpListen(handle: Int, backlog: Int): Int {
+    let limit = if backlog > 2147483647 { 2147483647 } else { backlog }
+    return outcome(status: listenP(socket: handle as Int32, backlog: limit as Int32) as Int)
+}
 
 @platform(macos)
-func nativeTcpSend(handle: Int, buffer: [UInt8], count: Int): Int { return -38 }
+func nativeTcpAccept(handle: Int): Int {
+    var accepted = 0 - interrupted
+    while accepted == 0 - interrupted {
+        accepted = outcome(status: acceptP(socket: handle as Int32, address: 0, length: 0) as Int)
+    }
+    if accepted < 0 { return accepted }
+    return configureSocket(handle: accepted, accepted: true)
+}
 
 @platform(macos)
-func nativeTcpClose(handle: Int): Int { return -38 }
+func nativeTcpConnect(handle: Int, address: Int, port: Int): Int {
+    let name = socketAddress(address: address, port: port)
+    return outcome(status: connectP(socket: handle as Int32, address: name, length: addressBytes as UInt32) as Int)
+}
 
 @platform(macos)
-func nativeTcpWait(handle: Int, timeoutMillis: Int): Int { return -38 }
+func nativeTcpPort(handle: Int): Int {
+    var name = zeroBuffer(count: addressBytes)
+    var length: [UInt8] = [16, 0, 0, 0]
+    let status = outcome(status: nameP(socket: handle as Int32, address: &name, length: &length) as Int)
+    if status < 0 { return status }
+    return ((name[2] as Int) << 8) | (name[3] as Int)
+}
+
+@platform(macos)
+private func recvWithFlags(handle: Int, buffer: inout [UInt8], count: Int, flags: Int32): Int {
+    var received = 0 - interrupted
+    while received == 0 - interrupted {
+        received = outcome(status: receiveP(socket: handle as Int32, buffer: &buffer, count: count, flags: flags))
+    }
+    return received
+}
+
+@platform(macos)
+func nativeTcpReceive(handle: Int, buffer: inout [UInt8], count: Int): Int {
+    return recvWithFlags(handle: handle, buffer: &buffer, count: count, flags: 0)
+}
+
+@platform(macos)
+func nativeTcpReceiveNonblocking(handle: Int, buffer: inout [UInt8], count: Int): Int {
+    return recvWithFlags(handle: handle, buffer: &buffer, count: count, flags: 0x80)  // MSG_DONTWAIT
+}
+
+@platform(macos)
+func nativeTcpSend(handle: Int, buffer: [UInt8], count: Int, retry: Bool): Int {
+    var sent = outcome(status: sendP(socket: handle as Int32, buffer: buffer, count: count, flags: 0))
+    while retry && sent == 0 - interrupted {
+        sent = outcome(status: sendP(socket: handle as Int32, buffer: buffer, count: count, flags: 0))
+    }
+    return sent
+}
+
+@platform(macos)
+func nativeTcpClose(handle: Int): Int {
+    return outcome(status: closeSocketP(descriptor: handle as Int32) as Int)
+}
+
+// Both pollfd and kevent64_s use little-endian scalar fields on Apple silicon.
+@platform(macos)
+private func putInteger(bytes: inout [UInt8], offset: Int, width: Int, value: Int) {
+    var index = 0
+    while index < width {
+        &bytes[offset + index] = ((value >> (index * 8)) & 255) as UInt8
+        index = index + 1
+    }
+}
+
+@platform(macos)
+private func readInteger(bytes: [UInt8], offset: Int, width: Int): Int {
+    var value = 0
+    var index = width
+    while index > 0 {
+        index = index - 1
+        value = (value << 8) | (bytes[offset + index] as Int)
+    }
+    return value
+}
+
+@platform(macos)
+private func pollOne(handle: Int, timeoutMillis: Int, writable: Bool): Int {
+    var entry = zeroBuffer(count: 8)
+    putInteger(bytes: &entry, offset: 0, width: 4, value: handle)
+    &entry[4] = if writable { 4 } else { 1 }  // POLLOUT or POLLIN
+    var ready = outcome(status: pollP(fds: &entry, count: 1, timeout: timeoutMillis as Int32) as Int)
+    while !writable && ready == 0 - interrupted {
+        ready = outcome(status: pollP(fds: &entry, count: 1, timeout: timeoutMillis as Int32) as Int)
+    }
+    if ready > 0 && (entry[6] & 0x20) != 0 { return -9 }  // POLLNVAL -> EBADF
+    return ready
+}
+
+@platform(macos)
+func nativeTcpWait(handle: Int, timeoutMillis: Int): Int {
+    return pollOne(handle: handle, timeoutMillis: timeoutMillis, writable: false)
+}
+
+@platform(macos)
+func nativeTcpWaitWritable(handle: Int, timeoutMillis: Int): Int {
+    return pollOne(handle: handle, timeoutMillis: timeoutMillis, writable: true)
+}
+
+@platform(macos)
+func nativeTcpWaitConnect(handle: Int, timeoutMillis: Int): Int {
+    return nativeTcpWaitWritable(handle: handle, timeoutMillis: timeoutMillis)
+}
+
+@platform(macos)
+func nativeTcpPoll(handles: [Int], readiness: inout [UInt8], timeoutMillis: Int): Int {
+    var entries = zeroBuffer(count: handles.count * 8)
+    var index = 0
+    while index < handles.count {
+        let offset = index * 8
+        putInteger(bytes: &entries, offset: offset, width: 4, value: handles[index])
+        &entries[offset + 4] = 1  // POLLIN
+        index = index + 1
+    }
+    let status = outcome(status: pollP(fds: &entries, count: handles.count as UInt32,
+        timeout: timeoutMillis as Int32) as Int)
+    if status <= 0 { return status }
+    index = 0
+    while index < handles.count {
+        let events = entries[index * 8 + 6]
+        if (events & 0x20) != 0 { return -9 }
+        if (events & 0x19) != 0 { &readiness[index] = 1 }  // POLLIN | POLLERR | POLLHUP
+        index = index + 1
+    }
+    return 0
+}
+
+@platform(macos)
+func nativeTcpSetNonblocking(handle: Int, enabled: Bool): Int {
+    let descriptor = handle as Int32
+    let flags = outcome(status: controlP(descriptor: descriptor, command: 3, argument: 0) as Int)  // F_GETFL
+    if flags < 0 { return flags }
+    let updated = if enabled { flags | 4 } else { flags - (flags & 4) }  // O_NONBLOCK
+    if updated == flags { return 0 }
+    return outcome(status: controlP(descriptor: descriptor, command: 4, argument: updated as Int32) as Int)
+}
+
+@platform(macos)
+func nativeTcpConnectPending(status: Int): Bool { return status == -36 }
+
+@platform(macos)
+func nativeTcpWouldBlock(status: Int): Bool { return status == -35 }
+
+@platform(macos)
+func nativeTcpInterrupted(status: Int): Bool { return status == 0 - interrupted }
+
+@platform(macos)
+func nativeTcpSocketError(handle: Int): Int {
+    var code = zeroBuffer(count: 4)
+    var length: [UInt8] = [4, 0, 0, 0]
+    let status = outcome(status: getSocketOptionP(socket: handle as Int32, level: solSocket, option: 0x1007,
+        value: &code, length: &length) as Int)
+    if status < 0 { return status }
+    return 0 - socketErrorNumber(bytes: code)
+}
+
+@platform(macos)
+func nativeReadQueueOpen(capacity: Int): Result<NativeTcpReadQueue, NetworkError> {
+    let descriptor = outcome(status: kqueueP() as Int)
+    if descriptor < 0 { return .Err(classifyNetworkError(code: 0 - descriptor)) }
+    let status = setCloseOnExec(handle: descriptor)
+    if status < 0 {
+        if nativeTcpClose(handle: descriptor) < 0 { }
+        return .Err(classifyNetworkError(code: 0 - status))
+    }
+    return .Ok(NativeTcpReadQueue(handle: descriptor, records: 0, capacity: capacity))
+}
+
+@platform(macos)
+private func changeReadEvent(port: Int, handle: Int, index: Int, flags: Int): Int {
+    var entry = zeroBuffer(count: eventBytes)
+    putInteger(bytes: &entry, offset: 0, width: 8, value: handle)
+    putInteger(bytes: &entry, offset: 8, width: 2, value: -1)  // EVFILT_READ
+    putInteger(bytes: &entry, offset: 10, width: 2, value: flags)
+    putInteger(bytes: &entry, offset: 24, width: 8, value: index)  // udata
+    // No output buffer: a failed change is returned as errno, not an event.
+    return outcome(status: keventP(queue: port as Int32, changes: bufferAddress(bytes: &entry), changeCount: 1,
+        events: 0, eventCount: 0, flags: 0, timeout: 0) as Int)
+}
+
+@platform(macos)
+func nativeReadQueueRegister(port: NativeTcpReadQueue, handle: Int, index: Int): Int {
+    return changeReadEvent(port: port.handle, handle: handle, index: index, flags: 0x81)  // EV_ADD | EV_DISPATCH
+}
+
+@platform(macos)
+func nativeReadQueueArm(port: NativeTcpReadQueue, handle: Int, index: Int): Int {
+    return changeReadEvent(port: port.handle, handle: handle, index: index, flags: 4)  // EV_ENABLE
+}
+
+@platform(macos)
+func nativeReadQueueWait(port: NativeTcpReadQueue, timeoutMillis: Int, event: inout TcpReadQueueEvent): Int {
+    var entry = zeroBuffer(count: eventBytes)
+    var limit: [UInt8] = []
+    var limitAddress = 0
+    if timeoutMillis >= 0 {
+        limit = zeroBuffer(count: 16)  // struct timespec: seconds, nanoseconds
+        putInteger(bytes: &limit, offset: 0, width: 8, value: timeoutMillis / 1000)
+        putInteger(bytes: &limit, offset: 8, width: 8, value: (timeoutMillis % 1000) * 1000000)
+        limitAddress = bufferAddress(bytes: &limit)
+    }
+    let status = outcome(status: keventP(queue: port.handle as Int32, changes: 0, changeCount: 0,
+        events: bufferAddress(bytes: &entry), eventCount: 1, flags: 0, timeout: limitAddress) as Int)
+    if status <= 0 { return status }
+
+    let flags = readInteger(bytes: entry, offset: 10, width: 2)
+    if (flags & 0x4000) != 0 {  // EV_ERROR: a queue error in data, not a selected read.
+        let code = readInteger(bytes: entry, offset: 16, width: 8)
+        precondition(condition: code > 0, message: "missing Darwin TCP read queue error")
+        return 0 - code
+    }
+    &event.index = readInteger(bytes: entry, offset: 24, width: 8)
+    // EV_EOF can accompany unread bytes. Preserve the socket's reported error, if any.
+    &event.status = if (flags & 0x8000) != 0 { 0 - readInteger(bytes: entry, offset: 12, width: 4) } else { 0 }
+    return 1
+}
+
+@platform(macos)
+func nativeReadQueueCancelled(status: Int): Bool { return false }
+
+@platform(macos)
+func nativeReadQueueCloseSocket(handle: Int): Int {
+    return nativeTcpClose(handle: handle)
+}
+
+@platform(macos)
+func nativeReadQueueDestroy(port: NativeTcpReadQueue) {
+    if nativeTcpClose(handle: port.handle) < 0 { }
+}

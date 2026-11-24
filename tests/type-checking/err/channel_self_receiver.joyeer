@@ -1,0 +1,12 @@
+// Spec 21.9: a message must not own a receiver for its own channel type.
+enum Packet {
+    End(ChannelReceiver<Packet>),
+}
+
+func main() {
+    var sender: ChannelSender<Packet>
+    var receiver: ChannelReceiver<Packet>
+    channel(capacity: 1, sender: &sender, receiver: &receiver)
+    let _sent = sender.send(value: consume Packet.End(consume receiver))
+    consume sender.close()
+}

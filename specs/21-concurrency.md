@@ -105,8 +105,9 @@ Consequences of the linear rules:
   `?` takes its state by `inout` and joins in its caller (the borrowing idiom of §4.7.1), or joins first:
   `(consume h.join())?` is accepted when `R` is a `Result` (a `consume` marker covers the receiver of the call
   it starts, so it is parenthesized before a postfix `?`);
-- a joined result is not an argument: `print(value: consume h.join())` is rejected because the argument
-  marker and the receiver marker would both be `consume`; write `let v = consume h.join()` first, then use `v`;
+- a joined result can be passed with parentheses, as in `print(value: (consume h.join()))`.
+  Without parentheses, `consume` marks the outer argument, not the receiver. Alternatively,
+  bind the result first with `let v = consume h.join()`;
 - the handle must be stored in a variable before it is joined: `spawn(...).join()` is rejected, because
   `join` consumes its receiver in place;
 - a struct field holding a handle ends field by field (`consume worker.handle.join()`), and a struct
@@ -173,9 +174,10 @@ size differs, 8 MiB on Linux and 1 MiB on Windows).
   The compiler reports `semantic-analysis.run-process-with-tasks` at a call or a reference to either
   function as a value, explaining that the program also calls `spawn`. "The program" is the root
   module and every source dependency;
-  reachability does not matter. Merely importing `System` is allowed. (The Linux fork child
-  no longer allocates before `execve`, so the rule is conservative, and its removal is an open question
-  in decision 0018.)
+  reachability does not matter. Merely importing `System` is allowed. The Linux fork child
+  no longer allocates before `execve`. On macOS, TCP sockets and read queues set close-on-exec
+  before returning their descriptors; the restriction prevents racing that setup with a
+  `System` process launch. See [decision 0018](../docs/decisions/0018-tasks.md#open-questions).
 - A task may call `System` operations; their shared state needs no guard (decision 0018, audit).
 - Calling native code from a task has no thread-safety guarantee (§19.6). A native binding that keeps
   thread-affine state documents it.
@@ -194,7 +196,7 @@ Type checking unless noted.
 | `spawn-target-parameters` | the target does not have exactly one parameter, or it is not `consuming` |
 | `spawn-target-never` | the target returns `Never` |
 | `name-resolution.argument-out-of-order`, `argument-count-mismatch`, `unexpected-argument-label` | wrong labels, order, or a missing or extra argument of `spawn` |
-| `invalid-consume-argument` | `input:` without `consume`; `join` without `consume`, or on a borrowed or `inout` handle |
+| `invalid-consume-argument` | `input:` without `consume`; `join` without `consume` or on a temporary, borrowed, or `inout` handle |
 | `copy-of-noncopyable` | copying a `JoinHandle` |
 | `linear-collection-element`, `linear-top-level-binding`, `linear-in-deinit-type` | a handle in a `Dict` or `for-in`, a top-level `let`, or a `deinit` type |
 | `semantic-analysis.linear-not-consumed` | a path leaves a handle unjoined |
@@ -230,12 +232,21 @@ of an uninitialized (or wholly consumed) mutable local, or of an `initializing` 
 function can take two `initializing` parameters and call `channel`. The two have types `ChannelSender<T>`
 and `ChannelReceiver<T>` for the same `T`, and both are initialized by the call. `T` is any type that is not
 linear (§4.7.1), `Any` or `Never`; `Void` is allowed as a pure signal, and a nested channel end is allowed
-(the request/reply idiom). The rule applies at every occurrence of the types in a type position. A capacity
-that is an integer literal below 1 is a compile-time error; any other capacity below 1 traps
+(the request/reply idiom). `Any` remains reserved syntax (§1.4), so it cannot be written as a type
+argument. The rule applies at every occurrence of the types in a type position. A capacity that is
+an integer literal below 1 is a compile-time error; any other capacity below 1 traps
 (`invalid channel capacity`), and one whose buffer size overflows traps (`channel too large`).
 
 `ChannelSender<T>`, `ChannelReceiver<T>` and the enumeration `ChannelClosed` (one case, `Closed`) are
 source-prelude declarations; a user declaration of the same name takes precedence in its scope (§21.2).
+
+Creating a channel with concrete element type `T` is rejected if a message of type `T` can own
+a prelude `ChannelReceiver<T>`. Check exact type identity after substituting generic arguments,
+following stored fields, enum payloads, and elements of the prelude collections. A channel end
+and a function value are leaves for this check; phantom type arguments do not own anything.
+This rule applies to creation, not to mentioning an end type. It also rejects carrying a receiver
+of the same element type from a different channel instance. Use a different reply element type
+instead.
 
 #### 21.9.2 The ends
 
@@ -279,8 +290,20 @@ while true {
 }
 ```
 
-Binding the payload of `receive()` in a `match` clones a copyable payload (a `String`, an array) until
-§7.1.2 moves payloads out of owned temporaries for every type; a noncopyable payload is moved.
+Matching `receiver.receive()` directly can transfer a payload into the arm without
+an additional clone (§7.1.2). The channel still copies the value's own representation
+bytes into and out of the queue.
+
+##### Waiting for any receiver
+
+`waitForChannel(receivers: [ChannelReceiver<T>]): Int` borrows an array of
+1 to 64 receivers and returns a zero-based index into that array. An entry is
+ready if a value is queued or its sender has closed. The wait does not dequeue
+or reserve a value. Without an intervening receive, a call to `receive()` on
+the selected end does not wait for data or closure. A drained closed channel
+stays ready, so a caller must handle `receive()` returning `.Err(.Closed)`.
+The selection does not promise fairness or an atomic snapshot across queues.
+An invalid count traps, as does a call that would sleep with no unjoined thread.
 
 #### 21.9.4 Closing
 
@@ -301,9 +324,9 @@ before the `receive` that gets its value, and closing the sender, after every ea
 before the receiver observes the closed result. A value is moved, not copied; its own bytes are copied
 into the queue and out of it.
 
-A channel that carries its own receiver (or two channels that carry each other's receivers) leaks: the only
-reference to the receiver is in the queue, so the channel is never freed. It is memory safe and the leak
-check at exit reports it; the language does not detect the cycle.
+The creation rule prevents a message from storing the receiver for its own queue. Distinct queues
+can still leak if they hold each other's only receivers. Such a cycle is memory safe and the leak
+check at exit reports it; the language does not detect it.
 
 A program can deadlock: every thread blocked, a cycle of full channels, or a `join` of a task waiting on an
 end the joiner still holds (the sender its loop receives from, or the receiver a blocked producer needs).
@@ -319,7 +342,9 @@ wake this thread`. A channel of capacity `n` holds at most `n` values.
 | `type-checking.channel-end-types` | the two operands are not a `ChannelSender<T>` and a `ChannelReceiver<T>` of the same `T` |
 | `type-checking.channel-capacity` | a literal capacity below 1 |
 | `type-checking.linear-channel-element` | an element type that is linear |
-| `type-checking.channel-element-type` | an element type of `Any` or `Never` |
+| `type-checking.channel-receiver-cycle` | a channel creation whose element could own a receiver for the same element type |
+| `lexer.unsupported-syntax` | written `Any`, including as a channel type argument |
+| `type-checking.channel-element-type` | an element type of `Never` |
 | `type-checking.copy-of-noncopyable` | copying an end |
 | `type-checking.invalid-consume-argument` | `send` without `consume` on its value; `close` without `consume`, on a borrowed end, or on an array element |
 | `semantic-analysis.use-after-consume` | using an end after `close` |

@@ -610,6 +610,45 @@ func use(): Int { return call(number: 1, first: 2, second: 3, third: 4, fourth: 
     EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
 }
 
+// §19.4.5: Darwin ARM64 passes fcntl's third argument as a C vararg, not in x2.
+TEST_F(CInteropTest, LowersDarwinFcntlWithItsVariadicCPrototype) {
+    constexpr auto binding = R"(
+@c_extern(symbol: "joyeer_intrinsic_darwin_fcntl_int")
+func control(descriptor: Int32, command: Int32, argument: Int32): Int32
+@c_extern(symbol: "joyeer_intrinsic_symbol_address")
+func address(name: String): Int
+func whereIsFcntl(): Int { return address(name: "fcntl") }
+func use(descriptor: Int32): Int32 { return control(descriptor: descriptor, command: 2, argument: 1) }
+)";
+    check(binding, false);
+    ASSERT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::unauthorizedNativeBinding));
+    check("@c_extern(symbol: \"joyeer_intrinsic_darwin_fcntl_int\")\n"
+          "func control(descriptor: Int32, command: Int32, argument: Int): Int32\n");
+    EXPECT_FALSE(checking.succeeded());
+    ASSERT_NO_FATAL_FAILURE(lower(binding));
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(*module);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("declare i32 @fcntl(i32, i32, ...)"), std::string::npos);
+    EXPECT_NE(emitted.text.find("call i32 (i32, i32, ...) @fcntl("), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@joyeer_intrinsic_darwin_fcntl_int"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@fcntl.1"), std::string::npos);
+}
+
+TEST_F(CInteropTest, RejectsDataSymbolConflictingWithDarwinFcntl) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_data(symbol: "fcntl")
+func address(): Int
+@c_extern(symbol: "joyeer_intrinsic_darwin_fcntl_int")
+func control(descriptor: Int32, command: Int32, argument: Int32): Int32
+func whereIsFcntl(): Int { return address() }
+func use(descriptor: Int32): Int32 { return control(descriptor: descriptor, command: 2, argument: 1) }
+)"));
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(*module);
+    EXPECT_FALSE(emitted.succeeded());
+    EXPECT_NE(joyeer::llvmbackend::dump(emitted.diagnostics).find("both a function and a data symbol"), std::string::npos);
+}
+
 TEST_F(CInteropTest, AllowsManagedTypesInOrdinaryRuntimeUnits) {
     // The same code is fine in a runtime unit that is not a core unit.
     check("func f(text: String): Int { return text.count }\n"
@@ -1747,6 +1786,73 @@ TEST_F(CInteropTest, ChannelArgumentsHaveOneSpecificDiagnosticAtTheTypeOccurrenc
     }
 }
 
+TEST_F(CInteropTest, AGenericChannelCannotQueueItsOwnReceiverType) {
+    check(R"(
+struct Box<T> { var value: T }
+enum Packet {
+    Empty,
+    Ends([Box<ChannelReceiver<Packet>>]),
+}
+func allocate<T>(value: T) {
+    var sender: ChannelSender<T>
+    var receiver: ChannelReceiver<T>
+    channel(capacity: 1, sender: &sender, receiver: &receiver)
+}
+func main() { allocate(value: Packet.Empty) }
+)", false);
+    ASSERT_EQ(checking.diagnostics.size(), 1u) << joyeer::typing::dump(checking.diagnostics);
+    const auto& diagnostic = checking.diagnostics.front();
+    EXPECT_EQ(diagnostic.id, joyeer::typing::TypeCheckingDiagnosticId::channelReceiverCycle);
+    EXPECT_NE(diagnostic.message.find(".Ends(1)[element].value"), std::string::npos);
+    EXPECT_FALSE(diagnostic.notes.empty());
+}
+
+TEST_F(CInteropTest, ChannelCreationComparesTheSubstitutedReceiverElementType) {
+    const std::string declarations = R"(
+enum Packet<A, B> { End(ChannelReceiver<Packet<B, A>>) }
+func makeChannel<T>(seed: T) {
+    var sender: ChannelSender<Packet<Int, T>>
+    var receiver: ChannelReceiver<Packet<Int, T>>
+    channel(capacity: 1, sender: &sender, receiver: &receiver)
+}
+)";
+    check(declarations + "func main() { makeChannel(seed: true) }\n", false);
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check(declarations + "func main() { makeChannel(seed: 0) }\n", false);
+    ASSERT_EQ(checking.diagnostics.size(), 1u) << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_EQ(checking.diagnostics.front().id, joyeer::typing::TypeCheckingDiagnosticId::channelReceiverCycle);
+}
+
+TEST_F(CInteropTest, APhantomChannelReceiverTypeDoesNotOwnAReceiver) {
+    check(R"(
+struct Tag<T> { var value: Int }
+enum Packet {
+    Token(Tag<ChannelReceiver<Packet>>),
+}
+func main() {
+    var sender: ChannelSender<Packet>
+    var receiver: ChannelReceiver<Packet>
+    channel(capacity: 1, sender: &sender, receiver: &receiver)
+}
+)", false);
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(CInteropTest, AnOpenUninstantiatedChannelCreationDoesNotCompareAbstractTypes) {
+    check(R"(
+enum Packet<T> { End(ChannelReceiver<Packet<T>>) }
+struct Unused<T> {
+    var setup: Void = if true {
+        var sender: ChannelSender<Packet<T>>
+        var receiver: ChannelReceiver<Packet<T>>
+        channel(capacity: 1, sender: &sender, receiver: &receiver)
+    }
+}
+func main() {}
+)", false);
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
 TEST_F(CInteropTest, CompilerTransferChecksBranchesCopiesOverwritesAndDestructibleFields) {
     checkPrelude(R"(
 @compiler_transfer()
@@ -1828,12 +1934,6 @@ func lose<T>(value: consuming T): Void {
     joyeer_intrinsic_move_in<T>(address: 4096, value: consume moved)
 }
 )",
-            R"(
-@compiler_transfer()
-func lose<T>(value: consuming T): Void {
-    let values: [T] = [consume value, return]
-}
-)",
         }) {
         SCOPED_TRACE(text);
         checkPrelude(text);
@@ -1857,6 +1957,20 @@ func forward<T>(value: consuming T): T {
 )");
     ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
     EXPECT_TRUE(joyeer::analysis::Analyzer().analyze(checking.model).succeeded());
+}
+
+TEST_F(CInteropTest, AbortedArrayConstructionReportsTheOriginalCompilerTransferOwner) {
+    checkPrelude(R"(
+@compiler_transfer()
+func lose<T>(value: consuming T): Void {
+    let _values: [T] = [consume value, return]
+}
+)");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto rejected = joyeer::analysis::Analyzer().analyze(checking.model);
+    ASSERT_EQ(rejected.diagnostics.size(), 1u) << joyeer::analysis::dump(rejected.diagnostics);
+    EXPECT_EQ(rejected.diagnostics.front().id, joyeer::analysis::DiagnosticId::linearNotConsumed);
+    EXPECT_NE(rejected.diagnostics.front().message.find("'value' holds a linear value"), std::string::npos);
 }
 
 TEST_F(CInteropTest, MalformedCompilerRolesAreDiagnosedBeforeTheyAreCalled) {

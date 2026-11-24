@@ -1,0 +1,20 @@
+enum Chain {
+    End,
+    Link(String),
+}
+
+func describe(chain: consuming Chain): String {
+    return match chain {
+        .End => "end",
+        .Link(text) => text,
+    }
+}
+
+func main() {
+    print(value: describe(chain: consume Chain.End))
+    print(value: describeBoth(first: consume Chain.End, second: consume Chain.End))
+}
+
+func describeBoth(first: consuming Chain, second: consuming Chain): String {
+    return describe(chain: consume first) + describe(chain: consume second)
+}

@@ -243,8 +243,10 @@ The current instruction set covers:
   literal patterns (whose test still calls the runtime's equality inside the backend) and native ABI marshalling;
 - high-level recursive pattern switching.
 
-An array literal prepares all owned elements first, then moves them into one `stack_block` and calls the
-private role method marked `literalFactory` on a zero receiver. No element operation can fail during packing.
+An array literal evaluates all operands before packing. Named linear moves capture a place during
+evaluation and emit `take` only after the last operand succeeds (spec §4.7.1). These takes
+and any conversions precede the `stack_block`; no element operation can fail during packing.
+The packed values go to the private role method marked `literalFactory` on a zero receiver.
 The verifier admits user-function `stack_block` / `slot_address` / `integer_address` only for this closed graph:
 one matching factory call, equal element type and constant count, an inert-zero receiver, every bounded slot
 stored exactly once before transfer, and no other uses or intervening calls. A factory call without verified
@@ -405,13 +407,14 @@ Patterns recursively represent:
 - integer, floating, Boolean, string, and byte literals;
 - enum cases with nested payload patterns.
 
-Each arm has its own basic block. Payload bindings use `extract_payload`, then
-a local stack slot. Nontrivial bindings own independent copies, registered for
-cleanup on both normal arm exit and early return. Reassigning the original
-scrutinee cannot invalidate a binding, including nested heap-backed payloads.
-A pattern that binds a noncopyable payload cannot copy it: the scrutinee is stored (the place of
-`match consume x`, or a slot that takes over an owned temporary), the arm takes the payload with
-`payload_address` and `take`, and whatever no arm binds is destroyed with that storage.
+Each arm has its own basic block. Bindings from borrowed scrutinees use
+`extract_payload` and own an independent copy. Moving patterns take the bound payloads with
+`payload_address` and `take` only after dispatch selects an arm. Noncopyable bindings use
+the place of `match consume x` or a slot that takes over an owned temporary. If the scrutinee is
+already a live owned temporary, the same slot also lets bindings take copyable payloads that
+would otherwise allocate a clone. A borrowed projection of a temporary is still borrowed.
+Whatever no arm binds is destroyed with the scrutinee; arm bindings are cleaned up on normal
+exit and early return.
 
 Every pattern has the type of the value it tests: the scrutinee, or an enum payload. Its kind must
 be one the backend can test on that type, or the verifier reports `ir.type-mismatch`:

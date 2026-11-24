@@ -162,13 +162,18 @@ std::optional<ir::Value> Builder::lowerArray(const syntax::ArrayExprSyntax::Ptr&
         report(DiagnosticId::missingSymbol, expression->span, "the array literal method has no lowered instance");
         return std::nullopt;
     }
-    std::vector<ir::Value> elements;
+    std::vector<ConstructionOperand> pending;
     for (const auto& element : expression->elements) {
-        const auto value = prepareOperand(element, elementType);
+        const auto value = prepareConstructionOperand(element, elementType);
+        if (!value.has_value() || currentBlockTerminated()) return std::nullopt;
+        pending.push_back(*value);
+    }
+    std::vector<ir::Value> elements;
+    for (const auto& operand : pending) {
+        const auto value = commitConstructionOperand(operand, elementType);
         if (!value.has_value()) return std::nullopt;
         elements.push_back(*value);
     }
-    if (currentBlockTerminated()) return std::nullopt;
     const auto integer = [&](int64_t number, SourceSpan span) {
         auto constant = makeInstruction(ir::Opcode::literal, span);
         constant.integerValue = number;

@@ -1,5 +1,5 @@
 // Bounded single-sender, single-receiver channels (decision 0019). The source-library
-// ends and generic creation function use the four exports below; this unit is its own
+// ends and generic creation function use the exports below; this unit is its own
 // object of the runtime archive, linked only into a program that creates a channel.
 //
 // One allocation holds the channel block. Both ends point at it; the receiver's handle has the
@@ -17,7 +17,8 @@
 //     232  sender closed
 //     240  receiver closed
 //     248  the block's total size, for the free
-//     256  the ring buffer, capacity * stride bytes (a multiple of 16)
+//     256  optional readiness waiter, protected by the channel mutex
+//     272  the ring buffer, capacity * stride bytes (a multiple of 16)
 //
 // The close protocol is what makes the two ownership rules safe: the count, the head, both closed
 // flags and the decision "I am the last closer" are read and written only with the mutex held.
@@ -102,7 +103,11 @@ private let destroyOffset: Int = 224
 private let senderClosedOffset: Int = 232
 private let receiverClosedOffset: Int = 240
 private let sizeOffset: Int = 248
-private let headerBytes: Int = 256
+private let readinessWaiterOffset: Int = 256
+private let headerBytes: Int = 272
+private let waiterCondition: Int = 64
+private let waiterSignaled: Int = 128
+private let waiterBytes: Int = 144
 
 private func read(address: Int): Int {
     return load64(address: address) as Int
@@ -152,6 +157,82 @@ private func senderBlock(end: Int): Int {
 private func receiverBlock(end: Int): Int {
     if end == 0 || end % 2 == 0 { panic(message: literalAddress(text: "invalid channel receiver")) }
     return end - 1
+}
+
+// Channel then waiter is the only nested lock order. Waiting and detaching never
+// acquire a channel mutex while holding the waiter mutex.
+private func notifyReadiness(block: Int) {
+    let waiter = read(address: block + readinessWaiterOffset)
+    if waiter == 0 { return }
+    lock(block: waiter)
+    write(address: waiter + waiterSignaled, value: 1)
+    check(status: conditionSignal(condition: waiter + waiterCondition))
+    unlock(block: waiter)
+}
+
+private func receiverAt(ends: Int, index: Int): Int {
+    return receiverBlock(end: read(address: ends + index * 8))
+}
+
+// Optionally register every queue before the first ready one, or all queues if none
+// is ready. A concurrent publish after registration latches the waiter signal.
+private func findReadyReceiver(ends: Int, count: Int, waiter: Int): Int {
+    var index = 0
+    while index < count {
+        let block = receiverAt(ends: ends, index: index)
+        lock(block: block)
+        if read(address: block + countOffset) > 0 || read(address: block + senderClosedOffset) != 0 {
+            unlock(block: block)
+            return index
+        }
+        if waiter != 0 {
+            if read(address: block + readinessWaiterOffset) != 0 {
+                panic(message: literalAddress(text: "channel receiver already has a readiness waiter"))
+            }
+            write(address: block + readinessWaiterOffset, value: waiter)
+        }
+        unlock(block: block)
+        index = index + 1
+    }
+    return -1
+}
+
+@c_export(symbol: "joyeer_channel_wait_ready_abi")
+public func channelWaitReady(ends: Int, count: Int): Int {
+    if ends == 0 || count < 1 || count > 64 {
+        panic(message: literalAddress(text: "channel readiness requires between 1 and 64 receivers"))
+    }
+    let immediate = findReadyReceiver(ends: ends, count: count, waiter: 0)
+    if immediate >= 0 { return immediate }
+
+    let waiter = allocate(size: waiterBytes)
+    check(status: mutexInit(storage: waiter))
+    check(status: conditionInit(storage: waiter + waiterCondition))
+    write(address: waiter + waiterSignaled, value: 0)
+    var selected = findReadyReceiver(ends: ends, count: count, waiter: waiter)
+    var registered = selected
+    if selected < 0 {
+        registered = count
+        lock(block: waiter)
+        while read(address: waiter + waiterSignaled) == 0 {
+            wait(block: waiter, condition: waiterCondition)
+        }
+        unlock(block: waiter)
+        selected = findReadyReceiver(ends: ends, count: count, waiter: 0)
+    }
+    var index = 0
+    while index < registered {
+        let block = receiverAt(ends: ends, index: index)
+        lock(block: block)
+        write(address: block + readinessWaiterOffset, value: 0)
+        unlock(block: block)
+        index = index + 1
+    }
+    check(status: conditionDestroy(condition: waiter + waiterCondition))
+    check(status: mutexDestroy(storage: waiter))
+    release(address: waiter, size: waiterBytes)
+    if selected < 0 { panic(message: literalAddress(text: "channel readiness was consumed by another receiver")) }
+    return selected
 }
 
 // Creates a channel of `capacity` elements of `elementSize` bytes, aligned to `alignment`, and
@@ -214,6 +295,7 @@ public func channelSend(end: Int, value: Int): Int {
     }
     write(address: block + countOffset, value: count + 1)
     check(status: conditionSignal(condition: block + notEmptyOffset))
+    if count == 0 { notifyReadiness(block: block) }
     unlock(block: block)
     return 1
 }
@@ -288,6 +370,7 @@ public func channelClose(end: Int): Void {
     } else {
         write(address: block + senderClosedOffset, value: 1)
         check(status: conditionBroadcast(condition: block + notEmptyOffset))
+        notifyReadiness(block: block)
         last = read(address: block + receiverClosedOffset) != 0
     }
     let size = read(address: block + sizeOffset)

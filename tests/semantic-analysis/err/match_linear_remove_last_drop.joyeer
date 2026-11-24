@@ -1,0 +1,12 @@
+// Spec 4.7.1: "&" mutates the array, but removeLast's result is still owned.
+func work(value: consuming Int): Int { return value }
+
+func main() {
+    var tasks: [JoinHandle<Int>] = []
+    &tasks.append(element: consume spawn(function: work, input: consume 1))
+    match &tasks.removeLast() {
+        .Some(_) => (),
+        .None => (),
+    }
+    consume tasks.consumeEmpty()
+}

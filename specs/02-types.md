@@ -250,8 +250,9 @@ types display as `[T]`. The library exposes read-only `count`, mutating `append(
 `removeLast()`, and consuming `consumeEmpty()`. `append` stores an owned element: an unmarked
 place is independently copied when copyable, an owned temporary transfers, and `consume` explicitly
 moves an owning place (§4.3). The address and capacity fields and compiler-called helper methods are private.
-All literal elements are evaluated left to right as owned temporaries before storage is filled;
-an early exit in a later element destroys earlier affine temporaries in reverse order (§4.7).
+Literal elements are evaluated left to right before storage is filled. A direct `consume` of a
+named linear place reserves it until construction commits (§4.7.1); an early exit destroys
+earlier affine temporaries in reverse order (§4.7) without moving those places.
 
 `[K: V]` and dictionary literals likewise bind to the declaration carrying `dict_type`
 ([0027](../docs/decisions/0027-library-dict.md)); `Dict<K, V>` is its nominal spelling, a user type named
@@ -342,7 +343,9 @@ A user declaration of the same name takes precedence over the prelude declaratio
 - A channel is created by `channel(capacity:, sender: &s, receiver: &r)`, a prelude library function returning
   `Void` whose two outputs are `initializing` parameters (§4.10), so both variables are declared,
   uninitialised, with their types, and the element type comes from those types, which must
-  agree. A capacity below 1 traps, and a literal below 1 is a compile-time error (§21.9.1).
+  agree. [§21.9.1](21-concurrency.md#2191-creating-a-channel) also forbids creating a channel
+  whose messages could own its receiver. A capacity below 1 traps, and a literal below 1 is a
+  compile-time error.
 
 ```joyeer
 var sender: ChannelSender<Int>

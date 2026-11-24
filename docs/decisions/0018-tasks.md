@@ -101,6 +101,11 @@ later redeclared as a generic builtin: every program it accepts stays valid.
   struct field field by field (`consume w.handle.join()`); a struct holding one cannot declare `deinit`.
 - A `?` between `spawn` and `join` leaves the handle live and is `linear-not-consumed`; the borrowing
   idiom of 0015 applies. `(consume h.join())?` is fine when `R` is a `Result`.
+- In argument position, parentheses separate the receiver's `consume` from the argument's own
+  access marker: `print(value: (consume h.join()))`. Keep the ordinary call grammar rather than
+  making the unparenthesized marker mean something different depending on the callee's signature.
+  A consuming parameter can still require its own marker on the argument (see
+  [§5.6](../../specs/05-expressions.md#56-function-calls)).
 - **A handle moved into a call is pending until the call commits** (0015 rule 3, implemented here
   because `JoinHandle` makes it reachable): in `take(handle: consume spawn(...), extra: f()?)`, or an
   initializer `Holder(handle: spawn(...), extra: f()?)`, the `?` runs after the task has started and
@@ -255,9 +260,11 @@ guard is needed, so §21 may say a task can use `System`.
 
 ## Open questions
 
-1. **Lift the `runProcess` ban.** The hazard 0013 Q13 named is gone on every platform; the ban blocks
-   Fern from ever running its executor in parallel. Recommended: reconsider after P5a, with Fern as the
-   evidence. It needs the user's decision because Q13 was accepted.
+1. **Lift the process launch restriction.** The Linux fork child no longer allocates before
+   `execve`, but Darwin TCP and `kqueue` descriptors set close-on-exec in a separate call
+   before being returned. A change would need to prevent concurrent `System` process launches
+   from inheriting those descriptors. The restriction remains in place; changing it needs
+   a separate decision because Q13 was accepted.
 2. **`trySpawn`.** A recoverable spawn that returns the unspent input. Recommended: when a server needs
    it, not before.
 3. **Whether a task may be started from a `deinit`.** Allowed above; revisit if it deadlocks a real

@@ -22,6 +22,11 @@ private func flushAtExit() {
     registerExit(callback: symbolAddress(name: "joyeer_stdout_flush"))
 }
 
+// The linker roots this archive member, not an arbitrary definition of wmain.
+@platform(windows)
+@c_export(symbol: "joyeer_runtime_crt_startup_anchor")
+public func crtStartupAnchor(): Void {}
+
 @platform(windows)
 @c_export(symbol: "wmain")
 public func wideMain(argc: Int32, argv: Int): Int32 {

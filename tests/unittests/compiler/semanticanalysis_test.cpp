@@ -2255,6 +2255,21 @@ TEST_F(SemanticAnalysisTest, ASpawnStatementDropsItsHandle) {
             << joyeer::analysis::dump(result.diagnostics);
 }
 
+TEST_F(SemanticAnalysisTest, AMatchOnTheResultOfAMutatingCallCannotDropALinearPayload) {
+    for (const auto* scrutinee : {"&handles.removeLast()", "(&handles.removeLast())", "&(&handles.removeLast())"}) {
+        SCOPED_TRACE(scrutinee);
+        analyze(std::string(taskAnalysisPrelude) +
+                "func run() {\n"
+                "    var handles: [JoinHandle<Int>] = []\n"
+                "    &handles.append(element: consume spawn(function: square, input: consume 3))\n"
+                "    match " + scrutinee + " { .Some(_) => (), .None => () }\n"
+                "    consume handles.consumeEmpty()\n"
+                "}\n");
+        EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+                << joyeer::analysis::dump(result.diagnostics);
+    }
+}
+
 TEST_F(SemanticAnalysisTest, OverwritingALiveTaskIsReported) {
     analyze(std::string(taskAnalysisPrelude) +
             "func run(): Int {\n"
@@ -2361,6 +2376,61 @@ TEST_F(SemanticAnalysisTest, EvaluatingTheQuestionMarkFirstAndBindingItIsAccepte
             "}\n");
     EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearNotConsumed))
             << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, AnAbortedAggregateLeavesTheOriginalLinearLocalLive) {
+    analyze(std::string(pendingMovePrelude) +
+            "func run(ok: Bool): Int {\n"
+            "    let h = spawn(function: leaf, input: consume 5)\n"
+            "    while true {\n"
+            "        var a = [consume h, if ok { spawn(function: leaf, input: consume 6) } else { break }]\n"
+            "        while true {\n"
+            "            match &a.removeLast() { .Some(task) => { consume task.join() }, .None => { break } }\n"
+            "        }\n"
+            "        consume a.consumeEmpty()\n"
+            "        return 6\n"
+            "    }\n"
+            "    return consume h.join()\n"
+            "}\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, AReservedLinearFieldCannotBeAccessedThroughAnAncestor) {
+    analyze(std::string(pendingMovePrelude) +
+            "enum Work { Pair(JoinHandle<Int>, Int) }\n"
+            "func read(holder: Holder): Int { return holder.extra }\n"
+            "func run(holder: consuming Holder): Work {\n"
+            "    return .Pair(consume holder.handle, read(holder: holder))\n"
+            "}\n");
+    ASSERT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::overlappingConstructionAccess))
+            << joyeer::analysis::dump(result.diagnostics);
+    const auto found = std::find_if(result.diagnostics.begin(), result.diagnostics.end(), [](const auto& diagnostic) {
+        return diagnostic.id == joyeer::analysis::DiagnosticId::overlappingConstructionAccess;
+    });
+    EXPECT_EQ(found->notes.size(), 1u);
+}
+
+TEST_F(SemanticAnalysisTest, InfalliblePropagationDoesNotAbandonAnAggregate) {
+    analyze(std::string(pendingMovePrelude) +
+            "enum Work { Pair(JoinHandle<Int>, Int) }\n"
+            "func always(): Result<Int, Never> { return .Ok(8) }\n"
+            "func run(h: consuming JoinHandle<Int>): Result<Work, Never> {\n"
+            "    let work: Work = .Pair(consume h, always()?)\n"
+            "    return .Ok(consume work)\n"
+            "}\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, AReservedLinearOwnerProducesOneCompoundAssignmentDiagnostic) {
+    analyze(std::string(pendingMovePrelude) +
+            "enum Box { Pair(Holder, Int) }\n"
+            "func make(input: consuming Holder, change: Bool): Box {\n"
+            "    var owner = consume input\n"
+            "    return .Pair(consume owner, if change { owner.extra += 1\n 0 } else { 0 })\n"
+            "}\n");
+    EXPECT_EQ(std::count_if(result.diagnostics.begin(), result.diagnostics.end(), [](const auto& diagnostic) {
+        return diagnostic.id == joyeer::analysis::DiagnosticId::overlappingConstructionAccess;
+    }), 1) << joyeer::analysis::dump(result.diagnostics);
 }
 
 

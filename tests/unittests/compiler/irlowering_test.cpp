@@ -536,6 +536,48 @@ TEST_F(IRLoweringTest, AMatchThatBindsOnlyCopyablePayloadsStillCopiesThem) {
                                   "}\n"));
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     EXPECT_EQ(opcodeCount(function("peek"), joyeer::ir::Opcode::payloadAddress), 0u);
+    EXPECT_EQ(opcodeCount(function("peek"), joyeer::ir::Opcode::copyValue), 1u);
+}
+
+// Spec 7.1.2: a binding can take its payload from an already owned result, not from a borrow.
+TEST_F(IRLoweringTest, ADirectMatchOnReceiveOrRemoveLastTransfersOwnedPayloads) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"JOYEER(
+func text(receiver: ChannelReceiver<String>): Int {
+    return match receiver.receive() { .Ok(value) => value.count, .Err(_) => 0 }
+}
+func array(receiver: ChannelReceiver<[Int]>): Int {
+    return match receiver.receive() { .Ok(values) => values.count, .Err(_) => 0 }
+}
+func popText(values: inout [String]): Int {
+    return match &values.removeLast() { .Some(text) => text.count, .None => 0 }
+}
+func popArray(values: inout [[Int]]): Int {
+    return match &values.removeLast() { .Some(array) => array.count, .None => 0 }
+}
+)JOYEER"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    for (const auto* name : {"text", "array", "popText", "popArray"}) {
+        SCOPED_TRACE(name);
+        EXPECT_EQ(opcodeCount(function(name), joyeer::ir::Opcode::payloadAddress), 1u);
+        EXPECT_EQ(opcodeCount(function(name), joyeer::ir::Opcode::take), 1u);
+        EXPECT_EQ(opcodeCount(function(name), joyeer::ir::Opcode::copyValue), 0u);
+    }
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
+TEST_F(IRLoweringTest, AMatchOnABorrowedProjectionDoesNotTakeItsPayload) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"JOYEER(
+enum Slot { Full(String), Empty }
+struct Box { var slot: Slot }
+func create(): Box { return Box(slot: .Full("text")) }
+func peek(): Int {
+    return match create().slot { .Full(text) => text.count, .Empty => 0 }
+}
+)JOYEER"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(opcodeCount(function("peek"), joyeer::ir::Opcode::payloadAddress), 0u);
+    EXPECT_EQ(opcodeCount(function("peek"), joyeer::ir::Opcode::copyValue), 1u);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
 
 // The verifier rules of the array_remove_last and payload_address instructions, one malformed
@@ -1216,6 +1258,15 @@ print(value: number)
     const auto& run = function("run");
     EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::call), 2u);
     EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::ret), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersQualifiedBuiltinEnumCases) {
+    lower("func rangeError(): ConversionError { return ConversionError.OutOfRange }\n"
+          "func ioError(): IOError { return IOError.Other(7) }\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(opcodeCount(function("rangeError"), joyeer::ir::Opcode::constructEnum), 1u);
+    EXPECT_EQ(opcodeCount(function("ioError"), joyeer::ir::Opcode::constructEnum), 1u);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
 
 TEST_F(IRLoweringTest, LowersExplicitByteConversionCalls) {

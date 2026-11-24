@@ -3147,6 +3147,75 @@ TEST_F(TypeCheckingTest, JoinNeedsConsumeAndAnOwnedHandle) {
             << joyeer::typing::dump(checking.diagnostics);
 }
 
+TEST_F(TypeCheckingTest, JoiningATemporaryReportsOnlyThatTheHandleMustBeStored) {
+    for (const std::string marker : {"", "consume "}) {
+        SCOPED_TRACE(marker);
+        check(std::string(taskPrelude) + "func f(): Int { return " + marker +
+              "spawn(function: square, input: consume 1).join() }\n");
+        ASSERT_EQ(checking.diagnostics.size(), 1u) << joyeer::typing::dump(checking.diagnostics);
+        const auto& diagnostic = checking.diagnostics.front();
+        EXPECT_EQ(diagnostic.id, joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument);
+        EXPECT_NE(diagnostic.message.find("'join' needs a value stored"), std::string::npos);
+        ASSERT_TRUE(diagnostic.help.has_value());
+        EXPECT_NE(diagnostic.help->find("let"), std::string::npos);
+    }
+}
+
+TEST_F(TypeCheckingTest, AQualifiedPayloadlessEnumCaseIsAConsumableTemporary) {
+    check("enum Chain {\n End,\n Link(String),\n}\n"
+          "func finish(chain: consuming Chain) {}\n"
+          "func finishBoth(first: consuming Chain, second: consuming Chain) {}\n"
+          "func f() {\n"
+          "    let end = consume Chain.End\n"
+          "    finish(chain: consume end)\n"
+          "    finish(chain: consume Chain.End)\n"
+          "    finishBoth(first: consume Chain.End, second: consume Chain.End)\n"
+          "}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AnEnumCaseMustBeQualifiedByItsTypeNotAValue) {
+    check("enum Chain {\n End,\n Link(String),\n}\n"
+          "func make(): Chain { return Chain.End }\n"
+          "func finish(chain: consuming Chain) {}\n"
+          "func f() { finish(chain: consume make().End) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::unknownMember))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AnOuterBorrowConflictsWithAParenthesizedEnumPayloadMove) {
+    check("struct Worker { var task: JoinHandle<Int> }\n"
+          "enum Work { Task(JoinHandle<Int>) }\n"
+          "func accept(owner: Worker, item: consuming Work) {}\n"
+          "func run(worker: consuming Worker) {\n"
+          "    accept(owner: worker, item: consume Work.Task((consume worker.task)))\n"
+          "}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::overlappingAccess))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, EnumPayloadEvaluationDoesNotHoldCopiedPlacesOrConsumeFunctionNames) {
+    check("struct Owner { var task: JoinHandle<Int>\n var tag: Int }\n"
+          "enum Box { Put(Owner) }\n"
+          "enum Snapshot { Pair(Int, Box) }\n"
+          "func capture(owner: consuming Owner): Snapshot {\n"
+          "    return Snapshot.Pair(owner.tag, .Put(consume owner))\n"
+          "}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check("enum Box { Fn((Int): Int) }\n"
+          "func identity(x: Int): Int { return x }\n"
+          "func accept(f: (Int): Int, box: Box) {}\n"
+          "func run() { accept(f: identity, box: .Fn(consume identity)) }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AContextualEnumPayloadRejectsAnInoutMarker) {
+    check("enum Tag { Value(Int) }\n"
+          "func make(): Tag { var n = 1\n return .Value(&n) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidAccessMarker))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
 TEST_F(TypeCheckingTest, ATaskHandleIsNoncopyable) {
     check(std::string(taskPrelude) +
           "func f() {\n    let h = spawn(function: square, input: consume 1)\n    let g = h\n    consume g.join()\n}\n");

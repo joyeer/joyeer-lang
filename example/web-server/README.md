@@ -5,15 +5,11 @@ files as a website. Each request reads the file, renders it to HTML, and
 answers; there is nothing to build when a page changes. A pool of worker tasks
 serves connections concurrently ([spec §21](../../specs/21-concurrency.md)).
 
-> **Status: runs on Windows.** The server uses the provisional TCP functions of
-> `System` ([spec §18.6](../../specs/18-host.md#186-tcp-networking),
-> [decision 0012](../../docs/decisions/0012-tcp-networking.md)), which are
-> implemented for Windows and Linux; on macOS they fail with `.Other(38)`, so
-> the server prints a listen error and exits. It was built with the in-tree
-> compiler and checked over real HTTP on Windows x64 and on Linux x86-64
-> (Ubuntu under WSL2), both Debug (`GET`, `HEAD`, `404`, `405`), including the
-> worker pool described below. The example is deliberately **not** a member of the root
-> workspace, so it does not affect `fern check --workspace` or CTest.
+> The server uses the provisional [TCP functions of `System`](../../specs/18-host.md#186-tcp-networking).
+> `GET`, `HEAD`, `404`, and `405` were checked with the worker pool on Windows
+> x64 and Linux x86-64 (WSL2). macOS TCP is implemented, but no native macOS
+> server run is recorded. The example is not in the root Fern workspace;
+> CTest exercises its request-head deadline and idle-worker dispatch.
 
 ## Layout
 
@@ -65,25 +61,27 @@ and the server never serves a file that is not a `.md` regular file.
 - **Markup injection.** All text is HTML-escaped and links with schemes other
   than `http`, `https` and `mailto` are shown as text. Raw HTML in a page is
   displayed, never executed.
+- **Request timeout.** The server has five seconds to read the entire request head once a
+  worker starts reading it. Partial reads do not reset the timer. If the deadline expires
+  before the head is complete, the server replies with `408 Request Timeout`.
 - **Memory.** A request head is limited to 16 KiB and a page to 1 MiB. Page
   authors are trusted: pathological Markdown (huge runs of unmatched `*`) can
   make rendering slow.
 
 ## How the pool works
 
-The accept loop makes one bounded channel per worker (capacity 4) and starts one task per worker, giving each
-task the receiving end ([decision 0019](../../docs/decisions/0019-channels.md)). It then deals each accepted
-`TcpConnection` to the next worker in turn with `send`; the connection is **moved** into the queue, so exactly one
-task owns it at any time: the accept loop until it sends, then the worker, which serves it, closes it and waits for
-the next one. Nothing is shared and there is no lock in the program. A page is read and rendered per request;
-there is no shared cache, by design, because a cache would need shared mutable state.
+Each worker has two capacity-one channels: a job inbox and a signal that it is idle. The accept
+loop waits for any signal, receives it, then **moves** the accepted connection to that worker.
+If all workers are busy, the accept loop holds one connection until one becomes idle. It never
+queues a job behind a busy worker while another is idle. Nothing is shared, and pages are read
+and rendered per request without a shared cache.
 
-When accepting keeps failing, the accept loop closes every queue (a worker finishes what it holds, sees its queue
-closed and returns), joins the workers, and exits. The senders are closed before the joins on purpose: a worker
-ends only when its sender is gone, so joining first would wait forever ([spec §21.9.5](../../specs/21-concurrency.md)).
+On shutdown, the accept loop closes the job senders and idle receivers before joining so a
+worker can leave either blocking channel operation ([decision 0019](../../docs/decisions/0019-channels.md)).
 
 ## Measured behavior
 
+These historical measurements used round-robin dispatch, not the current idle-worker selection.
 One run each, on a 16-logical-CPU Windows 11 machine with Ubuntu under WSL2, with the **Debug** toolchain and
 runtime (so absolute numbers are far from what an optimized build would do), driven by `curl` (whose process
 start-up dominates the small pages). These are indications, not a benchmark:
@@ -104,19 +102,11 @@ pool, 4:        0.006 0.005 0.005 4.63  0.005 0.005 0.005 0.005
 pool, 8:        0.005 0.005 0.005 0.005 0.005 0.005 0.005 4.60
 ```
 
-**Head-of-line blocking.** Connections are dealt round-robin without asking whether a worker is idle, so one in
-every *N* requests lands on the worker that holds the silent client and waits for its 5-second read timeout, even
-though the other workers are free. Channels have a single sender and no `select` or try-receive yet, so the accept
-loop cannot learn which worker is idle ([decision 0013](../../docs/decisions/0013-concurrency-model.md), question 11).
-More workers make a stall less likely, and the per-connection read timeout bounds it; neither removes it. The same
-run on Windows shows the same shape (one of eight requests waits about 4.9 s).
-
 ## Limits to know about
 
-- **A stalled connection stalls its worker and the queue behind it** (above). A client that connects and stays
-  silent holds one worker for at most 5 seconds per read ([decision 0014](../../docs/decisions/0014-network-timeouts.md)),
-  then gets `408 Request Timeout`. That is a bound, not a defense: a client that sends a byte every few seconds, or
-  never reads the response, can still tie a worker up, because there is no total deadline and no send timeout.
+- **A stalled connection still occupies its worker.** The request head has a five-second total
+  budget, but the example's response send is still unbounded. If every worker is occupied,
+  dispatch waits.
   Do not expose this directly to the internet; put it behind a reverse proxy that enforces timeouts and terminates
   TLS.
 - **`runProcess` cannot be used** in a program that starts tasks ([spec §21.6](../../specs/21-concurrency.md)).

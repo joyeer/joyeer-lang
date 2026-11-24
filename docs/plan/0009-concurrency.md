@@ -1,8 +1,11 @@
 # 0009: Concurrency
 
-- Status: in progress (updated 2026-11-12); the feature work is done, gates and gaps remain
+- Status: blocked (updated 2026-11-24); implementation is in place. Native
+  Windows ARM64 and Linux AArch64 acceptance, the older-glibc link check, and
+  Linux and macOS socket validation remain open.
 - Decisions: [0013](../decisions/0013-concurrency-model.md), [0014](../decisions/0014-network-timeouts.md),
-  [0015](../decisions/0015-noncopyable-and-linear-types.md) to [0019](../decisions/0019-channels.md)
+  [0015](../decisions/0015-noncopyable-and-linear-types.md) to [0019](../decisions/0019-channels.md),
+  [0032](../decisions/0032-tcp-read-queue.md)
 - Spec: [§21](../../specs/21-concurrency.md)
 
 ## Goal
@@ -12,81 +15,140 @@ compiler gaps the feature work found, and keep the deferred features on record.
 
 ## Definition of done
 
-- `scripts/validate.py` passes on every supported platform, including Windows Release, AArch64 Linux
-  and macOS.
+- [Full platform validation](../building.md#full-platform-validation) passes in Debug and Release
+  on each supported native target.
 - Every item under "Language and compiler gaps" is fixed or moved to a decision record.
 
 ## Current state
 
-Network timeouts (P1a), noncopyable and linear types with `deinit` (P2), thread primitives (P3), a
-thread-safe runtime (P4), tasks (P5a), channels (P5b, P6) and the worker-pool web server (P7) are done.
-The implementation notes are in [runtime](../impl/runtime.md) and
-[supported features](../impl/supported-features.md).
-
-The [source-library migration](../decisions/0023-library-concurrency.md#final-comparison-and-validation)
-passed full Debug and Release validation on Windows x64, Linux x86_64 (WSL Ubuntu), and macOS ARM64.
-That run does not establish Linux AArch64 acceptance.
+Noncopyable and linear types with `deinit` (P2), thread primitives (P3), a thread-safe runtime (P4),
+tasks (P5a), channels (P5b, P6), and the worker-pool web server (P7) are implemented. The
+[P1a timeouts](../decisions/0014-network-timeouts.md) cover receive and accept on Windows and Linux.
+The bounded send/connect and poll APIs and the fixed-membership TCP read queue pass
+Windows x64 loopback tests. The Linux and macOS socket and queue backends are implemented;
+their native verification remains open. The implementation notes are in
+[runtime](../impl/runtime.md) and [supported features](../impl/supported-features.md).
 
 ## Todo
 
-### Acceptance gates
+### Platform acceptance
 
-- [x] Run `scripts/validate.py` on Windows, on a machine with Python 3.9 or later.
-  Evidence: [0023](../decisions/0023-library-concurrency.md#final-comparison-and-validation),
-  Windows x64 Debug/Release, unfiltered CTest 1665/1665 and fern 7/7 each.
-- [x] Windows Release. Evidence: the same full Phase 4 validator run.
-- [ ] AArch64 Linux (the thread and channel paths are written but untested there).
-- [ ] macOS, including the `os_unfair_lock` path.
+The completed runs are recorded in [0023](../decisions/0023-library-concurrency.md#final-comparison-and-validation).
+
+- [x] Windows x64: Debug and Release each passed unfiltered CTest 1665/1665 and `fern test` 7/7.
+- [x] Linux x86-64 (WSL Ubuntu): Debug and Release each passed unfiltered CTest 1641/1641 and
+  `fern test` 7/7.
+- [x] macOS ARM64 (`799dce4`): Debug and Release each passed unfiltered CTest 2019/2019 and
+  `fern test` 7/7. This includes task and channel fixtures and
+  [thread-safety tests](../../tests/unittests/runtime/thread_safety_test.cpp) using the macOS
+  [`os_unfair_lock` implementation](../../lib/Runtime/core/locks.joyeer).
+- [ ] Windows ARM64: blocked on a native host; no Debug and Release concurrency run is recorded.
+- [ ] Linux AArch64: the thread and channel paths are implemented, but no native Debug and Release
+  validation is recorded. Blocked on a native host.
 - [x] Find the cause of the `SystemTests` "write zero bytes to a closed stderr" failure under `fern test`
-  on Linux WSL2. Evidence: the pre-Phase-4 fix `863530f` probes empty writes; Phase 4 full Debug/Release
-  fern suites are 7/7 on both Windows and WSL Linux, including `SystemTests`.
-- [ ] Test the `-lpthread` link argument (emitted for a program that starts a task or names a channel
-  end type) on glibc older than 2.34.
-- [ ] Stop the Windows C-startup link (`/WHOLEARCHIVE`) from loading every runtime archive member: a plain
-  archive plus `/INCLUDE:wmain` on Windows, with a regression test. (macOS `-force_load` was removed
-  by [0026](../decisions/0026-library-array.md), amendment A7.)
+  on Linux WSL2. Evidence: fix `863530f` probes empty writes; the full Debug and Release runs above
+  include `SystemTests`.
+
+### Linker follow-ups
+
+- [ ] Test the Linux `-lpthread` link argument on glibc older than 2.34. The
+  [linker](../../compiler/codegen/linker.cpp) already emits it for programs that use tasks or channels;
+  this remains blocked on a host with older glibc.
+- [x] Load only needed Windows C-startup archive members. A dedicated `/INCLUDE` anchor in the
+  bundled `wmain` member replaced `/WHOLEARCHIVE`. Windows x64 evidence:
+  `RuntimeCRuntimeProgramKeepsTheCStartup` checks that C startup remains without unused thread
+  imports, and `RuntimeCStartupRejectsDuplicateWmain` checks that a second `wmain` cannot replace it.
 
 ### Language and compiler gaps
 
-- [ ] A `match` binding the payload of an owned temporary (`receiver.receive()`, `removeLast()`) moves
-  instead of cloning a copyable payload (`String`, array), making `receive` zero-copy.
-- [ ] Track linear moves into array literals, dictionary literals and enum payloads as pending until
-  construction commits, so a `?` in a later element cannot drop a handle (today the run-time backstop
-  traps `task dropped without join`).
-- [ ] Qualified builtin enum cases (`ConversionError.OutOfRange`) lower in IR.
-  `ChannelClosed.Closed` is now an ordinary source enum case ([0023](../decisions/0023-library-concurrency.md),
-  the durable `generic-callbacks.joyeer` fixture), so that part no longer needs builtin lowering.
-- [ ] `consume Chain.End` (a qualified payload-less case) is accepted.
-- [ ] `==` on a struct or enum, or a diagnostic with a workaround.
-- [ ] Early, accurate diagnostics for `spawn(...).join()`. (The function-value diagnostics were
-  addressed in [0020](../decisions/0020-function-values.md).)
-- [ ] A joined result can be an argument (`print(value: consume h.join())`); today the argument marker
-  and the receiver marker collide.
-- [ ] A channel that carries its own receiver does not leak.
-- [ ] Channel element types `Any` and `Never` can be written (the lexer rejects the names), or are
-  rejected by the type checker.
-- [ ] Dispatch to the idle worker instead of round-robin; one request in N waits for a stalled worker's
-  read timeout ([example README](../../example/web-server/README.md)). Needs multi-sender channels, a
-  `select` or a try-receive (decision 0013, question 11).
-- [ ] Decide on warnings for a `join` while a channel end of the same function is live (the
-  close-before-join deadlock) and for a discarded `Result` of `send` or `receive`.
+- [x] Support `==` and `!=` on structs and enums that opt into `Equatable`, with a diagnostic for
+  nonconforming types. Evidence: [0031](../decisions/0031-equatable.md), `4089941`, and the
+  `E2EEquatableDerived` fixtures at `-O0` through `-O3`.
+- [x] Lower `ChannelClosed.Closed` as a qualified source enum case. Evidence: the
+  [generic callbacks fixture](../../tests/c-interop/generic-callbacks.joyeer) and macOS validation
+  in [0023](../decisions/0023-library-concurrency.md#final-comparison-and-validation).
+- [x] Reject `Never` in channel element types with `type-checking.channel-element-type`. Evidence:
+  `CInteropTest.ChannelArgumentsHaveOneSpecificDiagnosticAtTheTypeOccurrence` in
+  [cinterop_test.cpp](../../tests/unittests/compiler/cinterop_test.cpp).
+- [x] Reject early exits that would drop a pending linear move in a call or array literal. Evidence:
+  `AQuestionMarkAfterAMovedHandleInTheSameCallIsReported` in
+  [semanticanalysis_test.cpp](../../tests/unittests/compiler/semanticanalysis_test.cpp) and the array
+  `return` case in `CInteropTest.PendingCompilerTransferCannotEscapeBeforeTheCallCommits`.
+- [x] Transfer payloads from owned temporary matches without an extra clone. The
+  `ADirectMatchOnReceiveOrRemoveLastTransfersOwnedPayloads` IR test checks `receive()` and
+  `removeLast()` with `String` and array payloads. Borrowed matches still copy; the queue still
+  copies the value's representation bytes.
+- [x] Treat direct matches on `&handles.removeLast()` as owning the result. The
+  [linear diagnostic fixture](../../tests/semantic-analysis/err/match_linear_remove_last_drop.joyeer)
+  rejects a dropped handle, and `E2EOwnedMatchPayloads` joins a bound one.
+- [x] Lower qualified builtin enum cases. `E2EQualifiedBuiltinCases` covers `ConversionError.OutOfRange`
+  and a payload-bearing `IOError.Other` at `-O0` through `-O3`.
+- [x] Accept `consume Chain.End` as a temporary, not a move from an enum type's storage.
+  `E2EConsumeQualifiedCase` passes two independent cases in one call.
+- [x] Diagnose `spawn(...).join()` and `consume spawn(...).join()` in type checking.
+  `JoiningATemporaryReportsOnlyThatTheHandleMustBeStored` checks both forms give one diagnostic
+  with the local-binding workaround.
+- [x] Resolve joined results in arguments without changing call syntax. The
+  [parenthesized form](../../specs/21-concurrency.md#213-joining) is covered by `E2EOwnedMatchPayloads`.
+  [0018](../decisions/0018-tasks.md#static-semantics) records why bare `consume` is the argument marker.
+- [x] Keep `Any` reserved; no channel-only exception is needed. The
+  [diagnostic decision](../decisions/0019-channels.md#diagnostic-follow-up) preserves the observed
+  `lexer.unsupported-syntax` rejection for `Any` and the separate type-checking rejection for `Never`.
+- [x] Decide the warning scope. [0019](../decisions/0019-channels.md#diagnostic-follow-up)
+  defers deadlock warnings until a channel dependency can be identified and discarded-result
+  warnings to a general must-use design. No warnings were added.
+
+- [x] Commit moves from named linear places only after array or enum construction operands succeed.
+  `E2ELinearAggregateCommit` covers array, contextual and qualified enum forms, aborted construction,
+  sibling field access, and retry with `continue` at `-O0` through `-O3`.
+  Ordinary calls and struct initializers retain the conservative guard.
+- [x] Prevent a channel from carrying its own receiver. `TypeChannelRejectsOwnReceiver` rejects
+  the measured leak before execution. Generic tests check substituted payload types and allow
+  phantom type arguments, and `E2EChannelCycle` still passes. The conservative creation rule and
+  separate distinct-queue limitation are recorded in [§21.9](../../specs/21-concurrency.md#219-channels).
+- [x] Dispatch to an idle worker. The idle-dispatch regression reproduced the second request
+  stalling with round-robin. `WebServer.IdleDispatchO0` and `WebServer.IdleDispatchO2` passed
+  after adding per-worker signals and `waitForChannel`. `E2EChannelReadiness` covers shutdown
+  and join at `-O0` through `-O3`; the runtime test covers waking on send and sender close.
+  See [decision 0019](../decisions/0019-channels.md#waiting-for-an-available-worker).
 
 ### Networking
 
-- [ ] Send and connect timeouts (they need non-blocking sockets) and a total deadline for a request head.
-- [ ] `tcpPoll` over several handles with a hard cap (`WSAPoll`, `ppoll`).
-- [ ] A readiness API that scales past a poll set (`epoll`, IOCP, `kqueue`).
+The recorded macOS concurrency run predates the
+[macOS TCP implementation](../../lib/System/network_posix.joyeer).
 
-## Open questions
-
-- Lifting the `runProcess` ban in programs that start tasks (decision 0018, open question 1): the Linux
-  child no longer allocates before `execve`, and the ban stops Fern from running its executor in
-  parallel.
+- [ ] Finish native Linux validation for `tcpSendWithin` and `tcpConnectWithin`. Windows x64
+  loopback `SystemTests` verified timed success, invalid budgets, local refusal and send
+  backpressure. The Linux `ioctl`/`ppoll`/`SO_ERROR` path type-checks but has not run here.
+  Blocked: the local Linux environment has no configured LLVM/LLD/Clang development SDK.
+- [x] Apply one five-second deadline to the entire HTTP request head. `WebServer.RequestHeadDeadline`
+  exercises a complete request and a trickled incomplete one on loopback; partial reads cannot
+  restart the budget.
+- [ ] Finish native Linux validation for capped `tcpPoll`. Windows x64 loopback `SystemTests`
+  passed, including distinct connection/listener indices, idle timeout, EOF and the 64-socket cap.
+  Linux `ppoll` type-checks in `TheSystemLibraryChecksForEveryTargetPlatform`;
+  native Linux acceptance needs the same SDK.
+- [x] Define and verify scalable read readiness on Windows x64. The
+  [owned queue](../decisions/0032-tcp-read-queue.md) uses IOCP rather than
+  scanning a poll set. `SystemTests` selected a socket at index 79 of 80 and
+  verified non-consuming readiness, rearm, EOF, and bounded sends. `E2ETcpReadQueueTransfer`
+  and `E2ETcpReadQueueWindows` passed at `-O0` and `-O2`, covering task handoff,
+  partial setup rollback, isolated read errors, and handle and allocation cleanup.
+- [ ] Verify the Linux one-shot `epoll` backend natively. Cross-target System
+  type checking passed, and a kernel probe confirmed the x86-64 event layout,
+  rearm and EOF. Blocked: full Joyeer validation needs a configured Linux SDK.
+- [ ] Run native macOS ARM64 TCP acceptance in Debug and Release. The libSystem
+  sockets, capped `poll`, deadlines, and `kqueue` read queue are implemented.
+  All-target System checking and the variadic `fcntl` code-generation tests pass.
+  Blocked on a native host: run the full validator with `SystemTests`,
+  `E2ETcpReadQueueTransfer`, and the web-server regressions enabled.
 
 ## Out of scope
 
 Deferred, not forgotten:
 
+- Lifting the [process launch restriction](../../specs/21-concurrency.md#216-restrictions)
+  for programs that call `spawn`. See [decision 0018](../decisions/0018-tasks.md#open-questions).
 - Multi-sender channels, which need a runtime sender count and would be the one named exception to §4.1
   and §4.8; unbounded channels, `trySend` (returning the value, with a `SendError<T>`), `tryReceive`,
   timeouts on channel operations, and iterating a receiver.
@@ -99,6 +161,36 @@ Deferred, not forgotten:
 
 ## Progress log
 
+- 2026-11-24: Replaced the macOS TCP stubs with libSystem sockets, capped `poll`,
+  and a `kqueue` read queue. Enabled the native loopback, task-transfer, and web-server
+  tests on macOS. System type-checking passed for all three OS targets; the Darwin
+  `fcntl` binding emitted a real variadic call and passed symbol collision tests.
+  Windows x64 Debug and Release each passed unfiltered CTest 2259/2259 and
+  `fern test` 7/7.
+  No native macOS run is recorded for this change.
+- 2026-11-24: Implemented fixed-membership TCP read queues with Windows IOCP and
+  Linux one-shot `epoll`. Checked off Windows x64 after the 80-connection loopback,
+  task handoff, and rollback/cleanup regressions. The unfiltered Windows x64
+  validator passed CTest 2257/2257 and `fern test` 7/7 in both Debug and Release.
+  Native Linux verification and the macOS TCP/`kqueue` backend remain open.
+- 2026-11-24: Verified named linear array/enum commits, direct channel self-receiver rejection,
+  and idle-worker dispatch on Windows x64. Capped `tcpPoll` and bounded send/connect passed
+  Windows loopback tests and cross-target type checking; native Linux runs still need a configured
+  SDK. After fixing the implicit array-role visibility diagnostic, the final Windows x64 Debug
+  and Release validators each passed unfiltered CTest 2252/2252 and `fern test` 7/7.
+  `Fern.Workspace` passed on rerun in both configurations, as did `ValidationScriptTests` in Debug.
+- 2026-11-23: Implemented lazy Windows CRT archive loading, qualified enum construction and consume,
+  a single temporary-join diagnostic, owned match transfers and linear payload checks, and the HTTP
+  request-head deadline. Recorded the existing joined-argument syntax and the decisions on reserved
+  `Any` and warnings. Windows x64 validation passed: unfiltered CTest 2226/2226 and `fern test` 7/7 in
+  Debug and Release; Release `Fern.Workspace` passed on rerun. The Debug full run preceded the final
+  nested-marker fix, which passed the focused Debug regressions. The example returned HTTP 200 for
+  a complete request and HTTP 408 after about five seconds for an incomplete head. Linux and macOS
+  were not rerun for this batch.
+- 2026-11-23: Recorded Linux x86-64 and macOS ARM64 acceptance and added the missing Windows ARM64
+  gate. Checked off `Equatable`, qualified `ChannelClosed`, `Never` rejection, and the pending-move
+  safeguards; kept full commit semantics open. Probed qualified builtin cases and temporary joins
+  with an existing Windows Debug compiler. No new full platform suite was run.
 - 2026-11-14: Plan 0010 Phase 4 moves the public task/channel types and operations into the source
   prelude without changing this plan's runtime contract. Its callback fixture covers qualified
   `ChannelClosed.Closed`; `ConversionError.OutOfRange` remains open. Conservative task-transfer

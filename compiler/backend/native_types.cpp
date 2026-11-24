@@ -82,9 +82,14 @@ std::vector<Diagnostic> Builder::build() {
         // Reserve C linkage names first, so private generated helpers can never
         // take a native symbol and force LLVM to rename the public entry.
         for (const auto& function : source.functions) {
-            if (function.nativeBinding.has_value() && function.nativeBinding->dataSymbol) {
-                declareDataSymbol(function.nativeBinding->symbol);
-            } else if (function.nativeBinding.has_value() && !intrinsic::reserved(function.nativeBinding->symbol)) {
+            if (!function.nativeBinding.has_value()) continue;
+            const auto& binding = *function.nativeBinding;
+            if (binding.dataSymbol) {
+                declareDataSymbol(binding.symbol);
+            } else if (const auto* descriptor = intrinsic::find(binding.symbol);
+                    descriptor != nullptr && descriptor->operation == intrinsic::Operation::darwinFcntlInt) {
+                declareDarwinFcntl();
+            } else if (!intrinsic::reserved(binding.symbol)) {
                 declareNativeFunction(function);
             }
         }
@@ -390,11 +395,17 @@ llvm::Function* Builder::declareNativeFunction(const ir::Function& function) {
             kinds, type(function.resultType).kind);
 }
 
+llvm::Function* Builder::declareDarwinFcntl() {
+    auto* i32 = builder.getInt32Ty();
+    return declareCFunction("fcntl", i32, {i32, i32},
+            {typing::TypeKind::int32, typing::TypeKind::int32}, typing::TypeKind::int32, true);
+}
+
 llvm::Function* Builder::declareCFunction(std::string_view name, llvm::Type* result,
         llvm::ArrayRef<llvm::Type*> parameters,
-        llvm::ArrayRef<typing::TypeKind> parameterKinds, typing::TypeKind resultKind) {
+        llvm::ArrayRef<typing::TypeKind> parameterKinds, typing::TypeKind resultKind, bool variadic) {
     const llvm::StringRef symbol(name.data(), name.size());
-    auto* signature = llvm::FunctionType::get(result, parameters, false);
+    auto* signature = llvm::FunctionType::get(result, parameters, variadic);
     const llvm::Triple target(llvm::sys::getDefaultTargetTriple());
     llvm::AttributeList attributes;
     if (resultKind == typing::TypeKind::never) {
@@ -431,6 +442,11 @@ llvm::Function* Builder::declareCFunction(std::string_view name, llvm::Type* res
             throw std::runtime_error(message);
         }
         return existing;
+    }
+    if (module().getNamedValue(symbol) != nullptr) {
+        const auto message = "native symbol '" + std::string(name) + "' is declared as both a function and a data symbol";
+        report(DiagnosticId::conflictingNativeSymbol, {}, message);
+        throw std::runtime_error(message);
     }
     auto* entry = llvm::Function::Create(
             signature, llvm::GlobalValue::ExternalLinkage, symbol, module());

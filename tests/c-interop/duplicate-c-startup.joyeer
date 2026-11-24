@@ -1,0 +1,8 @@
+// Even with lazy runtime archive extraction, this cannot replace the built-in wmain.
+@c_extern(symbol: "exit")
+func terminate(status: Int32): Never
+
+@c_export(symbol: "wmain")
+func otherEntry(argc: Int32, argv: Int): Int32 { return 19 }
+
+func main() { terminate(status: 7) }

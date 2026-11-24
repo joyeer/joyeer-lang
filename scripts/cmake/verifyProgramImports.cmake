@@ -1,13 +1,13 @@
+cmake_minimum_required(VERSION 3.20)
+
 # Compiles a Joyeer program and checks what the executable imports
 # (decision 0011): a program that never calls the C library starts at its own entry
 # point and imports only the operating system's functions, so the exact list is known;
 # one that does keeps the C startup and imports far more.
 #
 # Inputs: JOYEER_EXECUTABLE, INPUT_FILE, OUTPUT_FILE, READOBJ (Windows) or NM (Linux),
-# COMPILER_ARGS (list), and
-# one of EXPECTED_IMPORTS (the exact list), ALLOWED_IMPORTS (a superset), FORBIDDEN_IMPORTS
-# (names that must be absent) or
-# MINIMUM_COUNT.
+# COMPILER_ARGS (list), and any of EXPECTED_IMPORTS (the exact list),
+# ALLOWED_IMPORTS (a superset), REQUIRED_IMPORTS, or FORBIDDEN_IMPORTS.
 foreach(variable IN ITEMS JOYEER_EXECUTABLE INPUT_FILE OUTPUT_FILE)
     if(NOT DEFINED ${variable})
         message(FATAL_ERROR "${variable} is required")
@@ -47,6 +47,10 @@ foreach(line IN LISTS lines)
 endforeach()
 list(SORT imports)
 list(LENGTH imports count)
+if(NOT DEFINED EXPECTED_IMPORTS AND NOT DEFINED ALLOWED_IMPORTS AND
+   NOT DEFINED REQUIRED_IMPORTS AND NOT DEFINED FORBIDDEN_IMPORTS)
+    message(FATAL_ERROR "At least one import expectation is required")
+endif()
 if(DEFINED EXPECTED_IMPORTS)
     list(SORT EXPECTED_IMPORTS)
     if(NOT "${imports}" STREQUAL "${EXPECTED_IMPORTS}")
@@ -58,17 +62,15 @@ elseif(DEFINED ALLOWED_IMPORTS)
             message(FATAL_ERROR "The program needs ${name}, which is not approved:\n  ${imports}\nAllowed: ${ALLOWED_IMPORTS}")
         endif()
     endforeach()
-elseif(DEFINED FORBIDDEN_IMPORTS)
-    foreach(name IN LISTS FORBIDDEN_IMPORTS)
-        if(name IN_LIST imports)
-            message(FATAL_ERROR "The program imports ${name}, which only the C runtime needs:\n  ${imports}")
-        endif()
-    endforeach()
-elseif(DEFINED MINIMUM_COUNT)
-    if(count LESS MINIMUM_COUNT)
-        message(FATAL_ERROR "The program imports ${count} functions (${imports}); expected at least ${MINIMUM_COUNT}")
-    endif()
-else()
-    message(FATAL_ERROR "EXPECTED_IMPORTS, FORBIDDEN_IMPORTS or MINIMUM_COUNT is required")
 endif()
+foreach(name IN LISTS REQUIRED_IMPORTS)
+    if(NOT name IN_LIST imports)
+        message(FATAL_ERROR "The program does not import required ${name}:\n  ${imports}")
+    endif()
+endforeach()
+foreach(name IN LISTS FORBIDDEN_IMPORTS)
+    if(name IN_LIST imports)
+        message(FATAL_ERROR "The program unexpectedly imports ${name}:\n  ${imports}")
+    endif()
+endforeach()
 message(STATUS "program imports (${count}): ${imports}")

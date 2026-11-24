@@ -172,8 +172,8 @@ never freed, and the balance stays zero).
 - **`System`'s own first-use state and `runProcess` rejection while tasks exist**: P5, because a task
   can only call them once tasks exist.
 - **Per-thread allocator caches** and lock-free remote frees: only if a baseline shows contention.
-- **The Windows C-startup `/WHOLEARCHIVE` link** imports the thread functions into every such
-  program (0016); still to decide.
+- **The Windows C-startup link** originally imported the thread functions into every such program
+  (0016). It now forces only the C wrapper's archive member; see [backend](../impl/backend.md).
 
 ## Consequences
 

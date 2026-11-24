@@ -28,5 +28,8 @@ if(NOT combined MATCHES "${EXPECTED_PATTERN}")
     message(FATAL_ERROR
             "Compiler failed without the expected diagnostic '${EXPECTED_PATTERN}':\n${combined}")
 endif()
+if(DEFINED FORBIDDEN_PATTERN AND combined MATCHES "${FORBIDDEN_PATTERN}")
+    message(FATAL_ERROR "Compiler emitted an unexpected diagnostic '${FORBIDDEN_PATTERN}':\n${combined}")
+endif()
 
 message(STATUS "Observed expected compiler failure: ${EXPECTED_PATTERN}")

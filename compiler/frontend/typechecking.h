@@ -307,6 +307,7 @@ enum class TypeCheckingDiagnosticId {
     channelEndTypes,
     channelCapacity,
     linearChannelElement,
+    channelReceiverCycle,
     channelElementType,
     // Function values (decision 0020).
     invalidFunctionType,
@@ -430,6 +431,9 @@ public:
     // holds one (a struct field, an enum payload, or the element, key, value, payload or error type
     // of Array, Dict, Optional and Result). Every linear type is noncopyable.
     [[nodiscard]] bool isLinear(TypeId type) const;
+    // A consumed local or stored field that can stay in place until array/enum construction commits.
+    [[nodiscard]] syntax::ExprPtr linearConstructionMoveSource(
+            const syntax::ExprPtr& expression, bool marked) const;
     // The field paths a binding of `type` must consume to be ended. A linear aggregate (a struct
     // that is linear only because a field is) ends field by field, so each linear field path is
     // one entry; any other linear type is a single leaf, the empty path. Empty when not linear.

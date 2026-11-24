@@ -181,7 +181,7 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
     set(joyeer_entry_imports "joyeer_stderr_write;joyeer_stdout_flush;joyeer_main;joyeer_main_uses_arguments;joyeer_panic;joyeer_alloc;joyeer_free;joyeer_runtime_active_allocations;joyeer_string_clone_abi;joyeer_array_create_owned_abi;joyeer_array_append_owned_abi;joyeer_array_destroy_abi;joyeer_native_string_element_clone;joyeer_native_string_element_destroy")
     if(WIN32)
         list(APPEND joyeer_entry_imports WideCharToMultiByte GetCommandLineW VirtualAlloc ExitProcess)
-        set(joyeer_entry_point wmain)
+        set(joyeer_entry_point "wmain;joyeer_runtime_crt_startup_anchor")
         set(joyeer_entry_defined "joyeer_entry_run;joyeer_static_slots;joyeer_start")
     else()
         set(joyeer_entry_point main)
@@ -238,7 +238,7 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
         COMMAND "${CMAKE_COMMAND}"
             "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
             "-DOBJECT=${JOYEER_RUNTIME_CHANNELS_OBJECT}"
-            "-DEXPECTED_DEFINED=joyeer_static_slots;joyeer_channel_create_abi;joyeer_channel_send_abi;joyeer_channel_receive_abi;joyeer_channel_close_abi"
+            "-DEXPECTED_DEFINED=joyeer_static_slots;joyeer_channel_create_abi;joyeer_channel_send_abi;joyeer_channel_receive_abi;joyeer_channel_wait_ready_abi;joyeer_channel_close_abi"
             "-DALLOWED_UNDEFINED=joyeer_panic;joyeer_alloc;joyeer_free;joyeer_mutex_init_abi;joyeer_mutex_lock_abi;joyeer_mutex_unlock_abi;joyeer_mutex_destroy_abi;joyeer_condition_init_abi;joyeer_condition_wait_abi;joyeer_condition_signal_abi;joyeer_condition_broadcast_abi;joyeer_condition_destroy_abi;memcmp;memcpy;memset"
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
     set_tests_properties(RuntimeChannelsObjectSymbols PROPERTIES LABELS "runtime;native;channels" TIMEOUT 30)
@@ -281,10 +281,21 @@ if(WIN32 AND JOYEER_RUNTIME_NM_EXECUTABLE)
                 "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/c-startup-imports.exe"
                 "-DREADOBJ=${JOYEER_RUNTIME_READOBJ_EXECUTABLE}"
                 "-DCOMPILER_ARGS=-O0;-g0;--module-name;runtime.never_import;--runtime-module;runtime.never_import"
-                "-DMINIMUM_COUNT=30"
+                "-DREQUIRED_IMPORTS=GetStartupInfoW"
+                "-DFORBIDDEN_IMPORTS=CreateThread;SleepConditionVariableSRW;WakeConditionVariable"
                 -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
         set_tests_properties(RuntimeOwnEntryImportsOnlySystemFunctions RuntimeCRuntimeProgramKeepsTheCStartup
             PROPERTIES LABELS "runtime;native;entry" TIMEOUT 120)
+        set(duplicate_startup_output "${CMAKE_CURRENT_BINARY_DIR}/duplicate-c-startup.exe")
+        add_test(NAME RuntimeCStartupRejectsDuplicateWmain
+            COMMAND "${CMAKE_COMMAND}"
+                "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+                "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/c-interop/duplicate-c-startup.joyeer"
+                "-DEXTRA_ARGS=-O0;-g0;--module-name;runtime.duplicate_startup;--runtime-core-module;runtime.duplicate_startup;-o;${duplicate_startup_output}"
+                "-DOUTPUT_TO_REMOVE=${duplicate_startup_output}"
+                "-DEXPECTED_PATTERN=duplicate symbol[^a-zA-Z0-9]+wmain"
+                -P "${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake")
+        set_tests_properties(RuntimeCStartupRejectsDuplicateWmain PROPERTIES LABELS "runtime;native;entry" TIMEOUT 120)
         # `System` itself (files, processes, standard streams, the legacy reader) calls only
         # the operating system on Windows: a program using each part starts at its own entry
         # point and imports nothing that exists for the C startup or the C heap.

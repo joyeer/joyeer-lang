@@ -352,8 +352,9 @@ resource-owning types whose copy would release a resource twice.
 A generic function is **checked once** against its constraints, so a body
 that type-checks is valid for every type argument that satisfies them. Every
 name, member, literal type, copy and move decision, and access check in the
-body is fixed then; no diagnostic depends on a type argument, except the
-instantiation limit below. There is no specialization: a generic function
+body is fixed then. Concrete arguments can trigger the instantiation limit below or the
+prelude channel creation restriction ([§21.9.1](21-concurrency.md#2191-creating-a-channel));
+neither rechecks the generic body. There is no specialization: a generic function
 cannot behave differently for a particular type argument. A derived `Equatable`
 witness (§20.13.5) is generated per concrete type, like a copy or a destruction;
 it is not a specialization of a checked body.

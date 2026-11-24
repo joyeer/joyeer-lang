@@ -207,10 +207,10 @@ that embedded LLD executes without spawning a process. Supported build SDK
 versions and platform prerequisites are documented in
 [Building Joyeer](../building.md).
 
-The runtime archive is loaded lazily on macOS, on Linux and on the Windows own-entry link: forcing every member
-into the link would override the intended separation of leaf runtime objects and conflict with native ABI probes
-that provide their own channel entries. Only the Windows C-startup link still loads every member
-(`/WHOLEARCHIVE`). Shared static slots use a coalesced `linkonce_odr` symbol; only
+The runtime archive is loaded lazily. The Windows C-startup link uses `/INCLUDE` on
+`joyeer_runtime_crt_startup_anchor` to force the bundled `wmain` wrapper's archive member, without
+forcing unrelated members or letting another `wmain` replace it. The Windows own-entry link still
+starts at `joyeer_start`. Shared static slots use a coalesced `linkonce_odr` symbol; only
 ELF/COFF attach COMDAT metadata because Mach-O does not support COMDAT.
 
 Generated ownership helpers and authorized runtime wrappers have internal linkage. Closed literal, copy,

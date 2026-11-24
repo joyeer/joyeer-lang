@@ -335,7 +335,10 @@ exit drops facts today, is the hook.
 3. **A consume takes effect when its call or construction commits.** In `f(a: consume h, b: g()?)`,
    `[consume h, g()?]` or `W(task: consume h, x: g()?)`, the `?` runs while `h` is still live, so
    that exit reports `linear-not-consumed`. (Lowering's pending-operand cleanup would otherwise
-   drop it.)
+   drop it.) Array and enum construction reserve direct linear-typed places exclusively until
+   the operands complete. An exit releases the reservation, not the value. Already-evaluated
+   linear temporaries still cannot be abandoned, and ordinary calls and struct initializers
+   retain the conservative early-exit check.
 4. **An owned linear temporary must be moved immediately.** It may appear only as a binding
    initializer, the right-hand side of an assignment to an ended or uninitialized place, a
    `return` value, a consuming argument, an aggregate or enum component, an `append`, or a match

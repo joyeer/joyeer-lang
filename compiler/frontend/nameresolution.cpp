@@ -1409,7 +1409,9 @@ private:
     void validateExposedType(const syntax::TypePtr& type, const Symbol& declaration) {
         if (type == nullptr) return;
         const auto referenced = referencedSymbol(type);
-        if (referenced.has_value() &&
+        // The type checker validates the compiler-selected array role's visibility at its declaration.
+        // Here only the element type is a name exposed by the array syntax.
+        if (type->kind != syntax::Kind::arrayType && referenced.has_value() &&
             symbol(*referenced).kind != SymbolKind::typeParameter &&
             symbol(*referenced).visibility < declaration.visibility) {
             report(NameResolutionDiagnosticId::inaccessibleExposedType, type->span,

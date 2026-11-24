@@ -595,7 +595,9 @@ void CompilerService::compile(const std::vector<joyeer::semantic::ModuleInput>& 
                     : ErrorLevel::failure,
                 joyeer::analysis::diagnosticName(diagnostic.id),
                 diagnostic.message,
-                diagnostic.help);
+                diagnostic.help,
+                std::nullopt,
+                diagnostic.notes);
     }
     if (!analysis.succeeded()) {
         return;

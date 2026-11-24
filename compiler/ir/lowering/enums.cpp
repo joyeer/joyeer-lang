@@ -114,11 +114,18 @@ std::optional<ir::Value> Builder::lowerEnumArguments(
                 "enum construction has no matching concrete case definition");
         return std::nullopt;
     }
-    std::vector<ir::Value> payloads;
+    std::vector<ConstructionOperand> pending;
+    // Evaluate every argument before taking a reserved linear place.
     for (size_t index = 0; index < arguments.size(); ++index) {
-        const auto payload = prepareOperand(
+        const auto payload = prepareConstructionOperand(
                 arguments[index]->value, definition->payloadTypes[index],
                 movesArgument(*arguments[index]));
+        if (!payload.has_value() || currentBlockTerminated()) return std::nullopt;
+        pending.push_back(*payload);
+    }
+    std::vector<ir::Value> payloads;
+    for (size_t index = 0; index < pending.size(); ++index) {
+        const auto payload = commitConstructionOperand(pending[index], definition->payloadTypes[index]);
         if (!payload.has_value()) return std::nullopt;
         payloads.push_back(*payload);
     }

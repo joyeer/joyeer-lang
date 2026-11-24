@@ -4,17 +4,7 @@ import Foundation
 // Tests for the TCP operations (spec §18.6) as `System` provides them. Every
 // connection is to a listener of this program on 127.0.0.1: the kernel
 // completes the handshake into the listen backlog, so one thread can listen,
-// connect and accept in turn. The macOS variants are placeholders (decision
-// 0012), so these tests run on Windows and Linux.
-
-@platform(windows)
-private func implemented(): Bool { return true }
-
-@platform(linux)
-private func implemented(): Bool { return true }
-
-@platform(macos)
-private func implemented(): Bool { return false }
+// connect and accept in turn.
 
 private func caseName(error: NetworkError): String {
     return match error {
@@ -293,10 +283,193 @@ private func testDroppedHandlesClose(): Result<Int, NetworkError> {
     return .Ok(failures)
 }
 
+private func testPoll(): Result<Int, NetworkError> {
+    var failures = 0
+    let first = tcpListen(address: "127.0.0.1", port: 0, backlog: 4)?
+    let port = tcpLocalPort(listener: first)?
+    let a = tcpConnect(address: "127.0.0.1", port: port)?
+    let firstConnection = tcpAccept(listener: first, timeoutMillis: 5000)?
+    let b = tcpConnect(address: "127.0.0.1", port: port)?
+    let secondConnection = tcpAccept(listener: first, timeoutMillis: 5000)?
+    let connections = [consume firstConnection, consume secondConnection]
+    let listeners = [consume first]
+
+    let idle = tcpPoll(connections: connections, listeners: listeners, timeoutMillis: 0)?
+    failures = failures + check(name: "poll reports no idle handles",
+        ok: idle.connections.count == 0 && idle.listeners.count == 0)
+    let invalid = tcpPoll(connections: [], listeners: [], timeoutMillis: 0)
+    failures = failures + check(name: "poll rejects an empty set",
+        ok: match invalid { .Err(.InvalidInput(_)) => true, _ => false })
+    let invalidTimeout = tcpPoll(connections: connections, listeners: listeners, timeoutMillis: -2)
+    failures = failures + check(name: "poll rejects an invalid timeout",
+        ok: match invalidTimeout { .Err(.InvalidInput(_)) => true, _ => false })
+    let expired = tcpPoll(connections: connections, listeners: listeners, timeoutMillis: 15)?
+    failures = failures + check(name: "poll expiry returns empty indices",
+        ok: expired.connections.count == 0 && expired.listeners.count == 0)
+
+    tcpSend(connection: b, contents: "r")?
+    let ready = tcpPoll(connections: connections, listeners: listeners, timeoutMillis: 5000)?
+    failures = failures + check(name: "poll returns the readable connection index",
+        ok: ready.connections == [1] && ready.listeners.count == 0)
+    let message = tcpReceive(connection: connections[1], maximumBytes: 1, timeoutMillis: 5000)?
+    failures = failures + check(name: "poll does not read the socket", ok: message == "r")
+
+    let _pending = tcpConnect(address: "127.0.0.1", port: port)?
+    let accepting = tcpPoll(connections: connections, listeners: listeners, timeoutMillis: 5000)?
+    failures = failures + check(name: "poll returns the ready listener index",
+        ok: accepting.connections.count == 0 && accepting.listeners == [0])
+    let _accepted = tcpAccept(listener: listeners[0], timeoutMillis: 5000)?
+    tcpCloseConnection(connection: consume a)?
+    let closing = tcpPoll(connections: connections, listeners: listeners, timeoutMillis: 5000)?
+    failures = failures + check(name: "poll treats end of stream as readable",
+        ok: closing.connections == [0] && closing.listeners.count == 0)
+    let eof = tcpReceive(connection: connections[0], maximumBytes: 1, timeoutMillis: 5000)?
+    failures = failures + check(name: "receive observes end of stream after poll", ok: eof.count == 0)
+
+    var many: [TcpListener] = []
+    while many.count < 64 {
+        &many.append(element: tcpListen(address: "127.0.0.1", port: 0, backlog: 1)?)
+    }
+    let maximum = tcpPoll(connections: [], listeners: many, timeoutMillis: 0)?
+    failures = failures + check(name: "poll accepts the maximum number of handles", ok: maximum.listeners.count == 0)
+    &many.append(element: tcpListen(address: "127.0.0.1", port: 0, backlog: 1)?)
+    let oversized = tcpPoll(connections: [], listeners: many, timeoutMillis: 0)
+    failures = failures + check(name: "poll rejects a set over the cap",
+        ok: match oversized { .Err(.InvalidInput(_)) => true, _ => false })
+    return .Ok(failures)
+}
+
+private func testSendAndConnectDeadlines(): Result<Int, NetworkError> {
+    var failures = 0
+    let listener = tcpListen(address: "127.0.0.1", port: 0, backlog: 4)?
+    let port = tcpLocalPort(listener: listener)?
+    let invalid = tcpConnectWithin(address: "127.0.0.1", port: port, timeoutMillis: -2)
+    failures = failures + check(name: "connect rejects an invalid timeout",
+        ok: match invalid { .Err(.InvalidInput(_)) => true, _ => false })
+    var client = tcpConnectWithin(address: "127.0.0.1", port: port, timeoutMillis: 5000)?
+    let server = tcpAccept(listener: listener, timeoutMillis: 5000)?
+    tcpSendWithin(connection: &client, contents: "s", timeoutMillis: 5000)?
+    let small = tcpReceive(connection: server, maximumBytes: 1, timeoutMillis: 5000)?
+    failures = failures + check(name: "finite send and connect work on loopback", ok: small == "s")
+
+    let invalidSend = tcpSendWithin(connection: &client, contents: "", timeoutMillis: 2147483648)
+    failures = failures + check(name: "send rejects an invalid timeout even for empty data",
+        ok: match invalidSend { .Err(.InvalidInput(_)) => true, _ => false })
+    // The other endpoint does not read. The whole send must finish with a timeout, not block.
+    let payload = pattern(count: 16 * 1024 * 1024)
+    let blocked = tcpSendWithin(connection: &client, contents: payload, timeoutMillis: 250)
+    failures = failures + check(name: "send returns when an unread peer fills the send buffer",
+        ok: match blocked { .Err(.TimedOut(_)) => true, _ => false })
+
+    let unused = tcpListen(address: "127.0.0.1", port: 0, backlog: 1)?
+    let unusedPort = tcpLocalPort(listener: unused)?
+    tcpCloseListener(listener: consume unused)?
+    // Winsock can spend around two seconds resolving refusal even on loopback.
+    let refused = tcpConnectWithin(address: "127.0.0.1", port: unusedPort, timeoutMillis: 8000)
+    let refusedKind = match refused { .Err(error) => caseName(error: error), .Ok(_) => "ok" }
+    failures = failures + checkCase(name: "connect reports SO_ERROR instead of treating readiness as success",
+        actual: refusedKind, expected: "ConnectionRefused")
+    return .Ok(failures)
+}
+
+private func testReadQueue(): Result<Int, NetworkError> {
+    var failures = 0
+    let empty = tcpOpenReadQueue(connections: consume [])
+    failures = failures + check(name: "read queue rejects an empty set",
+        ok: match empty { .Err(.InvalidInput(_)) => true, _ => false })
+
+    let listener = tcpListen(address: "127.0.0.1", port: 0, backlog: 4)?
+    let port = tcpLocalPort(listener: listener)?
+    var peers: [TcpConnection] = []
+    var connections: [TcpConnection] = []
+    while connections.count < 80 {
+        &peers.append(element: tcpConnect(address: "127.0.0.1", port: port)?)
+        &connections.append(element: tcpAccept(listener: listener, timeoutMillis: 5000)?)
+    }
+    var queue = tcpOpenReadQueue(connections: consume connections)?
+    let idle = tcpReadQueueWait(queue: &queue, timeoutMillis: 20)?
+    failures = failures + check(name: "read queue times out without a selected socket", ok: idle == nil)
+    let receiveIdle = tcpReadQueueReceive(queue: &queue, maximumBytes: 1)
+    failures = failures + check(name: "read queue rejects reads without a selection",
+        ok: match receiveIdle { .Err(.InvalidInput(_)) => true, _ => false })
+
+    tcpSend(connection: peers[79], contents: "tu")?
+    let ready = tcpReadQueueWait(queue: &queue, timeoutMillis: 5000)?
+    failures = failures + check(name: "read queue notices a socket beyond the 64-entry poll cap", ok: ready == .Some(79))
+    let invalid = tcpReadQueueWait(queue: &queue, timeoutMillis: -2)
+    failures = failures + check(name: "invalid wait leaves the selection unchanged",
+        ok: match invalid { .Err(.InvalidInput(_)) => true, _ => false })
+    let first = tcpReadQueueReceive(queue: &queue, maximumBytes: 1)?
+    failures = failures + check(name: "queue notification leaves TCP bytes unread", ok: first == .Some("t"))
+    let unbounded = tcpReadQueueSendWithin(queue: &queue, contents: "", timeoutMillis: -1)
+    failures = failures + check(name: "selected send requires a finite timeout",
+        ok: match unbounded { .Err(.InvalidInput(_)) => true, _ => false })
+    tcpReadQueueSendWithin(queue: &queue, contents: "r", timeoutMillis: 5000)?
+    let reply = tcpReceive(connection: peers[79], maximumBytes: 1, timeoutMillis: 5000)?
+    failures = failures + check(name: "read queue sends only to the selected connection", ok: reply == "r")
+
+    let rearmed = tcpReadQueueWait(queue: &queue, timeoutMillis: 5000)?
+    failures = failures + check(name: "the previous selection can become ready again", ok: rearmed == .Some(79))
+    let second = tcpReadQueueReceive(queue: &queue, maximumBytes: 1)?
+    failures = failures + check(name: "rearming delivers unread bytes", ok: second == .Some("u"))
+    let drained = tcpReadQueueReceive(queue: &queue, maximumBytes: 1)?
+    failures = failures + check(name: "reading a drained selection does not block", ok: drained == nil)
+    let clear = tcpReadQueueWait(queue: &queue, timeoutMillis: 0)?
+    failures = failures + check(name: "zero wait times out after rearm", ok: clear == nil)
+    let noSelection = tcpReadQueueCloseCurrent(queue: &queue)
+    failures = failures + check(name: "a valid timed-out wait clears selection",
+        ok: match noSelection { .Err(.InvalidInput(_)) => true, _ => false })
+    tcpSend(connection: peers[79], contents: "x")?
+    let again = tcpReadQueueWait(queue: &queue, timeoutMillis: 5000)?
+    failures = failures + check(name: "a timed-out wait retains registrations", ok: again == .Some(79))
+    let third = tcpReadQueueReceive(queue: &queue, maximumBytes: 1)?
+    failures = failures + check(name: "new data arrives after the timed-out wait", ok: third == .Some("x"))
+    tcpReadQueueCloseCurrent(queue: &queue)?
+    let eof = tcpReceive(connection: peers[79], maximumBytes: 1, timeoutMillis: 5000)?
+    failures = failures + check(name: "closing the selected socket reaches its peer", ok: eof.count == 0)
+
+    tcpSend(connection: peers[13], contents: "v")?
+    let next = tcpReadQueueWait(queue: &queue, timeoutMillis: 5000)?
+    failures = failures + check(name: "closing a selection preserves other input indices", ok: next == .Some(13))
+    let blocked = tcpReadQueueSendWithin(queue: &queue, contents: pattern(count: 16 * 1024 * 1024), timeoutMillis: 250)
+    failures = failures + check(name: "selected send stops when an unread peer fills the buffer",
+        ok: match blocked { .Err(.TimedOut(_)) => true, _ => false })
+    // Exit with one disarmed registration and other registrations still pending.
+    return .Ok(failures)
+}
+
+private func testReadQueueEof(): Result<Int, NetworkError> {
+    var failures = 0
+    let listener = tcpListen(address: "127.0.0.1", port: 0, backlog: 1)?
+    let port = tcpLocalPort(listener: listener)?
+    let peer = tcpConnect(address: "127.0.0.1", port: port)?
+    let connection = tcpAccept(listener: listener, timeoutMillis: 5000)?
+    // Both data and FIN may already be pending when this connection is registered.
+    tcpSend(connection: peer, contents: "z")?
+    tcpCloseConnection(connection: consume peer)?
+    var queue = tcpOpenReadQueue(connections: consume [consume connection])?
+    let ready = tcpReadQueueWait(queue: &queue, timeoutMillis: 5000)?
+    failures = failures + check(name: "data before FIN is ready", ok: ready == .Some(0))
+    let byte = tcpReadQueueReceive(queue: &queue, maximumBytes: 1)?
+    failures = failures + check(name: "the queue delivers data before FIN", ok: byte == .Some("z"))
+    let fin = tcpReadQueueWait(queue: &queue, timeoutMillis: 5000)?
+    failures = failures + check(name: "EOF is readable after buffered data", ok: fin == .Some(0))
+    let end = tcpReadQueueReceive(queue: &queue, maximumBytes: 1)?
+    let repeated = tcpReadQueueReceive(queue: &queue, maximumBytes: 1)?
+    failures = failures + check(name: "confirmed EOF repeats while selected",
+        ok: end == .Some("") && repeated == .Some(""))
+    let exhausted = tcpReadQueueWait(queue: &queue, timeoutMillis: -1)?
+    failures = failures + check(name: "the last confirmed EOF retires without an infinite wait", ok: exhausted == nil)
+    return .Ok(failures)
+}
+
 public func testNetwork(): Int {
-    if !implemented() { return 0 }
     var failures = testAddressForms()
     failures = failures + reportLoopback(label: "timeouts", outcome: testTimeouts())
+    failures = failures + reportLoopback(label: "poll", outcome: testPoll())
+    failures = failures + reportLoopback(label: "send/connect deadlines", outcome: testSendAndConnectDeadlines())
+    failures = failures + reportLoopback(label: "scalable read queue", outcome: testReadQueue())
+    failures = failures + reportLoopback(label: "read queue EOF", outcome: testReadQueueEof())
     failures = failures + reportLoopback(label: "loopback", outcome: loopback())
     failures = failures + reportLoopback(label: "address in use", outcome: testAddressInUse())
     failures = failures + reportLoopback(label: "connection refused", outcome: testRefused())

@@ -35,6 +35,9 @@ private func sendChannel(end: Int, value: Int): Int
 @c_extern(symbol: "joyeer_channel_receive_abi")
 private func receiveChannel(end: Int, value: Int): Int
 
+@c_extern(symbol: "joyeer_channel_wait_ready_abi")
+private func waitReadyChannel(ends: Int, count: Int): Int
+
 @c_extern(symbol: "joyeer_channel_close_abi")
 private func closeChannel(end: Int): Void
 
@@ -167,6 +170,20 @@ public struct ChannelReceiver<T> {
 
 private func destroyElement<T>(address: consuming Int): Void {
     joyeer_intrinsic_destroy_at<T>(address: address)
+}
+
+public func waitForChannel<T>(receivers: [ChannelReceiver<T>]): Int {
+    if receivers.count < 1 || receivers.count > 64 {
+        panic(message: literalAddress(text: "channel readiness requires between 1 and 64 receivers"))
+    }
+    let block = joyeer_intrinsic_stack_block<Int>(count: 64)
+    var index = 0
+    while index < receivers.count {
+        let slot = joyeer_intrinsic_slot_address<Int>(base: block, index: index)
+        store64(address: slot, value: receivers[index].handle as UInt64)
+        index = index + 1
+    }
+    return waitReadyChannel(ends: block, count: receivers.count)
 }
 
 @compiler_role(channel_create)

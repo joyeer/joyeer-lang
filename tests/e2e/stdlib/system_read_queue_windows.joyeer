@@ -1,0 +1,143 @@
+// An authorized System test root can force native errors without public socket options or fault hooks.
+@c_extern(symbol: "CreateIoCompletionPort")
+private func attachForTest(file: Int, port: Int, key: Int, concurrency: UInt32): Int
+
+@c_extern(symbol: "GetCurrentProcess")
+private func currentProcessForTest(): Int
+
+@c_extern(symbol: "GetProcessHandleCount", pointer: "count")
+private func getHandleCountForTest(process: Int, count: inout [UInt8]): Int32
+
+@c_extern(symbol: "setsockopt", pointer: "value")
+private func setSocketOptionForTest(socket: Int, level: Int32, option: Int32, value: [UInt8], length: Int32): Int32
+
+@c_extern(symbol: "shutdown")
+private func shutdownForTest(socket: Int, how: Int32): Int32
+
+@c_extern(symbol: "joyeer_runtime_active_allocations")
+private func activeAllocationsForTest(): Int
+
+private func handleCountForTest(): Int {
+    var count = zeroBuffer(count: 4)
+    let status = getHandleCountForTest(process: currentProcessForTest(), count: &count)
+    assert(condition: status != 0, message: "read process handle count")
+    return socketErrorNumber(bytes: count)
+}
+
+private func wasClosed(connection: TcpConnection): Bool {
+    return match tcpReceive(connection: connection, maximumBytes: 1, timeoutMillis: 5000) {
+        .Ok(contents) => contents == "",
+        .Err(.ConnectionReset(_)) => true,  // Winsock can reset a peer when closing with pending I/O.
+        .Err(_) => false,
+    }
+}
+
+private func partialRegistration(): Result<Void, NetworkError> {
+    let listener = tcpListen(address: "127.0.0.1", port: 0, backlog: 1)?
+    let port = tcpLocalPort(listener: listener)?
+    let firstPeer = tcpConnect(address: "127.0.0.1", port: port)?
+    let first = tcpAccept(listener: listener, timeoutMillis: 5000)?
+    let secondPeer = tcpConnect(address: "127.0.0.1", port: port)?
+    let second = tcpAccept(listener: listener, timeoutMillis: 5000)?
+    let thirdPeer = tcpConnect(address: "127.0.0.1", port: port)?
+    let third = tcpAccept(listener: listener, timeoutMillis: 5000)?
+
+    // The first socket gets armed, the second cannot join a second port, and
+    // the third is not visited. All three must be closed before setup returns.
+    let foreign = nativeReadQueueOpen(capacity: 1)?
+    let attached = attachForTest(file: second.handle, port: foreign.handle, key: 0, concurrency: 0)
+    assert(condition: attached == foreign.handle, message: "associate the second socket to force failure")
+    let rejected = tcpOpenReadQueue(connections: consume [consume first, consume second, consume third])
+    nativeReadQueueDestroy(port: foreign)
+    assert(condition: match rejected { .Err(_) => true, _ => false }, message: "partial setup reports a failure")
+    assert(condition: wasClosed(connection: firstPeer) && wasClosed(connection: secondPeer) &&
+        wasClosed(connection: thirdPeer), message: "failed setup closes every input")
+    return .Ok(())
+}
+
+private func isolateReset(): Result<Void, NetworkError> {
+    let listener = tcpListen(address: "127.0.0.1", port: 0, backlog: 1)?
+    let port = tcpLocalPort(listener: listener)?
+    let resetPeer = tcpConnect(address: "127.0.0.1", port: port)?
+    let reset = tcpAccept(listener: listener, timeoutMillis: 5000)?
+    let livePeer = tcpConnect(address: "127.0.0.1", port: port)?
+    let live = tcpAccept(listener: listener, timeoutMillis: 5000)?
+    var queue = tcpOpenReadQueue(connections: consume [consume reset, consume live])?
+    let linger: [UInt8] = [1, 0, 0, 0]  // SO_LINGER enabled with zero delay for an abortive close.
+    let status = setSocketOptionForTest(socket: resetPeer.handle, level: 0xffff, option: 0x0080, value: linger, length: 4)
+    assert(condition: status == 0, message: "set abortive close on the test peer")
+    tcpCloseConnection(connection: consume resetPeer)?
+    let ready = tcpReadQueueWait(queue: &queue, timeoutMillis: 5000)?
+    let first = tcpReadQueueReceive(queue: &queue, maximumBytes: 1)
+    let repeated = tcpReadQueueReceive(queue: &queue, maximumBytes: 1)
+    assert(condition: ready == .Some(0), message: "a failed completion identifies its socket")
+    assert(condition: match first { .Err(.ConnectionReset(_)) => true, _ => false }, message: "read reports reset")
+    if queue.probeStatus < 0 {
+        assert(condition: match first { .Err(.ConnectionReset(code)) => code == 0 - queue.probeStatus, _ => false },
+            message: "read preserves the original completion error")
+    }
+    assert(condition: match repeated { .Err(.ConnectionReset(_)) => true, _ => false }, message: "reset is sticky")
+    tcpSend(connection: livePeer, contents: "a")?
+    let remaining = tcpReadQueueWait(queue: &queue, timeoutMillis: 5000)?
+    let byte = tcpReadQueueReceive(queue: &queue, maximumBytes: 1)?
+    assert(condition: remaining == .Some(1) && byte == .Some("a"), message: "the other socket remains usable")
+    tcpReadQueueCloseCurrent(queue: &queue)?
+    let exhausted = tcpReadQueueWait(queue: &queue, timeoutMillis: -1)?
+    assert(condition: exhausted == nil, message: "last close leaves an exhausted queue")
+    return .Ok(())
+}
+
+private func synchronousProbeFailure(): Result<Void, NetworkError> {
+    let listener = tcpListen(address: "127.0.0.1", port: 0, backlog: 1)?
+    let port = tcpLocalPort(listener: listener)?
+    let peer = tcpConnect(address: "127.0.0.1", port: port)?
+    let connection = tcpAccept(listener: listener, timeoutMillis: 5000)?
+    let socket = connection.handle
+    var queue = tcpOpenReadQueue(connections: consume [consume connection])?
+    tcpSend(connection: peer, contents: "s")?
+    let ready = tcpReadQueueWait(queue: &queue, timeoutMillis: 5000)?
+    let byte = tcpReadQueueReceive(queue: &queue, maximumBytes: 1)?
+    assert(condition: ready == .Some(0) && byte == .Some("s"), message: "initial probe disarms slot")
+
+    let shutdownStatus = shutdownForTest(socket: socket, how: 0)  // SD_RECEIVE
+    assert(condition: shutdownStatus == 0, message: "cause WSAESHUTDOWN on the next probe")
+    let failedProbe = tcpReadQueueWait(queue: &queue, timeoutMillis: 5000)?
+    assert(condition: failedProbe == .Some(0), message: "synchronous probe failure identifies its socket")
+    assert(condition: queue.probeStatus == -10058, message: "synchronous failure delivers WSAESHUTDOWN")
+    let received = tcpReadQueueReceive(queue: &queue, maximumBytes: 1)
+    assert(condition: match received { .Err(.ConnectionReset(10058)) => true, _ => false },
+        message: "receive exposes the original probe error")
+    return .Ok(())
+}
+
+private func checkOutcome(label: String, outcome: Result<Void, NetworkError>) {
+    match outcome {
+        .Ok(_) => {},
+        .Err(error) => {
+            print(value: label)
+            print(value: match error {
+                .InvalidInput(code) => code, .AddressInUse(code) => code, .AddressNotAvailable(code) => code,
+                .PermissionDenied(code) => code, .ConnectionRefused(code) => code, .ConnectionReset(code) => code,
+                .TimedOut(code) => code, .Other(code) => code,
+            })
+            fatalError(message: "TCP read queue native error test failed")
+        },
+    }
+}
+
+func main() {
+    checkOutcome(label: "partial registration", outcome: partialRegistration())  // Warm up Winsock.
+    checkOutcome(label: "synchronous probe failure", outcome: synchronousProbeFailure())
+    checkOutcome(label: "isolated reset", outcome: isolateReset())
+    let handles = handleCountForTest()
+    let allocations = activeAllocationsForTest()
+    var count = 0
+    while count < 16 {
+        checkOutcome(label: "partial registration", outcome: partialRegistration())
+        checkOutcome(label: "isolated reset", outcome: isolateReset())
+        count = count + 1
+    }
+    assert(condition: handleCountForTest() == handles, message: "no leaked native queue or socket handles")
+    assert(condition: activeAllocationsForTest() == allocations, message: "no leaked native queue records or arrays")
+    print(value: "TCP read queue failure paths passed")
+}

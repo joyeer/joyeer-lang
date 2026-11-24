@@ -667,6 +667,40 @@ bool TypeCheckedModel::isLinear(TypeId type) const {
     return isLinear(type, visiting, clean);
 }
 
+syntax::ExprPtr TypeCheckedModel::linearConstructionMoveSource(
+        const syntax::ExprPtr& expression, bool marked) const {
+    const auto unwrap = [](syntax::ExprPtr value) {
+        while (value != nullptr && value->kind == syntax::Kind::parenthesizedExpr) {
+            value = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(value)->expression;
+        }
+        return value;
+    };
+    auto source = unwrap(expression);
+    if (!marked && source != nullptr && source->kind == syntax::Kind::accessExpr) {
+        const auto access = std::static_pointer_cast<syntax::AccessExprSyntax>(source);
+        marked = access->marker != nullptr && access->marker->kind == kwConsume;
+        source = unwrap(access->operand);
+    }
+    if (!marked || source == nullptr) return nullptr;
+    const auto type = typeOf(source);
+    if (!type.has_value() || !isLinear(*type)) return nullptr;
+
+    auto place = source;
+    while (place != nullptr && place->kind == syntax::Kind::memberExpr) {
+        const auto field = referencedSymbol(place);
+        const auto* declaration = field.has_value() ? semanticModelValue->symbol(*field) : nullptr;
+        if (declaration == nullptr || declaration->kind != semantic::SymbolKind::structureField) return nullptr;
+        place = unwrap(std::static_pointer_cast<syntax::MemberExprSyntax>(place)->base);
+    }
+    if (place == nullptr || place->kind != syntax::Kind::nameExpr) return nullptr;
+    const auto id = referencedSymbol(place);
+    const auto* root = id.has_value() ? semanticModelValue->symbol(*id) : nullptr;
+    if (root == nullptr || (root->kind != semantic::SymbolKind::binding &&
+                            root->kind != semantic::SymbolKind::parameter &&
+                            root->kind != semantic::SymbolKind::patternBinding)) return nullptr;
+    return source;
+}
+
 std::optional<std::string> TypeCheckedModel::linearEndingMethod(TypeId type, bool leaf) const {
     std::unordered_set<TypeId> visited;
     std::function<std::optional<std::string>(TypeId)> visit = [&](TypeId id) -> std::optional<std::string> {
@@ -2026,6 +2060,15 @@ private:
         }
 
         for (const auto& symbol : model->semanticModelValue->symbols()) {
+            if (symbol.kind == semantic::SymbolKind::builtinEnumCase && symbol.containingSymbol.has_value()) {
+                const auto type = model->typeContext.typeForSymbol(*symbol.containingSymbol);
+                if (!type.has_value()) continue;
+                auto signature = enumCaseSignature(symbol.id, *type);
+                if (!signature.has_value()) continue;
+                model->symbolTypes[symbol.id] = *type;
+                model->callables[symbol.id] = std::move(*signature);
+                continue;
+            }
             if (symbol.kind != semantic::SymbolKind::builtinMember) continue;
             if ((symbol.name == "send" || symbol.name == "receive") && symbol.callable.has_value()) {
                 model->symbolTypes[symbol.id] = model->typeContext.anyType();
@@ -3352,6 +3395,82 @@ private:
     static constexpr size_t maximumInstanceDepth = 64;
     static constexpr size_t maximumTypeOccurrences = 4096;
 
+    bool validateChannelReceiverOwnership(
+            TypeId element, SourceSpan span, std::optional<size_t> requiredBy) {
+        struct Component {
+            TypeId type;
+            size_t parent;
+            std::string member;
+        };
+        std::vector<Component> components { { element, 0, {} } };
+        std::unordered_set<TypeId> seen { element };
+        for (size_t index = 0; index < components.size(); ++index) {
+            if (components.size() > maximumTypeOccurrences) {
+                report(TypeCheckingDiagnosticId::instantiationLimit, span,
+                       "cannot check channel receiver ownership in more than " +
+                               std::to_string(maximumTypeOccurrences) + " stored types",
+                       std::nullopt, std::nullopt, instantiationChain(requiredBy));
+                return false;
+            }
+            const auto type = components[index].type;
+            const auto* record = model->typeContext.type(type);
+            if (record == nullptr) continue;
+            const auto symbol = record->symbol;
+            const auto* declaration = symbolOf(symbol);
+            const auto role = declaration == nullptr ? semantic::LibraryRole::none : declaration->libraryRole;
+            if (role == semantic::LibraryRole::channelReceiver) {
+                if (record->arguments.size() == 1 && record->arguments.front() == element) {
+                    std::vector<std::string> path;
+                    for (auto node = index; node != 0; node = components[node].parent) {
+                        path.push_back(components[node].member);
+                    }
+                    const auto name = model->typeContext.displayName(element);
+                    std::string component = name;
+                    for (auto part = path.rbegin(); part != path.rend(); ++part) component += *part;
+                    report(TypeCheckingDiagnosticId::channelReceiverCycle, span,
+                           "'" + component + "' can own a receiver for a channel of '" + name + "'",
+                           "keep that receiver out of the message or use a different reply element type",
+                           std::nullopt, instantiationChain(requiredBy));
+                    return false;
+                }
+                continue;
+            }
+            if (role == semantic::LibraryRole::channelSender) continue;
+
+            const auto append = [&](TypeId child, std::string member) {
+                if (seen.insert(child).second) components.push_back({ child, index, std::move(member) });
+            };
+            if (model->isCollectionRoleType(type)) {
+                for (size_t item = 0; item < record->arguments.size(); ++item) {
+                    append(record->arguments[item], model->isArrayRoleType(type)
+                            ? "[element]" : (item == 0 ? "[key]" : "[value]"));
+                }
+            } else if (const auto structure = model->structureDeclaration(type)) {
+                for (const auto& field : structure->fields) {
+                    const auto id = model->semanticModelValue->declaredSymbol(field);
+                    const auto fieldType = id.has_value() ? model->typeOf(*id) : std::nullopt;
+                    if (fieldType.has_value()) {
+                        append(model->memberTypeOf(type, *fieldType), "." + field->name->rawValue);
+                    }
+                }
+            } else if (record->kind == TypeKind::enumeration) {
+                if (declaration == nullptr || !declaration->declaration.has_value()) continue;
+                const auto& node = model->semanticModelValue->node(*declaration->declaration);
+                if (node == nullptr || node->kind != syntax::Kind::enumDecl) continue;
+                for (const auto& enumCase : std::static_pointer_cast<syntax::EnumDeclSyntax>(node)->cases) {
+                    const auto id = model->semanticModelValue->declaredSymbol(enumCase);
+                    const auto* signature = id.has_value() ? model->callable(*id) : nullptr;
+                    if (signature == nullptr) continue;
+                    for (size_t payload = 0; payload < signature->parameters.size(); ++payload) {
+                        append(model->memberTypeOf(type, signature->parameters[payload]),
+                               "." + enumCase->name->rawValue + "(" + std::to_string(payload + 1) + ")");
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
     void instantiate() {
         std::vector<std::pair<semantic::NodeId, const GenericCall*>> calls;
         for (const auto& [node, call] : model->genericCalls) {
@@ -3433,6 +3552,12 @@ private:
                        std::nullopt, std::nullopt, instantiationChain(requiredBy));
                 return false;
             }
+            const auto* callee = symbolOf(call.callee);
+            if (callee != nullptr && callee->libraryRole == semantic::LibraryRole::channelCreate &&
+                arguments.size() == 1 && !model->typeContext.mentionsTypeParameter(arguments.front()) &&
+                !validateChannelReceiverOwnership(arguments.front(), call.span, requiredBy)) {
+                return false;
+            }
             if (model->instanceList.size() >= maximumInstances) {
                 report(TypeCheckingDiagnosticId::instantiationLimit, call.span,
                        "the program needs more than " + std::to_string(maximumInstances) +
@@ -3453,7 +3578,6 @@ private:
             // A method or `deinit` of a generic type is named for the receiver's instance:
             // `Box<Int>.get` (decision 0022).
             auto name = model->functionDisplayName(call.callee);
-            const auto* callee = symbolOf(call.callee);
             const auto* owner = callee != nullptr && callee->containingSymbol.has_value()
                     ? symbolOf(*callee->containingSymbol) : nullptr;
             const auto ownerEnd = owner == nullptr ? std::string::npos : name.rfind(owner->name + ".");
@@ -5598,6 +5722,18 @@ private:
         return type.value_or(model->typeContext.errorType());
     }
 
+    static bool isEnumCase(const semantic::Symbol* symbol) {
+        return symbol != nullptr &&
+                (symbol->kind == semantic::SymbolKind::enumCase ||
+                 symbol->kind == semantic::SymbolKind::builtinEnumCase);
+    }
+
+    const semantic::Symbol* referencedEnumCase(const syntax::NodePtr& expression) const {
+        const auto id = model->referencedSymbol(expression);
+        const auto* symbol = id.has_value() ? model->semanticModelValue->symbol(*id) : nullptr;
+        return isEnumCase(symbol) ? symbol : nullptr;
+    }
+
     TypeId checkMember(
             const syntax::MemberExprSyntax::Ptr& expression,
             std::optional<TypeId> expectedResult = std::nullopt) {
@@ -5660,12 +5796,17 @@ private:
             return model->typeContext.errorType();
         }
         const auto* memberSymbol = model->semanticModelValue->symbol(*member);
+        if (isEnumCase(memberSymbol) &&
+            model->referencedSymbol(expression->base) != memberSymbol->containingSymbol) {
+            report(TypeCheckingDiagnosticId::unknownMember, expression->span,
+                   "enum case '" + memberSymbol->name + "' must be qualified by its type, not a value");
+            return model->typeContext.errorType();
+        }
         if (expression.get() != currentCallee && memberSymbol != nullptr) {
             // Only top-level functions are values (spec 5.6.1); a member that must be called is not.
             const bool builtinMethod = memberSymbol->kind == semantic::SymbolKind::builtinMember &&
                     memberSymbol->callable.has_value();
-            const bool payloadCase = (memberSymbol->kind == semantic::SymbolKind::enumCase ||
-                                      memberSymbol->kind == semantic::SymbolKind::builtinEnumCase) &&
+            const bool payloadCase = isEnumCase(memberSymbol) &&
                     memberSymbol->callable.has_value() && !memberSymbol->callable->parameters.empty();
             if (memberSymbol->kind == semantic::SymbolKind::method || builtinMethod || payloadCase) {
                 report(TypeCheckingDiagnosticId::notAFunctionValue, expression->span,
@@ -5885,6 +6026,9 @@ private:
         TypedCallableSignature substitutedSignature;
         std::vector<std::optional<std::optional<TypeId>>> preChecked(expression->arguments.size());
         const auto* calledSymbol = target.has_value() ? model->semanticModelValue->symbol(*target) : nullptr;
+        if (isEnumCase(calledSymbol)) {
+            for (const auto& argument : expression->arguments) permitMove(argument->value);
+        }
         if (calledSymbol != nullptr && calledSymbol->libraryRole == semantic::LibraryRole::taskStart) {
             model->spawnCallSpans.push_back(expression->span);
             if (!validateTaskTarget(expression)) return model->typeContext.errorType();
@@ -5995,8 +6139,29 @@ private:
                 : receiverMarker == ReceiverMarker::consume
                         ? syntax::AccessEffect::consuming
                         : syntax::AccessEffect::borrowing;
+        const auto member = receiverEffect.has_value() && expression->callee->kind == syntax::Kind::memberExpr
+                ? std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)
+                : nullptr;
+        bool missingStoredReceiver = false;
+        bool elementReceiver = false;
+        if (member != nullptr && requiredReceiver == syntax::AccessEffect::consuming &&
+            semanticTarget != nullptr &&
+            (semanticTarget->kind == semantic::SymbolKind::builtinMember ||
+             semanticTarget->libraryRole == semantic::LibraryRole::storedConsumer ||
+             semanticTarget->libraryRole == semantic::LibraryRole::containerEnd)) {
+            const auto path = storagePath(member->base);
+            const auto* root = path.has_value() ? model->semanticModelValue->symbol(path->root) : nullptr;
+            const auto* scope = root != nullptr ? model->semanticModelValue->scope(root->ownerScope) : nullptr;
+            elementReceiver = path.has_value() &&
+                    std::any_of(path->projections.begin(), path->projections.end(),
+                                [](const auto& field) { return !field.has_value(); });
+            missingStoredReceiver = !path.has_value() || elementReceiver ||
+                    (scope != nullptr && (scope->kind == semantic::ScopeKind::file ||
+                                          scope->kind == semantic::ScopeKind::module));
+        }
         // An unknown member already has its own diagnostic; a marker complaint would only cascade.
-        if (requiredReceiver != suppliedReceiver && semanticTarget != nullptr) {
+        // A stored consumer cannot use a temporary even if the marker is corrected.
+        if (requiredReceiver != suppliedReceiver && semanticTarget != nullptr && !missingStoredReceiver) {
             const bool consumeInvolved = requiredReceiver == syntax::AccessEffect::consuming ||
                     suppliedReceiver == syntax::AccessEffect::consuming;
             report(
@@ -6021,9 +6186,7 @@ private:
         }
 
         std::vector<CallAccess> accesses;
-        if (receiverEffect.has_value() && expression->callee->kind == syntax::Kind::memberExpr) {
-            const auto member =
-                    std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+        if (member != nullptr) {
             if (requiredReceiver == syntax::AccessEffect::inout) {
                 const auto storage = analyzeStorage(member->base);
                 if (!storage.writable) {
@@ -6033,6 +6196,17 @@ private:
                             "cannot call mutating method through immutable binding '" +
                                     storage.immutableName + "'");
                 }
+            } else if (missingStoredReceiver) {
+                report(
+                        TypeCheckingDiagnosticId::invalidConsumeArgument,
+                        member->base->span,
+                        "'" + semanticTarget->name + "' needs a value stored in a variable, "
+                        "parameter or field, not a temporary, an array element or a top-level constant",
+                        elementReceiver
+                                ? "remove the element with '&array.removeLast()' and call '" +
+                                      semanticTarget->name + "' on the result"
+                                : "store the value with 'let handle = ...', then write 'consume handle." +
+                                      semanticTarget->name + "()'");
             } else if (requiredReceiver == syntax::AccessEffect::consuming &&
                        !isConsumable(member->base)) {
                 report(
@@ -6041,36 +6215,6 @@ private:
                         "consuming receiver must be an owning local, consuming parameter, or temporary",
                         "declare the parameter 'consuming' or the method 'consuming', or bind the "
                         "value to a local first");
-            } else if (requiredReceiver == syntax::AccessEffect::consuming &&
-                       semanticTarget != nullptr &&
-                       (semanticTarget->kind == semantic::SymbolKind::builtinMember ||
-                        semanticTarget->libraryRole == semantic::LibraryRole::storedConsumer ||
-                        semanticTarget->libraryRole == semantic::LibraryRole::containerEnd)) {
-                // A builtin consuming member works on the receiver's storage in place, so it needs a
-                // named place: not a temporary, an array element or a file-scope constant.
-                const auto path = storagePath(member->base);
-                const auto* root = path.has_value()
-                        ? model->semanticModelValue->symbol(path->root)
-                        : nullptr;
-                const auto* rootScope = root != nullptr
-                        ? model->semanticModelValue->scope(root->ownerScope)
-                        : nullptr;
-                const bool elementPath = path.has_value() &&
-                        std::any_of(path->projections.begin(), path->projections.end(),
-                                [](const auto& projection) { return !projection.has_value(); });
-                if (!path.has_value() || elementPath ||
-                    (rootScope != nullptr && (rootScope->kind == semantic::ScopeKind::file ||
-                                              rootScope->kind == semantic::ScopeKind::module))) {
-                    report(
-                            TypeCheckingDiagnosticId::invalidConsumeArgument,
-                            member->base->span,
-                            "'" + semanticTarget->name + "' needs a value stored in a variable, "
-                            "parameter or field, not a temporary, an array element or a top-level constant",
-                            elementPath
-                                    ? "remove the element with '&array.removeLast()' and call '" +
-                                              semanticTarget->name + "' on the result"
-                                    : "bind the value to a 'var' first, then consume that");
-                }
             }
         }
         collectCallReceiverAccess(expression, semanticTarget, accesses);
@@ -6155,7 +6299,7 @@ private:
                 !(storesArgument && consumesArgument(*argument))) {
                 checkCallArgumentAccess(*semanticTarget, *parameterIndex, *argument);
                 const auto effect = semanticTarget->callable->parameters[*parameterIndex].access;
-                collectCallArgumentAccess(*argument, effect, accesses);
+                collectCallArgumentAccess(*argument, effect, accesses, !isEnumCase(semanticTarget));
             }
             if (expected.has_value() && actual.has_value()) {
                 requireAssignable(*actual, *expected, argument->value->span);
@@ -6630,6 +6774,7 @@ private:
         }
         if (expression->kind == syntax::Kind::memberExpr) {
             const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression);
+            if (referencedEnumCase(member) != nullptr) return std::nullopt;
             auto path = storagePath(member->base);
             if (!path.has_value()) return std::nullopt;
             const auto symbol = model->referencedSymbol(member);
@@ -6682,6 +6827,11 @@ private:
             const syntax::NodePtr& expression,
             std::vector<CallAccess>& accesses) const {
         if (expression == nullptr) return;
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            collectEvaluationAccesses(
+                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression, accesses);
+            return;
+        }
         const auto value = isExpressionKind(expression->kind)
                 ? std::static_pointer_cast<syntax::ExprSyntax>(expression)
                 : nullptr;
@@ -6721,12 +6871,6 @@ private:
                 collectEvaluationAccesses(loop->body, accesses);
                 break;
             }
-            case syntax::Kind::parenthesizedExpr:
-                collectEvaluationAccesses(
-                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)
-                                ->expression,
-                        accesses);
-                break;
             case syntax::Kind::prefixExpr:
                 collectEvaluationAccesses(
                         std::static_pointer_cast<syntax::PrefixExprSyntax>(expression)->operand,
@@ -6767,6 +6911,7 @@ private:
                 break;
             }
             case syntax::Kind::memberExpr:
+                if (referencedEnumCase(expression) != nullptr) break;
                 collectEvaluationAccesses(
                         std::static_pointer_cast<syntax::MemberExprSyntax>(expression)->base,
                         accesses);
@@ -6784,6 +6929,10 @@ private:
                 const auto* symbol = target.has_value()
                         ? model->semanticModelValue->symbol(*target)
                         : nullptr;
+                if (isEnumCase(symbol)) {
+                    collectEnumEvaluationAccesses(call->arguments, accesses);
+                    break;
+                }
                 collectCallReceiverAccess(call, symbol, accesses, false);
                 // A call through a function value takes its effects from the value's type, by
                 // position (spec 5.6.1).
@@ -6831,9 +6980,7 @@ private:
             case syntax::Kind::contextualCaseExpr: {
                 const auto enumCase =
                         std::static_pointer_cast<syntax::ContextualCaseExprSyntax>(expression);
-                for (const auto& argument : enumCase->arguments) {
-                    collectEvaluationAccesses(argument->value, accesses);
-                }
+                collectEnumEvaluationAccesses(enumCase->arguments, accesses);
                 break;
             }
             case syntax::Kind::blockExpr: {
@@ -6867,6 +7014,21 @@ private:
                 break;
             default:
                 break;
+        }
+    }
+
+    void collectEnumEvaluationAccesses(
+            const std::vector<syntax::CallArgumentSyntax::Ptr>& arguments,
+            std::vector<CallAccess>& accesses) const {
+        for (const auto& argument : arguments) {
+            const auto moved = consumesArgument(*argument) && isPlaceExpression(argument->value)
+                    ? storagePath(argument->value) : std::nullopt;
+            if (moved.has_value()) {
+                collectSubscriptIndexAccesses(argument->value, accesses);
+                accesses.push_back({ *moved, syntax::AccessEffect::consuming, argument->value->span, false });
+            } else {
+                collectEvaluationAccesses(argument->value, accesses);
+            }
         }
     }
 
@@ -7399,6 +7561,16 @@ private:
 
     bool isConsumable(const syntax::ExprPtr& expression) const {
         if (expression == nullptr) return false;
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return isConsumable(std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+        }
+        if (expression->kind == syntax::Kind::memberExpr) {
+            const auto* declaration = referencedEnumCase(expression);
+            if (declaration != nullptr &&
+                declaration->callable.has_value() && declaration->callable->parameters.empty()) {
+                return true;
+            }
+        }
         const auto path = storagePath(expression);
         if (!path.has_value()) {
             return expression->kind != syntax::Kind::memberExpr &&
@@ -7647,7 +7819,12 @@ private:
                         argument->span,
                         symbol->name);
             }
+            permitMove(argument->value);
             const auto actual = checkExpression(argument->value, expected);
+            if (argument->accessMarker != nullptr && !consumesArgument(*argument)) {
+                report(TypeCheckingDiagnosticId::invalidAccessMarker, argument->span,
+                       "an enum payload does not take an '&' access marker");
+            }
             requireStoredArgument(*argument, actual);
             if (expected.has_value() && actual.has_value()) {
                 requireAssignable(*actual, *expected, argument->value->span);
@@ -8388,6 +8565,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.channel-capacity";
         case TypeCheckingDiagnosticId::linearChannelElement:
             return "type-checking.linear-channel-element";
+        case TypeCheckingDiagnosticId::channelReceiverCycle:
+            return "type-checking.channel-receiver-cycle";
         case TypeCheckingDiagnosticId::channelElementType:
             return "type-checking.channel-element-type";
         case TypeCheckingDiagnosticId::invalidFunctionType:

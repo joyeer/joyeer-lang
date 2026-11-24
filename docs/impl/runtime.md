@@ -71,9 +71,8 @@ thread, 64 for a mutex or condition, all zeroed), so the functions never allocat
 shape, with an explicit 8 MiB stack on every platform, and at most 256 threads may be unjoined at
 once (`JOYEER_THREAD_LIMIT` beyond that). The rest of the runtime is thread safe from P4 on (next section).
 
-On Linux, macOS and the Windows own-entry link the object is linked only into a program that
-references it. The Windows C-startup link (`/WHOLEARCHIVE`) loads every
-member, so those programs also import the thread functions. The tests are
+The thread object is linked only into a program that references it. On Windows, forcing the
+bundled C startup wrapper does not pull in the thread or channel objects. The tests are
 `tests/unittests/runtime/thread_test.cpp` (start and join, many threads, visibility after join,
 mutual exclusion, wait and wake, the thread limit, null arguments, and `static_assert`s that the
 operating systems' lock types fit the storage) and the `RuntimeThreadsObjectSymbols` gate.
@@ -439,6 +438,10 @@ address plus one. Everything, including the "last closer frees the block" decisi
 closing the receiver moves queued values into a private buffer while holding it and destroys them after
 unlocking. A wait with no unjoined thread (static slot 11
 zero) traps as `channel deadlock`. The tests are `tests/unittests/runtime/channel_test.cpp`.
+`waitForChannel` registers an optional waiter in each channel block only if none is ready. A send
+or sender close latches the waiter's condition predicate while holding the channel lock; the waiter
+never holds its mutex while taking a channel lock. It detaches every registration before releasing
+its storage.
 
 ## Tasks
 
