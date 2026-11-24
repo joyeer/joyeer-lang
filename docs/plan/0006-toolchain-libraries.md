@@ -1,7 +1,7 @@
 # 0006: Toolchain Standard-Library Resolution
 
-- Status: in progress (updated 2026-11-22); implemented for the compiler, fern, CMake staging and
-  install. Windows x64 and macOS ARM64 validation are recorded; follow-ups remain.
+- Status: in progress (updated 2026-11-23); compiler lookup, fern, staging, and
+  installation are implemented. Native Windows ARM64 and Linux AArch64 validation remain.
 - Decisions: none
 - Spec: [§12](../../specs/12-modules.md)
 
@@ -10,15 +10,16 @@ Related: [Standard modules](../../specs/12-modules.md#125-standard-modules), [na
 
 ## Goal
 
-A standard module is found by the toolchain that ships it, and a development compiler and an installed
-compiler never see each other's library. Before this work, `Compression` had to be copied into every
-consuming workspace, and fern rejected member paths outside the workspace root.
+By default, each development or installed compiler finds its own bundled standard modules.
+Workspaces can use those modules without copying them or adding workspace members.
 
 ## Definition of done
 
-- `lib/` holds everything the compiler links or imports, including the runtime archive.
-- fern and `--sysroot` agree, or the limitation is accepted on record.
-- The resolution passes the unfiltered CTest on every supported platform.
+- Staged and installed toolchains hold the bundled runtime archive, standard modules, and
+  module index in their own `lib/` directory.
+- Fern resolves the standard modules bundled with the compiler it selects.
+- The layout and resolution pass [full platform validation](../building.md#full-platform-validation)
+  in Debug and Release on each supported native target.
 
 ## Current state
 
@@ -42,7 +43,9 @@ Joyeer finds its standard library relative to the compiler's own executable.
 `JoyeerStandardLibrary` stages the modules and index there
 ([stageStandardLibrary.cmake](../../scripts/cmake/stageStandardLibrary.cmake)).
 The `JoyeerRuntime` and `StandardLibrary` install components put their respective
-files in `<prefix>/lib` without duplicating the archive.
+files in `<prefix>/lib` without duplicating the archive. `JOYEER_BUILD_COMPRESSION`
+defaults to `ON`; `StandardLibrary` installs [Compression](../impl/compression.md) when
+built. Disabling it also disables the moss build. `JoyeerRuntime` does not depend on it.
 
 `lib/index.toml` lists the installed modules under a build stamp:
 
@@ -75,41 +78,55 @@ The compiler rejects an index whose version, target, or configuration differs fr
 
 ### fern
 
-A module may list a standard module in `dependencies` without a workspace member. fern reads
-`<compiler directory>/lib/index.toml` for the names and leaves resolution to the compiler. Workspace
-validation is unchanged.
+A module may list a standard module in `dependencies` without a workspace member. Fern reads
+`<compiler directory>/lib/index.toml` for the names and leaves resolution to the compiler.
+Use fern's `--compiler` option to select a complete toolchain. This plan accepts the
+[documented scope](../impl/fern.md#1-canonical-organization): `--sysroot` overrides standard-module
+lookup for direct `joyeer` calls, not for fern. Workspace validation is unchanged.
 
 ## Todo
 
+### Completed
+
+- [x] Resolve bundled standard modules in the compiler and fern. Evidence:
+  [compiler lookup](../impl/backend.md#2-cli) and
+  [fern bootstrap, self-build, and restaging validation](../impl/fern.md#standard-library-adoption-validation).
 - [x] Move `JoyeerRuntime.*` into `lib/` (9.3 of the [runtime plan](0008-runtime-in-joyeer.md#11-todo)).
   Evidence: macOS ARM64 Debug and Release passed the full validator and the installed compiler
   and fern packaging tests. A relocated `install-debug.py` install also linked and ran `hello`.
-- [ ] fern and `--sysroot`: fern derives the library from the compiler path and does not pass or honor
-  `--sysroot`. Have fern run `--print-sysroot`, or accept the limitation permanently.
-- [ ] Decide whether Compression ships in the default install (it is optional because it fetches miniz)
-  now that moss depends on it.
-- [x] Windows x64: the unfiltered CTest passes in Debug and Release with Compression enabled. Evidence:
-  run of 2026-11-07, with `System` as the only host provider.
-- [ ] Windows ARM64 validation.
-- [ ] Linux validation.
-- [x] macOS ARM64: clean Debug and Release validation at `9b334ec` with Compression enabled.
-  Evidence: unfiltered CTest 2019/2019 and `fern test` 7/7 in each configuration, including
-  `StandardLibraryTest`, `Fern.Installed`, and `InstalledCompilerNativeHello`. Relocated Debug
-  and Release installs also resolved `System` and linked the import fixtures
-  ([runtime plan §9.4 and §10.7](0008-runtime-in-joyeer.md#11-todo)).
+- [x] Windows x64: [post-layout validation at `5d75dad`](0012-equatable.md#phase-5-acceptance).
+  Debug and Release each passed unfiltered CTest 2200/2200 and `fern test` 7/7;
+  some CTest cases passed on the validator's rerun.
+- [x] Linux x86-64 (WSL): [post-layout validation at `5d75dad`](0012-equatable.md#phase-5-acceptance).
+  Debug and Release each passed unfiltered CTest 2175/2175 and `fern test` 7/7.
+- [x] macOS ARM64: the archive move in `8289622` recorded unfiltered CTest 2019/2019 and
+  `fern test` 7/7 in Debug and Release, including `Fern.Installed` and
+  `InstalledCompilerNativeHello` ([runtime plan 9.3](0008-runtime-in-joyeer.md#stage-9-remove-the-c-r9)).
+  The earlier run at `9b334ec` still used the old archive location.
+
+### Remaining
+
+Run the [full validator](../building.md#full-platform-validation) in Debug and Release,
+with Compression enabled, on each native target. Record the install component and relocation
+results alongside the full suite.
+
+- [ ] Windows ARM64: no recorded validation of the current `lib/` layout.
+- [ ] Linux AArch64: no recorded validation of the current `lib/` layout.
 
 ## Open questions
 
-- Precompiled modules: standard modules compile from source with each program; a stable module format
-  would avoid that.
-- Cross-compilation: one root per target is assumed; cross builds may need `lib/<target>/native/`.
+None.
 
 ## Out of scope
 
-An environment variable or `PATH` search for the library.
+Fern custom sysroots, precompiled modules, cross-compilation, and environment variable or `PATH`
+search for standard modules.
 
 ## Progress log
 
+- 2026-11-23: recorded Windows x64 and Linux x86-64 validation after the archive move.
+  Kept the native ARM64 gates open. Removed the resolved Compression install question and
+  scoped out fern custom sysroots, precompiled modules, and cross-compilation.
 - 2026-11-22: Moved the archive into `lib/` for build staging and installs. The macOS ARM64
   validator passed in Debug and Release, with CTest 2019/2019 and `fern test` 7/7 in each.
   Windows and Linux were not rerun for the layout change.

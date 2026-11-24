@@ -21,7 +21,7 @@ Explanations and plans do not add language rules or implementation guarantees.
 | Use the optional miniz-backed ZIP library | [Compression](impl/compression.md) |
 | Disassemble Java classes and JARs with an AI agent | [moss](../tools/moss/README.md) and its [skill](../tools/moss/skills/moss/SKILL.md) |
 | Track runtime work and see the public library | [Runtime in Joyeer](plan/0008-runtime-in-joyeer.md) and [Standard modules](../specs/12-modules.md#125-standard-modules) |
-| Plan how the compiler finds the standard library | [Toolchain library resolution](plan/0006-toolchain-libraries.md) |
+| See how the compiler finds the standard library | [Compiler CLI](impl/backend.md#2-cli) |
 | See a larger program (a Markdown web server over the provisional [TCP API](../specs/18-host.md#186-tcp-networking)) | [example/](../example/README.md) |
 | Build from source | [building.md](building.md) |
 | Install a local Debug compiler | [Debug installation](building.md#local-debug-installation) |
@@ -75,7 +75,7 @@ iteration, a progress log, and deletion once every item is done. Start from the
 | [0002](plan/0002-c-interop.md) | C interoperation: remaining scalar ABI implementation, cross-platform acceptance, and separate memory/alias proposals |
 | [0004](plan/0004-native-link-inputs.md) | Linking native libraries by logical name and search path (proposed) |
 | [0005](plan/0005-test-audit.md) | Test coverage gaps: fuzzing, sanitizers, CI, ownership generators, spec traceability |
-| [0006](plan/0006-toolchain-libraries.md) | How the compiler finds standard modules (implemented) and what is left: the runtime in `lib/`, `--sysroot` in fern, precompiled modules |
+| [0006](plan/0006-toolchain-libraries.md) | Compiler-relative standard modules and runtime packaging; Windows ARM64 and Linux AArch64 validation remain |
 | [0008](plan/0008-runtime-in-joyeer.md) | The plan to write the whole runtime in Joyeer: definition of done, the core dialect, open design decisions, capabilities, phases and acceptance gates |
 | [0009](plan/0009-concurrency.md) | Tasks, channels, idle-worker dispatch, and TCP read readiness; remaining native and legacy glibc verification |
 | [0012](plan/0012-equatable.md) | `==` and `!=` through the `Equatable` protocol: builtin, derived and generic equality, `nil` comparison |
