@@ -1,13 +1,12 @@
 # Design Decisions
 
-Short records of language and compiler decisions that were contested or
-non-obvious. They preserve *why* a choice was made and which alternatives were
-rejected, so later work (human or AI) does not reopen settled questions
-without new evidence.
+Short records of contested or non-obvious design decisions. They preserve
+*why* a choice was made and which alternatives were rejected, so later work
+(human or AI) does not reopen settled questions without new evidence.
 
 A decision record is not normative. Language rules live in [the
-spec](../../specs/README.md); once a decision is adopted, the rule goes in the relevant
-chapter and the record links to it.
+spec](../../specs/README.md); tool and library contracts live in their own
+documentation.
 
 ## When to write one
 
@@ -19,14 +18,22 @@ chapter and the record links to it.
 ## Workflow for a user-visible feature
 
 1. Proposal: write a record (status `proposed`) if the design is contested.
-2. Spec: change the normative chapter; mark provisional rules as such.
-3. Tests first: add failing stage fixtures and focused GoogleTests that cite
-   the spec section.
-4. Implementation through the pipeline stages the feature crosses.
-5. Review with the role checklists in [.claude/agents/](../../.claude/agents/),
-   each run separately from the author.
-6. `python3 scripts/validate.py --llvm-root <sdk>`.
-7. Set the record to `accepted` and link the spec section.
+2. Contract and design review: if language rules change, update the normative
+   spec chapter, mark provisional rules as such, and have `language-designer`
+   review the proposal and spec separately from the author before implementation.
+   For tool and library changes, update the affected subsystem's documented
+   contract when it changes.
+3. Tests first: for compiler behavior changes, add failing focused GoogleTests
+   and durable stage or end-to-end fixtures; cite the spec section where
+   applicable. For tools and libraries, add failing tests suited to the
+   affected subsystem.
+4. Implementation: update every affected pipeline stage or subsystem.
+5. Implementation review: run the applicable implementation reviewers
+   separately from the author, using the
+   [role checklists](../../.claude/agents/).
+6. Run [full platform validation](../building.md#full-platform-validation).
+7. If there is a decision record, mark it `accepted` and link the relevant
+   spec section or subsystem documentation.
 
 ## Template
 

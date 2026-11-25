@@ -12,11 +12,9 @@ Read any directory-specific `AGENTS.md` before changing that area.
 Install the prerequisites in [docs/building.md](docs/building.md) first.
 On Windows, use an MSVC Developer shell matching the target architecture.
 
-```text
-cmake -S . -B build -G Ninja -DBUILD_TESTING=ON -DJOYEER_BUILD_UNITTESTS=ON
-cmake --build build
-ctest --test-dir build --output-on-failure
-```
+For local verification, follow the [build and test commands](docs/building.md#configure-build-and-test)
+with the native Debug preset for your platform. The Debug presets enable the
+backend test hooks needed by `E2EOptimizedDebugInfoIsVerified`.
 
 - Build out of source; never run `cmake .` at the repository root. Keep
   separate build trees for each architecture.
@@ -105,16 +103,18 @@ source -> lexer -> parser -> name resolution -> type checking
   (`type-system-reviewer` or `ir-backend-reviewer`) before acceptance, even
   for small or bug-fix changes.
 - **User-visible features:** follow the
-  [feature workflow](docs/decisions/README.md). Record contested decisions,
-  update the spec, add failing GoogleTests and a durable stage or end-to-end fixture,
-  implement through every affected pipeline boundary, and run the role
-  reviewers separately from the author before full acceptance.
-- **Full feature/platform acceptance:** use
-  `python3 scripts/validate.py --llvm-root <sdk>`, not ad-hoc scripts. It runs
-  unfiltered CTest and `fern test` in Debug and Release. Keep `BUILD_TESTING`,
-  `JOYEER_BUILD_UNITTESTS`, and `JOYEER_BUILD_FERN` enabled; the full root
-  workspace also needs `JOYEER_BUILD_COMPRESSION`. Report unrun or blocked
-  gates explicitly. See [validation details](docs/building.md#full-platform-validation).
+  [feature workflow](docs/decisions/README.md#workflow-for-a-user-visible-feature).
+  Update the spec and run `language-designer` before implementing changes to
+  language rules. Tool and library changes use their own contract documentation.
+  Start with failing tests suited to the affected subsystem, and run the
+  applicable implementation reviewers separately from the author before full
+  acceptance.
+- **Full feature/platform acceptance:** run `scripts/validate.py` using the
+  [command for your platform](docs/building.md#full-platform-validation), not
+  ad-hoc scripts. It runs unfiltered CTest and `fern test` in Debug and Release.
+  Keep `BUILD_TESTING`, `JOYEER_BUILD_UNITTESTS`, and `JOYEER_BUILD_FERN`
+  enabled; the full root workspace also needs `JOYEER_BUILD_COMPRESSION`.
+  Report unrun or blocked gates explicitly.
 - When working from a plan in [docs/plan/](docs/plan/README.md), update its
   `Todo` checklist and progress log in the same change: check off only
   verified items, with evidence. New plans start from the
@@ -124,14 +124,10 @@ source -> lexer -> parser -> name resolution -> type checking
 - Claim parallel test directories exclusively with process-specific names.
   Cleanup may remove only paths the current test successfully created.
 
-## Before pushing
+## Commits and pull requests
 
-After committing and before pushing, once ask the user to confirm
-understanding and testing of the change and personal review of the complete
-diff after the latest change. Agent review does not count. Remind the user to
-disclose LLM use in the PR description. Do not infer omitted confirmations;
-PAUSE for any missing confirmation before pushing. Do NOT add `Co-Authored-By`
-trailers to commits.
+- Do NOT add `Co-Authored-By` trailers to commits.
+- Do not add an `LLM Disclosure` section to pull request descriptions.
 
 ## Documentation map
 

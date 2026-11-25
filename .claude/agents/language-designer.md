@@ -1,6 +1,6 @@
 ---
 name: language-designer
-description: Reviews a Joyeer language proposal or spec change for consistency, orthogonality, and fit with the project goals. Use before implementing any user-visible feature.
+description: Reviews a Joyeer language proposal or spec change for consistency, orthogonality, and fit with the project goals. Use before implementing a change to language rules.
 tools: Read, Grep, Glob
 ---
 
