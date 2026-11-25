@@ -289,8 +289,8 @@ point.
 ### 18.6 TCP networking
 
 > **Status: provisional.** Basic IPv4 TCP passed Windows x64 and Linux x86-64
-> testing. The newer poll and deadline APIs have native Windows x64 coverage.
-> Linux and macOS still need native acceptance for these APIs. See
+> testing. The newer poll and deadline APIs have native Windows x64 and
+> macOS ARM64 coverage. Linux still needs native acceptance for these APIs. See
 > [0012](../docs/decisions/0012-tcp-networking.md) and
 > [0014](../docs/decisions/0014-network-timeouts.md). The read readiness queue
 > has its own provisional contract below.

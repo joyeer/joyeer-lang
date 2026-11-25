@@ -1,6 +1,8 @@
 # 0012: Equality through `Equatable`
 
-- Status: in progress (updated 2026-11-22); phases 1 to 4 are done, and phase 5 is done on Windows x64 and Linux x86_64; validation on macOS and ARM64 remains
+- Status: in progress (updated 2026-11-26); phases 1 to 4 and the phase 5 reviews are done.
+  Windows x64, Linux x86-64, and macOS ARM64 passed validation. Linux AArch64 failed validation,
+  and Windows ARM64 was not run.
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0024](../decisions/0024-library-optional-and-result.md) (rejects `==` on `Optional`/`Result`),
@@ -203,18 +205,33 @@ types it cannot compile (0024, "Equality is rejected").
   two medium (cascading reports, help suggesting impossible extensions) and lows, with tests in
   bb65dbe and d41d071 and fixes in 1d9d006. The review's claimed `(1 as Float) == 0.5` regression is
   rejected by the pre-`Equatable` compiler too (`as` is integer-only).
-- [ ] Run full `scripts/validate.py` in Debug and Release on every supported platform. Report gates
-  that were not run. Windows x64 done: at 1d9d006, Debug and Release each build, pass CTest 2140 of 2140
-  (Fern.Workspace, and in Release Fern.Manifest, passed on the validator's rerun) and `fern test` 7 of 7.
-  Linux x86_64 done (Ubuntu 26.04 in WSL, GCC 15, a fresh Git clone): at 441a3d8 only the two CodeView
-  equality debug compiles failed (`-gcodeview` is Windows-only), registered on Windows only in ac41037;
-  at ac41037, Debug and Release each build, pass CTest 2114 of 2114 and `fern test` 7 of 7. The Windows
-  run stands, since ac41037 changes only what is registered off Windows. After rebasing onto main with
-  #35 to #43 (decision renumbered to 0031), at 5d75dad: Windows Debug and Release each pass CTest 2200 of
-  2200 (Debug reran Fern.Manifest, Fern.Workspace, Compression.Interoperability and three
-  E2EOptimizationEquivalence tests, Release ValidationScriptTests and Compression.Interoperability, while
-  the Linux run shared the machine) and `fern test` 7 of 7; Linux Debug and Release each pass CTest 2175 of
-  2175 and `fern test` 7 of 7. Not run: macOS and ARM64 (no host here).
+
+Run the [full platform validator](../building.md#full-platform-validation) in Debug and Release on each
+supported platform.
+
+- [x] Windows x64. At `1d9d006`, both configurations passed CTest 2140/2140 and `fern test` 7/7;
+  `Fern.Workspace` and Release `Fern.Manifest` passed on the validator's rerun. At `5d75dad`, after
+  rebasing onto main with #35 to #43 and renumbering the decision to 0031, both passed CTest 2200/2200
+  and `fern test` 7/7. Debug reran `Fern.Manifest`, `Fern.Workspace`, `Compression.Interoperability`,
+  and three `E2EOptimizationEquivalence` tests; Release reran `ValidationScriptTests` and
+  `Compression.Interoperability`. The Linux run shared the machine.
+- [ ] Windows ARM64: not run; blocked: no provisioned Windows ARM64 host with the required toolchain.
+- [x] Linux x86-64 (Ubuntu 26.04 in WSL, GCC 15, fresh Git clone). At `441a3d8`, only the two
+  CodeView equality debug compiles failed. `ac41037` restricts them to Windows, leaving the Windows
+  results unchanged. At `ac41037`, both configurations passed CTest 2114/2114 and `fern test` 7/7.
+  At `5d75dad`, both passed CTest 2175/2175 and `fern test` 7/7.
+- [ ] Linux AArch64. At `5c21924e` (Ubuntu 24.04.5 QEMU guest, GCC 13.3, LLVM 22.1.8), both builds
+  passed. Unfiltered CTest still had 12 Debug and 14 Release failures out of 2231 tests per
+  configuration after the validator's rerun, including runtime import checks and compiler aborts
+  with `malloc_consolidate(): invalid chunk size`. All 24 `E2EEquatable` cases passed in both
+  configurations, with `E2EEquatableBuiltinsO3` passing on the Debug rerun. Debug `fern test` passed
+  7/7; in Release the compiler aborted while building `FoundationTests`.
+  At the Equatable merge (`4089941a`), the Debug build aborted while compiling a fern fixture.
+  Release still had 19 CTest failures after rerun, including a compiler abort in
+  `E2EEquatableContainersO1`, but passed `fern test` 7/7. The guest's C startup object (`crt1.o`)
+  imports `abort`, which the runtime import checks do not allow.
+- [x] macOS ARM64. At `5c21924e` (LLVM 22.1.8, macOS 26.5 SDK and deployment target), both
+  configurations passed unfiltered CTest 2230/2230 and `fern test` 7/7 without reruns.
 - [ ] Update `docs/impl/supported-features.md` and the implementation notes. Delete this plan when
   everything is checked.
 
@@ -262,6 +279,12 @@ types may not; conformances stay in the type's module.
 
 ## Progress log
 
+- 2026-11-26: Recorded the Linux AArch64 retest at the Equatable merge. A separate smoke test
+  ran a static Linux x86-64 ELF under QEMU user mode on the ARM64 guest; this does not count as
+  native AArch64 acceptance.
+- 2026-11-25: Split the phase 5 checklist by platform, preserving the Windows x64 and Linux x86-64
+  passes. Recorded the macOS ARM64 pass and Linux AArch64 failures at `5c21924e`. Windows ARM64
+  remains blocked on a prepared host.
 - 2026-11-22: Linux x86_64 validation in WSL: the CodeView equality debug compiles were registered on every
   platform (ac41037 restricts them to Windows); then `scripts/validate.py` passes in Debug and Release.
 - 2026-11-22: Phase 5 on Windows x64: the adversarial tester and the final type-system and IR/backend

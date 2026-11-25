@@ -1,8 +1,8 @@
 # 0009: Concurrency
 
-- Status: blocked (updated 2026-11-24); implementation is in place. Native
+- Status: blocked (updated 2026-11-26); implementation is in place. Native
   Windows ARM64 and Linux AArch64 acceptance, the older-glibc link check, and
-  Linux and macOS socket validation remain open.
+  Linux socket validation remain open.
 - Decisions: [0013](../decisions/0013-concurrency-model.md), [0014](../decisions/0014-network-timeouts.md),
   [0015](../decisions/0015-noncopyable-and-linear-types.md) to [0019](../decisions/0019-channels.md),
   [0032](../decisions/0032-tcp-read-queue.md)
@@ -25,8 +25,8 @@ Noncopyable and linear types with `deinit` (P2), thread primitives (P3), a threa
 tasks (P5a), channels (P5b, P6), and the worker-pool web server (P7) are implemented. The
 [P1a timeouts](../decisions/0014-network-timeouts.md) cover receive and accept on Windows and Linux.
 The bounded send/connect and poll APIs and the fixed-membership TCP read queue pass
-Windows x64 loopback tests. The Linux and macOS socket and queue backends are implemented;
-their native verification remains open. The implementation notes are in
+Windows x64 and macOS ARM64 loopback tests. The Linux socket and queue backends are
+implemented; their native verification remains open. The implementation notes are in
 [runtime](../impl/runtime.md) and [supported features](../impl/supported-features.md).
 
 ## Todo
@@ -114,9 +114,6 @@ The completed runs are recorded in [0023](../decisions/0023-library-concurrency.
 
 ### Networking
 
-The recorded macOS concurrency run predates the
-[macOS TCP implementation](../../lib/System/network_posix.joyeer).
-
 - [ ] Finish native Linux validation for `tcpSendWithin` and `tcpConnectWithin`. Windows x64
   loopback `SystemTests` verified timed success, invalid budgets, local refusal and send
   backpressure. The Linux `ioctl`/`ppoll`/`SO_ERROR` path type-checks but has not run here.
@@ -137,11 +134,13 @@ The recorded macOS concurrency run predates the
 - [ ] Verify the Linux one-shot `epoll` backend natively. Cross-target System
   type checking passed, and a kernel probe confirmed the x86-64 event layout,
   rearm and EOF. Blocked: full Joyeer validation needs a configured Linux SDK.
-- [ ] Run native macOS ARM64 TCP acceptance in Debug and Release. The libSystem
-  sockets, capped `poll`, deadlines, and `kqueue` read queue are implemented.
-  All-target System checking and the variadic `fcntl` code-generation tests pass.
-  Blocked on a native host: run the full validator with `SystemTests`,
-  `E2ETcpReadQueueTransfer`, and the web-server regressions enabled.
+- [x] Native macOS ARM64 TCP acceptance. At `5c21924e`, Debug and Release each passed
+  unfiltered CTest 2230/2230 and `fern test` 7/7 without reruns. `SystemTests` exercised
+  libSystem sockets, capped `poll`, send/connect deadlines and backpressure, and the
+  `kqueue` read queue (80 sockets, stable indices, rearm and EOF).
+  `E2ETcpReadQueueTransferO0` and `E2ETcpReadQueueTransferO2` covered task handoff;
+  `WebServer.IdleDispatchO0`, `WebServer.IdleDispatchO2`, and `WebServer.RequestHeadDeadline`
+  passed in both builds.
 
 ## Out of scope
 
@@ -161,6 +160,8 @@ Deferred, not forgotten:
 
 ## Progress log
 
+- 2026-11-26: Checked off native macOS ARM64 TCP after verifying the full validator
+  and the loopback, task-transfer, and web-server gates at `5c21924e`.
 - 2026-11-24: Replaced the macOS TCP stubs with libSystem sockets, capped `poll`,
   and a `kqueue` read queue. Enabled the native loopback, task-transfer, and web-server
   tests on macOS. System type-checking passed for all three OS targets; the Darwin

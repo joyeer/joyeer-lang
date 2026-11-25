@@ -1,6 +1,6 @@
 # 0005: Test Coverage
 
-- Status: in progress (updated 2026-11-23)
+- Status: in progress (updated 2026-11-26)
 - Decisions: none
 - Spec: all chapters; coverage is measured against them and against
   [supported features](../impl/supported-features.md)
@@ -32,6 +32,10 @@ it does not replace sanitizer instrumentation or generated ownership cases.
   [comparison script](../../scripts/cmake/verifyOptimizationEquivalence.cmake) runs each at
   `-O0` through `-O3` and compares exit status, stdout, and stderr.
 - [x] Remove the stale legacy fixtures. Evidence: `tests/basis` and `tests/errors` are gone.
+- [x] Confirm the Clang-gated native entry fixtures run on macOS ARM64. At `5c21924e`, all
+  15 `E2EEntry*` cases passed in both full configurations, including POSIX raw bytes,
+  invalid, duplicate, and missing entry rejection, and exit status underflow and overflow.
+  Separate configure probes verified that Intel and universal builds are rejected.
 
 ### Remaining
 
@@ -57,15 +61,13 @@ In priority order.
 - [ ] Pin today's diagnostic in one negative fixture per remaining specified but
   [unimplemented feature](../impl/supported-features.md#not-implemented), such as
   declaration-level contract syntax, to catch silent acceptance.
-- [ ] Audit platform-specific negative tests. The
-  [entry fixtures](../../tests/unittests/compiler/CMakeLists.txt) include a POSIX case that
-  preserves non-UTF-8 arguments and shared cases that reject invalid entry signatures and
-  out-of-range exit codes.
+- [ ] Audit remaining platform-specific negative tests. The
+  [entry fixtures](../../tests/unittests/compiler/CMakeLists.txt) have been verified on
+  macOS ARM64 as above. Confirm the Clang-gated entry cases in the
+  [Linux x86-64 runs](../impl/runtime.md#collection-validation) and identify any remaining
+  POSIX negative-coverage gaps.
   [Surrogate rejection](../../tests/unittests/runtime/entry_encoding_test.cpp) and `/MT` are
-  Windows-specific. Debug and Release runs are recorded for
-  [Linux x86_64](../impl/runtime.md#collection-validation) and
-  [macOS ARM64](0008-runtime-in-joyeer.md#stage-9-remove-the-c-r9); confirm the Clang-gated
-  entry cases ran and identify any remaining POSIX negative-coverage gaps.
+  Windows-specific.
 
 ## Open questions
 
@@ -77,6 +79,8 @@ Running the existing suites; that is the job of `scripts/validate.py` and the pl
 
 ## Progress log
 
+- 2026-11-26: Verified the macOS ARM64 native entry cases and architecture rejection.
+  The remaining platform and POSIX negative-coverage audit stays open.
 - 2026-11-23: separated the two completed items from the remaining work and replaced the old
   fixture counts with links to test registration and existing platform evidence. No new tests
   were run.

@@ -1,6 +1,6 @@
 # 0032: Owned TCP read readiness queue
 
-- Status: proposed; implemented on Windows, Linux, and macOS, with native Linux and macOS validation pending
+- Status: proposed; implemented on Windows, Linux, and macOS, with native Linux validation pending
 - Spec: [§18.6, TCP read readiness queues](../../specs/18-host.md#tcp-read-readiness-queues)
 
 ## Context
@@ -71,3 +71,8 @@ read queue's native calls; `-O0` retains unused System bindings.
 A Linux x86-64 kernel probe checked the packed event layout, one-shot disarm
 and rearm, and FIN readiness. It does not replace validation of the Joyeer
 library on Linux.
+
+Native macOS ARM64 Debug and Release at `5c21924e` passed unfiltered CTest
+2230/2230 and `fern test` 7/7. `SystemTests` covered selection beyond the
+64-socket poll cap, rearm, EOF, and bounded send under backpressure.
+`E2ETcpReadQueueTransfer` passed at `-O0` and `-O2`.
