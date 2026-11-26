@@ -25,8 +25,8 @@ private func startupW(version: UInt32, data: inout [UInt8]): Int32
 private func lastErrorW(): Int32
 
 @platform(windows)
-@c_extern(symbol: "socket")
-private func socketW(family: Int32, kind: Int32, proto: Int32): Int
+@c_extern(symbol: "WSASocketW")
+private func socketW(family: Int32, kind: Int32, proto: Int32, protocolInfo: Int, group: UInt32, flags: UInt32): Int
 
 @platform(windows)
 @c_extern(symbol: "bind", pointer: "address")
@@ -61,6 +61,20 @@ private func sendW(socket: Int, buffer: [UInt8], count: Int32, flags: Int32): In
 private func pollW(sockets: inout [UInt8], count: UInt32, timeout: Int32): Int32
 
 @platform(windows)
+@c_extern(symbol: "ioctlsocket", pointer: "value")
+private func ioctlSocketW(socket: Int, command: UInt32, value: inout [UInt8]): Int32
+
+@platform(windows)
+@c_extern(symbol: "getsockopt", pointer: "value", pointer: "length")
+private func getSocketOptionW(socket: Int, level: Int32, option: Int32, value: inout [UInt8],
+    length: inout [UInt8]): Int32
+
+@platform(windows)
+@c_extern(symbol: "select", pointer: "writes", pointer: "errors", pointer: "timeout")
+private func selectW(ignored: Int32, reads: Int, writes: inout [UInt8], errors: inout [UInt8],
+    timeout: [UInt8]): Int32
+
+@platform(windows)
 @c_extern(symbol: "closesocket")
 private func closeW(socket: Int): Int32
 
@@ -89,6 +103,11 @@ private func socketAddress(address: Int, port: Int): [UInt8] {
 
 @platform(windows)
 private func makeUninheritable(handle: Int): Int {
+    // Valid SOCKET tokens cannot travel through the runtime's negative error range.
+    if handle < 0 {
+        if closeW(socket: handle) != 0 { }
+        return -10038
+    }
     if handleInformationW(handle: handle, mask: handleFlagInherit, flags: 0) == 0 {
         let failure = lastFailure()
         if closeW(socket: handle) != 0 { }
@@ -110,7 +129,8 @@ func classifyNetworkError(code: Int): NetworkError {
     if code == 10049 { return .AddressNotAvailable(code) }
     if code == 10013 { return .PermissionDenied(code) }
     if code == 10061 { return .ConnectionRefused(code) }
-    if code == 10054 || code == 10053 || code == 10058 { return .ConnectionReset(code) }
+    // A failed read probe can return Win32's forms of a connection reset.
+    if code == 10054 || code == 10053 || code == 10058 || code == 64 || code == 1236 { return .ConnectionReset(code) }
     if code == 10060 { return .TimedOut(code) }
     return .Other(code)
 }
@@ -120,7 +140,9 @@ func nativeTcpOpen(): Int {
     var data = zeroBuffer(count: startupDataSize)
     let started = startupW(version: winsockVersion, data: &data)
     if started != 0 { return 0 - (started as Int) }
-    let handle = socketW(family: familyInet, kind: typeStream, proto: protocolTcp)
+    // Accepted sockets inherit the listener's overlapped capability.
+    let handle = socketW(family: familyInet, kind: typeStream, proto: protocolTcp, protocolInfo: 0, group: 0,
+        flags: 1)  // WSA_FLAG_OVERLAPPED
     if handle == -1 { return lastFailure() }
     return makeUninheritable(handle: handle)
 }
@@ -161,6 +183,33 @@ func nativeTcpConnect(handle: Int, address: Int, port: Int): Int {
 }
 
 @platform(windows)
+func nativeTcpSetNonblocking(handle: Int, enabled: Bool): Int {
+    var value = zeroBuffer(count: 4)
+    if enabled { &value[0] = 1 }
+    if ioctlSocketW(socket: handle, command: 0x8004667e, value: &value) != 0 { return lastFailure() }
+    return 0
+}
+
+@platform(windows)
+func nativeTcpConnectPending(status: Int): Bool { return status == -10035 }
+
+@platform(windows)
+func nativeTcpWouldBlock(status: Int): Bool { return status == -10035 }
+
+@platform(windows)
+func nativeTcpInterrupted(status: Int): Bool { return status == -10004 }
+
+@platform(windows)
+func nativeTcpSocketError(handle: Int): Int {
+    var code = zeroBuffer(count: 4)
+    var length = zeroBuffer(count: 4)
+    &length[0] = 4
+    if getSocketOptionW(socket: handle, level: 0xffff, option: 0x1007,
+            value: &code, length: &length) != 0 { return lastFailure() }
+    return 0 - socketErrorNumber(bytes: code)
+}
+
+@platform(windows)
 func nativeTcpPort(handle: Int): Int {
     var name = zeroBuffer(count: addressSize)
     var length = zeroBuffer(count: 4)
@@ -177,7 +226,7 @@ func nativeTcpReceive(handle: Int, buffer: inout [UInt8], count: Int): Int {
 }
 
 @platform(windows)
-func nativeTcpSend(handle: Int, buffer: [UInt8], count: Int): Int {
+func nativeTcpSend(handle: Int, buffer: [UInt8], count: Int, retry: Bool): Int {
     let sent = sendW(socket: handle, buffer: buffer, count: count as Int32, flags: 0) as Int
     if sent < 0 { return lastFailure() }
     return sent
@@ -188,22 +237,244 @@ func nativeTcpSend(handle: Int, buffer: [UInt8], count: Int): Int {
 // ready, so the following receive reports it. WSAPOLLFD is the socket (8 bytes), the
 // requested events (POLLRDNORM, 0x0100) and the returned events, padded to 16 bytes.
 @platform(windows)
-func nativeTcpWait(handle: Int, timeoutMillis: Int): Int {
+private func pollOne(handle: Int, timeoutMillis: Int, writable: Bool): Int {
     var entry = zeroBuffer(count: 16)
     var index = 0
     while index < 8 {
         &entry[index] = ((handle >> (index * 8)) & 255) as UInt8
         index = index + 1
     }
-    &entry[9] = 1
+    if writable { &entry[8] = 0x10 } else { &entry[9] = 1 }
     let ready = pollW(sockets: &entry, count: 1, timeout: timeoutMillis as Int32) as Int
     if ready < 0 { return lastFailure() }
     if ready == 0 { return 0 }
+    if (entry[10] & 0x04) != 0 { return -10038 }
     return 1
+}
+
+@platform(windows)
+func nativeTcpWait(handle: Int, timeoutMillis: Int): Int {
+    return pollOne(handle: handle, timeoutMillis: timeoutMillis, writable: false)
+}
+
+@platform(windows)
+func nativeTcpWaitWritable(handle: Int, timeoutMillis: Int): Int {
+    return pollOne(handle: handle, timeoutMillis: timeoutMillis, writable: true)
+}
+
+// select reports a failed pending connect in the exception set, including on older Winsock versions.
+@platform(windows)
+func nativeTcpWaitConnect(handle: Int, timeoutMillis: Int): Int {
+    var writable = zeroBuffer(count: 8 + 64 * 8)
+    &writable[0] = 1
+    var index = 0
+    while index < 8 {
+        &writable[8 + index] = ((handle >> (index * 8)) & 255) as UInt8
+        index = index + 1
+    }
+    var errors = writable
+    var limit = zeroBuffer(count: 8)
+    let seconds = timeoutMillis / 1000
+    let micros = (timeoutMillis % 1000) * 1000
+    index = 0
+    while index < 4 {
+        &limit[index] = ((seconds >> (index * 8)) & 255) as UInt8
+        &limit[4 + index] = ((micros >> (index * 8)) & 255) as UInt8
+        index = index + 1
+    }
+    let ready = selectW(ignored: 0, reads: 0, writes: &writable, errors: &errors, timeout: limit)
+    if ready < 0 { return lastFailure() }
+    return ready as Int
+}
+
+@platform(windows)
+func nativeTcpPoll(handles: [Int], readiness: inout [UInt8], timeoutMillis: Int): Int {
+    var descriptors = zeroBuffer(count: handles.count * 16)
+    var index = 0
+    while index < handles.count {
+        let offset = index * 16
+        let handle = handles[index]
+        var byteIndex = 0
+        while byteIndex < 8 {
+            &descriptors[offset + byteIndex] = ((handle >> (byteIndex * 8)) & 255) as UInt8
+            byteIndex = byteIndex + 1
+        }
+        &descriptors[offset + 9] = 1  // POLLRDNORM
+        index = index + 1
+    }
+    let outcome = pollW(sockets: &descriptors, count: handles.count as UInt32, timeout: timeoutMillis as Int32)
+    if outcome < 0 { return lastFailure() }
+    index = 0
+    while index < handles.count {
+        let offset = index * 16
+        let events = (descriptors[offset + 10] as Int) | ((descriptors[offset + 11] as Int) << 8)
+        if (events & 0x0004) != 0 { return -10038 }  // POLLNVAL, WSAENOTSOCK
+        if (events & 0x0103) != 0 { &readiness[index] = 1 }  // POLLRDNORM | POLLHUP | POLLERR
+        index = index + 1
+    }
+    return 0
 }
 
 @platform(windows)
 func nativeTcpClose(handle: Int): Int {
     if closeW(socket: handle) != 0 { return lastFailure() }
     return 0
+}
+
+@platform(windows)
+@c_extern(symbol: "CreateIoCompletionPort")
+private func completionPortW(file: Int, port: Int, key: Int, concurrency: UInt32): Int
+
+@platform(windows)
+@c_extern(symbol: "GetQueuedCompletionStatus")
+private func takeCompletionW(port: Int, bytes: Int, key: Int, overlapped: Int, timeout: UInt32): Int32
+
+@platform(windows)
+@c_extern(symbol: "PostQueuedCompletionStatus")
+private func postCompletionW(port: Int, bytes: UInt32, key: Int, overlapped: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "GetLastError")
+private func portLastErrorW(): UInt32
+
+@platform(windows)
+@c_extern(symbol: "CloseHandle")
+private func closePortW(handle: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "WSARecv")
+private func readProbeW(socket: Int, buffers: Int, count: UInt32, received: Int, flags: Int, overlapped: Int,
+    completionRoutine: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "joyeer_alloc")
+private func allocateReadRecords(size: Int): Int
+
+@platform(windows)
+@c_extern(symbol: "joyeer_free")
+private func releaseReadRecords(address: Int, size: Int): Void
+
+@platform(windows)
+@c_extern(symbol: "joyeer_intrinsic_memset")
+private func clearReadRecord(address: Int, value: UInt8, count: Int): Void
+
+@platform(windows)
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+private func readRecordWord(address: Int): UInt64
+
+@platform(windows)
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+private func writeRecordWord(address: Int, value: UInt64): Void
+
+// x64/ARM64 record: OVERLAPPED at 0, WSABUF at 32 (its pointer at 40),
+// receive flags at 48, and one backing byte for the zero-length WSABUF at 52.
+// The word at 56 is private bookkeeping: 0 idle, 1 native packet owed, or
+// a positive Winsock error carried by an explicitly posted packet.
+private let readRecordBytes: Int = 64
+private let readRecordState: Int = 56
+
+@platform(windows)
+func nativeReadQueueOpen(capacity: Int): Result<NativeTcpReadQueue, NetworkError> {
+    // Ownership can move to another task while the preceding waiter is still
+    // runnable and associated. Do not let the scheduler throttle the new owner,
+    // even on a single logical CPU. Joyeer allows at most 256 unjoined tasks.
+    let handle = completionPortW(file: -1, port: 0, key: 0, concurrency: 1024)
+    if handle == 0 { return .Err(.Other(portLastErrorW() as Int)) }
+    // One extra record holds the synchronous dequeue outputs, separate from I/O.
+    let size = (capacity + 1) * readRecordBytes
+    let records = allocateReadRecords(size: size)
+    clearReadRecord(address: records, value: 0, count: size)
+    return .Ok(NativeTcpReadQueue(handle: handle, records: records, capacity: capacity))
+}
+
+@platform(windows)
+func nativeReadQueueRegister(port: NativeTcpReadQueue, handle: Int, index: Int): Int {
+    let associated = completionPortW(file: handle, port: port.handle, key: index, concurrency: 0)
+    if associated == 0 { return 0 - (portLastErrorW() as Int) }
+    return nativeReadQueueArm(port: port, handle: handle, index: index)
+}
+
+@platform(windows)
+func nativeReadQueueArm(port: NativeTcpReadQueue, handle: Int, index: Int): Int {
+    let record = port.records + index * readRecordBytes
+    let state = record + readRecordState
+    precondition(condition: readRecordWord(address: state) == 0, message: "TCP read probe is already armed")
+    clearReadRecord(address: record, value: 0, count: readRecordState)
+    writeRecordWord(address: record + 40, value: (record + 52) as UInt64)
+    let submitted = readProbeW(socket: handle, buffers: record + 32, count: 1, received: 0, flags: record + 48,
+        overlapped: record, completionRoutine: 0)
+    let status = if submitted == 0 { 0 } else { lastFailure() }
+    if status == 0 || status == -997 {  // WSA_IO_PENDING; either outcome queues one packet.
+        writeRecordWord(address: state, value: 1)
+        return 0
+    }
+    // Some providers report connection failure synchronously. It belongs to
+    // this slot, not to the queue. Post a packet with the same lifetime rules.
+    if status == -10053 || status == -10054 || status == -10057 || status == -10058 || status == -10060 {
+        if postCompletionW(port: port.handle, bytes: 0, key: index, overlapped: record) == 0 {
+            return 0 - (portLastErrorW() as Int)
+        }
+        writeRecordWord(address: state, value: (0 - status) as UInt64)
+        return 0
+    }
+    return status
+}
+
+@platform(windows)
+func nativeReadQueueWait(port: NativeTcpReadQueue, timeoutMillis: Int, event: inout TcpReadQueueEvent): Int {
+    let output = port.records + port.capacity * readRecordBytes
+    let limit = if timeoutMillis < 0 { 0xffffffff as UInt32 } else { timeoutMillis as UInt32 }
+    writeRecordWord(address: output + 16, value: 0)
+    let ok = takeCompletionW(port: port.handle, bytes: output, key: output + 8, overlapped: output + 16, timeout: limit)
+    let status = if ok == 0 { 0 - (portLastErrorW() as Int) } else { 0 }
+    let record = readRecordWord(address: output + 16) as Int
+    if record == 0 {
+        precondition(condition: ok == 0 && status < 0, message: "TCP read completion has no record")
+        if status == -258 { return 0 }  // WAIT_TIMEOUT, with no dequeued packet.
+        return status
+    }
+    let index = readRecordWord(address: output + 8) as Int
+    precondition(condition: index >= 0 && index < port.capacity && record == port.records + index * readRecordBytes,
+        message: "TCP read completion does not identify an owned record")
+    let state = record + readRecordState
+    let pending = readRecordWord(address: state) as Int
+    precondition(condition: pending > 0, message: "TCP read completion was not owed")
+    writeRecordWord(address: state, value: 0)
+    &event.index = index
+    &event.status = if pending == 1 { status } else { 0 - pending }
+    return 1
+}
+
+@platform(windows)
+func nativeReadQueueCancelled(status: Int): Bool { return status == -995 }  // ERROR_OPERATION_ABORTED
+
+@platform(windows)
+func nativeReadQueueCloseSocket(handle: Int): Int {
+    // No linger or aliased handles. If a close doesn't detach the socket, we
+    // cannot promise that a retained native record will ever be released.
+    let status = nativeTcpClose(handle: handle)
+    precondition(condition: status == 0, message: "could not close an owned TCP read queue socket")
+    return status
+}
+
+@platform(windows)
+func nativeReadQueueDestroy(port: NativeTcpReadQueue) {
+    // The sockets have been closed. Even a successful probe may have raced
+    // with close; wait for every owed packet before releasing any addresses.
+    var owed = 0
+    var index = 0
+    while index < port.capacity {
+        let address = port.records + index * readRecordBytes + readRecordState
+        if readRecordWord(address: address) != 0 { owed = owed + 1 }
+        index = index + 1
+    }
+    var event = TcpReadQueueEvent(index: -1, status: 0)
+    while owed > 0 {
+        let waited = nativeReadQueueWait(port: port, timeoutMillis: -1, event: &event)
+        precondition(condition: waited == 1, message: "could not drain TCP read completions")
+        owed = owed - 1
+    }
+    let closed = closePortW(handle: port.handle)
+    precondition(condition: closed != 0, message: "could not close the TCP completion port")
+    releaseReadRecords(address: port.records, size: (port.capacity + 1) * readRecordBytes)
 }

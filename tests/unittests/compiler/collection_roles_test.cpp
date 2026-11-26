@@ -1125,7 +1125,7 @@ TEST_F(CollectionRoleTest, TheArrayRoleRequiresADeinitAndEveryMethodRole) {
         const auto at = library.find("public struct Buffer");
         ASSERT_NE(at, std::string::npos);
         library.replace(at, 6, "internal");
-        EXPECT_TRUE(rejectedAsInvalidPrelude(library, "public"));
+        EXPECT_TRUE(rejectedAsInvalidPrelude(library, "public")) << diagnostics();
     }
 }
 

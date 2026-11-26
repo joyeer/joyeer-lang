@@ -267,8 +267,8 @@ source-level pointer value, address arithmetic, or dereference.
 #### 19.4.5 Compiler intrinsics
 
 A C import whose symbol begins with `joyeer_intrinsic_` names a compiler
-intrinsic. The compiler lowers it to inline instructions and never links a
-symbol of that name, so the declaration is the only place the operation exists.
+intrinsic. The compiler lowers it according to the table below and never
+links a symbol with the intrinsic's name.
 Every other rule for `@c_extern` applies unchanged: the declaration must be in
 a unit authorized for native bindings, so ordinary programs cannot use these.
 The symbol must be one of the table below, declared with exactly the listed
@@ -299,6 +299,7 @@ function values (§5.6.1).
 | `joyeer_intrinsic_float_bits` | `(value: Float) -> UInt32` | The IEEE 754 bit pattern of `value` |
 | `joyeer_intrinsic_syscall` | `(number: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int) -> Int` | A Linux system call: `number` and the six arguments in the architecture's registers, the kernel's result returned unchanged (-4095 to -1 is a negated `errno`). Lowers to inline assembly (`syscall` on x86-64, `svc #0` on AArch64); it is a diagnostic on any other architecture, and only a Linux program can run it. [Decision 0011](../docs/decisions/0011-runtime-without-the-c-library.md) |
 | `joyeer_intrinsic_target_architecture` | `() -> Int` | A constant: 1 for an x86-64 target, 2 for AArch64, 0 otherwise, so a runtime unit can choose the system call numbers of its architecture |
+| `joyeer_intrinsic_darwin_fcntl_int` | `(descriptor: Int32, command: Int32, argument: Int32) -> Int32` | Calls Darwin `fcntl(int, int, ...)` with one C `int` vararg. Only for commands that take an `int` or no argument, such as the descriptor and status flags used by `System`. It is not a general variadic binding and only macOS uses it. |
 | `joyeer_intrinsic_string_data` | `(text: String) -> Int` | The address of the bytes of the borrowed `text`, as a C binding receives them; meaningful only while `text` is alive and unchanged. The collections prelude's String operations build on it ([0028](../docs/decisions/0028-ir-opcode-set.md)) |
 | `joyeer_intrinsic_string_count` | `(text: String) -> Int` | The byte count of `text` |
 
@@ -416,6 +417,13 @@ foreign thread does too, with one exception: a function the runtime exports as a
 trampoline may be entered by a thread the runtime created through its thread API
 ([decision 0016](../docs/decisions/0016-thread-primitives.md)). Such a thread may allocate, print and
 panic (decision 0017), and nothing unwinds across the thread boundary.
+
+The private Windows `System` read queue ([decision 0032](../docs/decisions/0032-tcp-read-queue.md))
+passes addresses of its own fixed native records as scalar arguments to
+overlapped Winsock calls. It keeps those records allocated until every
+submitted completion has been dequeued, including after socket close.
+This does not allow native retention of any managed `pointer:` buffer or
+add an asynchronous binding or callback form.
 
 The binding author must match the real native prototype and its behavioral
 contract. Without a header importer, checking the Joyeer declaration and

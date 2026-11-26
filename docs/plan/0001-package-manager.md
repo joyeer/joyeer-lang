@@ -1,6 +1,6 @@
 # 0001: Joyeer Package Manager
 
-- Status: in progress (updated 2026-11-22)
+- Status: in progress (updated 2026-11-26)
 - Decisions: none yet
 - Spec: [§12](../../specs/12-modules.md), [§18](../../specs/18-host.md)
 
@@ -17,8 +17,8 @@ the toolchain passes native platform and release gates.
 
 ## Current state
 
-Current behavior and validation evidence are in [fern](../impl/fern.md). macOS ARM64 functional
-acceptance is recorded in [native validation evidence](../impl/c-interop.md#macos-arm64).
+Current behavior and validation evidence are in [fern](../impl/fern.md), including
+[macOS ARM64 toolchain validation](../impl/fern.md#macos-arm64-toolchain-validation).
 
 | Phase | Deliverables and exit criteria |
 |---|---|
@@ -88,10 +88,17 @@ and relocated compiler, backend and runtime lookup with the
 [local Debug installer](../building.md#local-debug-installation). Record provenance and results in the
 implementation notes, not here.
 
-- [x] macOS ARM64. Evidence: [native validation evidence](../impl/c-interop.md#macos-arm64).
-- [ ] Intel macOS.
-- [ ] Standalone Homebrew dependency packaging.
+- [x] macOS ARM64 with `dsymutil`. Evidence: [full Debug and Release validation and relocated
+  installations](../impl/fern.md#macos-arm64-toolchain-validation) at `5c21924e`.
+- [ ] Complete the macOS Debug workflow without `dsymutil`. `Fern.Bootstrap` passes without
+  a dSYM, but `Fern.SelfBuild`, `Fern.Installed`, and the default build of `moss.app` fail
+  when fern asks for `-gfull` (`linker.missing-tool`).
+- [ ] Standalone Homebrew dependency packaging. Blocked: the installed backend still links
+  external Homebrew libraries; [local relocation](../building.md#release-staging) does not
+  establish a standalone distribution.
 - [ ] Each other claimed platform without recorded evidence.
+
+Intel and universal macOS builds are not claimed targets; CMake explicitly rejects them.
 
 ### Release gates
 
@@ -116,6 +123,9 @@ scoped, not prerequisites.
 
 ## Progress log
 
+- 2026-11-26: Verified macOS ARM64 with `dsymutil` and relocated installs at `5c21924e`.
+  Split out the failing no-`dsymutil` Debug workflow, confirmed the Homebrew dependency
+  blocker, and removed the unsupported Intel macOS target from acceptance.
 - 2026-11-22: `System` now supplies the environment and current-directory queries needed for
   compiler discovery. Executable-location lookup and discovery policy remain open.
 

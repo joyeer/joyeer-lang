@@ -41,9 +41,41 @@ public struct TcpConnection {
     }
 }
 
+public struct TcpReadiness {
+    public let connections: [Int]
+    public let listeners: [Int]
+}
+
+struct NativeTcpReadQueue {
+    let handle: Int
+    let records: Int  // Windows only; never points into Joyeer-managed storage.
+    let capacity: Int
+}
+
+struct TcpReadQueueEvent {
+    var index: Int
+    var status: Int  // 0 for readiness, or a negated per-socket probe error.
+}
+
+public struct TcpReadQueue {
+    var connections: [TcpConnection]
+    var native: NativeTcpReadQueue
+    var remaining: Int
+    var current: Int
+    var probeStatus: Int
+    var readStatus: Int  // 1 live, 0 confirmed EOF, negative terminal error.
+    var failure: NetworkError?
+
+    deinit() {
+        shutdownReadQueue(queue: &self)
+    }
+}
+
 private let maximumReceiveBytes: Int = 1048576
 private let maximumSendChunk: Int = 1073741824
 private let maximumTimeoutMillis: Int = 2147483647
+private let maximumPollSockets: Int = 64
+private let maximumReadQueueSockets: Int = 4096
 private let lowestPort: Int = 0
 private let highestPort: Int = 65535
 
@@ -78,6 +110,28 @@ func parseIpv4(text: String): Int {
 
 private func failed(status: Int): NetworkError {
     return classifyNetworkError(code: 0 - status)
+}
+
+func socketErrorNumber(bytes: [UInt8]): Int {
+    return (bytes[0] as Int) | ((bytes[1] as Int) << 8) |
+        ((bytes[2] as Int) << 16) | ((bytes[3] as Int) << 24)
+}
+
+private func networkClock(): Result<Int, NetworkError> {
+    return match monotonicMilliseconds() {
+        .Ok(millis) => .Ok(millis),
+        .Err(.InvalidInput(code)) => .Err(.Other(code)),
+        .Err(.InvalidEncoding(code)) => .Err(.Other(code)),
+        .Err(.QueryFailed(code)) => .Err(.Other(code)),
+        .Err(.OutOfRange(code)) => .Err(.Other(code)),
+    }
+}
+
+private func timeRemaining(started: Int, timeoutMillis: Int): Result<Int, NetworkError> {
+    if timeoutMillis == 0 { return .Ok(0) }
+    let elapsed = networkClock()? - started
+    if elapsed >= timeoutMillis { return .Err(.TimedOut(networkTimeoutCode())) }
+    return .Ok(timeoutMillis - elapsed)
 }
 
 // Closes a socket whose close result is not reported: after another failure, which is the one
@@ -121,12 +175,39 @@ private func waitFailure(handle: Int, timeoutMillis: Int): Optional<NetworkError
 
 public func tcpAccept(listener: TcpListener, timeoutMillis: Int): Result<TcpConnection, NetworkError> {
     if !validTimeout(timeoutMillis: timeoutMillis) { return .Err(.InvalidInput(networkInvalidCode())) }
-    let problem = waitFailure(handle: listener.handle, timeoutMillis: timeoutMillis)
+    return acceptConnection(listener: listener.handle, timeoutMillis: timeoutMillis)
+}
+
+@platform(windows, linux)
+private func acceptConnection(listener: Int, timeoutMillis: Int): Result<TcpConnection, NetworkError> {
+    let problem = waitFailure(handle: listener, timeoutMillis: timeoutMillis)
     match problem {
         .Some(error) => { return .Err(error) },
         .None => { },
     }
-    let handle = nativeTcpAccept(handle: listener.handle)
+    let handle = nativeTcpAccept(handle: listener)
+    if handle < 0 { return .Err(failed(status: handle)) }
+    return .Ok(TcpConnection(handle: handle))
+}
+
+@platform(macos)
+private func waitAfterWouldBlock(handle: Int, started: Int, timeoutMillis: Int): Result<Void, NetworkError> {
+    if timeoutMillis == 0 { return .Err(.TimedOut(networkTimeoutCode())) }
+    let limit = if timeoutMillis > 0 { timeRemaining(started: started, timeoutMillis: timeoutMillis)? } else { -1 }
+    let ready = nativeTcpWait(handle: handle, timeoutMillis: limit)
+    if ready < 0 { return .Err(failed(status: ready)) }
+    if ready == 0 { return .Err(.TimedOut(networkTimeoutCode())) }
+    return .Ok(())
+}
+
+@platform(macos)
+private func acceptConnection(listener: Int, timeoutMillis: Int): Result<TcpConnection, NetworkError> {
+    let started = if timeoutMillis > 0 { networkClock()? } else { 0 }
+    var handle = nativeTcpAccept(handle: listener)
+    while nativeTcpWouldBlock(status: handle) {
+        waitAfterWouldBlock(handle: listener, started: started, timeoutMillis: timeoutMillis)?
+        handle = nativeTcpAccept(handle: listener)
+    }
     if handle < 0 { return .Err(failed(status: handle)) }
     return .Ok(TcpConnection(handle: handle))
 }
@@ -146,24 +227,293 @@ public func tcpConnect(address: String, port: Int): Result<TcpConnection, Networ
     return .Ok(TcpConnection(handle: handle))
 }
 
+private func connectNonblocking(handle: Int, address: Int, port: Int, started: Int,
+    timeoutMillis: Int): Result<Void, NetworkError> {
+    let mode = nativeTcpSetNonblocking(handle: handle, enabled: true)
+    if mode < 0 { return .Err(failed(status: mode)) }
+    let _remaining = timeRemaining(started: started, timeoutMillis: timeoutMillis)?
+    let connected = nativeTcpConnect(handle: handle, address: address, port: port)
+    if connected < 0 {
+        if !nativeTcpConnectPending(status: connected) { return .Err(failed(status: connected)) }
+        while true {
+            let remaining = timeRemaining(started: started, timeoutMillis: timeoutMillis)?
+            let ready = nativeTcpWaitConnect(handle: handle, timeoutMillis: remaining)
+            if ready >= 0 {
+                if ready == 0 { return .Err(.TimedOut(networkTimeoutCode())) }
+                break
+            }
+            if timeoutMillis == 0 || !nativeTcpInterrupted(status: ready) {
+                return .Err(failed(status: ready))
+            }
+        }
+        let status = nativeTcpSocketError(handle: handle)
+        if status < 0 { return .Err(failed(status: status)) }
+    }
+    let restored = nativeTcpSetNonblocking(handle: handle, enabled: false)
+    if restored < 0 { return .Err(failed(status: restored)) }
+    return .Ok(())
+}
+
+public func tcpConnectWithin(address: String, port: Int, timeoutMillis: Int): Result<TcpConnection, NetworkError> {
+    if timeoutMillis == -1 { return tcpConnect(address: address, port: port) }
+    let packed = parseIpv4(text: address)
+    if !validTimeout(timeoutMillis: timeoutMillis) || packed < 0 || port < 1 || port > highestPort {
+        return .Err(.InvalidInput(networkInvalidCode()))
+    }
+    let started = if timeoutMillis == 0 { 0 } else { networkClock()? }
+    let handle = nativeTcpOpen()
+    if handle < 0 { return .Err(failed(status: handle)) }
+    return match connectNonblocking(handle: handle, address: packed, port: port, started: started,
+        timeoutMillis: timeoutMillis) {
+        .Ok(_) => .Ok(TcpConnection(handle: handle)),
+        .Err(error) => {
+            discard(handle: handle)
+            .Err(error)
+        },
+    }
+}
+
 public func tcpLocalPort(listener: TcpListener): Result<Int, NetworkError> {
     let port = nativeTcpPort(handle: listener.handle)
     if port < 0 { return .Err(failed(status: port)) }
     return .Ok(port)
 }
 
-public func tcpReceive(connection: TcpConnection, maximumBytes: Int,
-    timeoutMillis: Int): Result<String, NetworkError> {
-    if maximumBytes < 1 || maximumBytes > maximumReceiveBytes || !validTimeout(timeoutMillis: timeoutMillis) {
+public func tcpPoll(connections: [TcpConnection], listeners: [TcpListener],
+    timeoutMillis: Int): Result<TcpReadiness, NetworkError> {
+    if !validTimeout(timeoutMillis: timeoutMillis) ||
+        connections.count > maximumPollSockets || listeners.count > maximumPollSockets - connections.count {
         return .Err(.InvalidInput(networkInvalidCode()))
     }
-    let problem = waitFailure(handle: connection.handle, timeoutMillis: timeoutMillis)
+    let total = connections.count + listeners.count
+    if total == 0 { return .Err(.InvalidInput(networkInvalidCode())) }
+
+    var handles: [Int] = []
+    var index = 0
+    while index < connections.count {
+        if connections[index].handle < 0 { return .Err(.InvalidInput(networkInvalidCode())) }
+        &handles.append(element: connections[index].handle)
+        index = index + 1
+    }
+    index = 0
+    while index < listeners.count {
+        &handles.append(element: listeners[index].handle)
+        index = index + 1
+    }
+    var ready = zeroBuffer(count: total)
+    let status = nativeTcpPoll(handles: handles, readiness: &ready, timeoutMillis: timeoutMillis)
+    if status < 0 { return .Err(failed(status: status)) }
+
+    var readyConnections: [Int] = []
+    var readyListeners: [Int] = []
+    index = 0
+    while index < total {
+        if ready[index] != 0 {
+            if index < connections.count {
+                &readyConnections.append(element: index)
+            } else {
+                &readyListeners.append(element: index - connections.count)
+            }
+        }
+        index = index + 1
+    }
+    return .Ok(TcpReadiness(connections: consume readyConnections, listeners: consume readyListeners))
+}
+
+private func closeReadQueueSlot(queue: inout TcpReadQueue, index: Int): Int {
+    let status = nativeReadQueueCloseSocket(handle: queue.connections[index].handle)
+    &queue.connections[index].handle = -1
+    &queue.remaining = queue.remaining - 1
+    return status
+}
+
+private func shutdownReadQueue(queue: inout TcpReadQueue) {
+    if queue.native.handle == -1 { return }
+    var index = 0
+    while index < queue.connections.count {
+        if queue.connections[index].handle >= 0 {
+            if closeReadQueueSlot(queue: &queue, index: index) < 0 { }
+        }
+        index = index + 1
+    }
+    nativeReadQueueDestroy(port: queue.native)
+    &queue.native = NativeTcpReadQueue(handle: -1, records: 0, capacity: 0)
+    &queue.current = -1
+}
+
+public func tcpOpenReadQueue(connections: consuming [TcpConnection]): Result<TcpReadQueue, NetworkError> {
+    let count = connections.count
+    if count < 1 || count > maximumReadQueueSockets { return .Err(.InvalidInput(networkInvalidCode())) }
+    var index = 0
+    while index < count {
+        if connections[index].handle < 0 { return .Err(.InvalidInput(networkInvalidCode())) }
+        index = index + 1
+    }
+    let port = nativeReadQueueOpen(capacity: count)?
+    var queue = TcpReadQueue(connections: consume connections, native: port, remaining: count,
+        current: -1, probeStatus: 0, readStatus: 1, failure: nil)
+    index = 0
+    while index < count {
+        let handle = queue.connections[index].handle
+        let mode = nativeTcpSetNonblocking(handle: handle, enabled: true)
+        if mode < 0 { return .Err(failed(status: mode)) }
+        let registered = nativeReadQueueRegister(port: port, handle: handle, index: index)
+        if registered < 0 { return .Err(failed(status: registered)) }
+        index = index + 1
+    }
+    return .Ok(consume queue)
+}
+
+private func waitReadQueue(queue: inout TcpReadQueue, timeoutMillis: Int): Result<Int?, NetworkError> {
+    if queue.remaining == 0 { return .Ok(nil) }
+    let started = if timeoutMillis > 0 { networkClock()? } else { 0 }
+    let previous = queue.current
+    &queue.current = -1
+    if previous >= 0 {
+        if queue.readStatus <= 0 {
+            if closeReadQueueSlot(queue: &queue, index: previous) < 0 { }
+        } else {
+            let armed = nativeReadQueueArm(port: queue.native, handle: queue.connections[previous].handle,
+                index: previous)
+            if armed < 0 { return .Err(failed(status: armed)) }
+        }
+    }
+    var event = TcpReadQueueEvent(index: -1, status: 0)
+    while queue.remaining > 0 {
+        var limit = timeoutMillis
+        if timeoutMillis > 0 {
+            let elapsed = networkClock()? - started
+            if elapsed >= timeoutMillis { return .Ok(nil) }
+            limit = timeoutMillis - elapsed
+        }
+        let waited = nativeReadQueueWait(port: queue.native, timeoutMillis: limit, event: &event)
+        if waited == 0 { return .Ok(nil) }
+        if waited < 0 {
+            if !nativeTcpInterrupted(status: waited) { return .Err(failed(status: waited)) }
+            if timeoutMillis == 0 { return .Ok(nil) }
+            continue
+        }
+        precondition(condition: event.index >= 0 && event.index < queue.connections.count &&
+            queue.connections[event.index].handle >= 0, message: "invalid TCP read queue event")
+        if nativeReadQueueCancelled(status: event.status) {
+            let armed = nativeReadQueueArm(port: queue.native, handle: queue.connections[event.index].handle,
+                index: event.index)
+            if armed < 0 { return .Err(failed(status: armed)) }
+            continue
+        }
+        &queue.current = event.index
+        &queue.probeStatus = event.status
+        &queue.readStatus = 1
+        return .Ok(.Some(event.index))
+    }
+    return .Ok(nil)
+}
+
+public func tcpReadQueueWait(queue: inout TcpReadQueue, timeoutMillis: Int): Result<Int?, NetworkError> {
+    if !validTimeout(timeoutMillis: timeoutMillis) { return .Err(.InvalidInput(networkInvalidCode())) }
+    match queue.failure {
+        .Some(error) => { return .Err(error) },
+        .None => { },
+    }
+    let waited = waitReadQueue(queue: &queue, timeoutMillis: timeoutMillis)
+    match waited {
+        .Err(error) => {
+            shutdownReadQueue(queue: &queue)
+            &queue.failure = .Some(error)
+        },
+        .Ok(_) => { },
+    }
+    return waited
+}
+
+private func readQueueSelection(queue: TcpReadQueue): Result<Int, NetworkError> {
+    match queue.failure {
+        .Some(error) => { return .Err(error) },
+        .None => { },
+    }
+    if queue.current < 0 { return .Err(.InvalidInput(networkInvalidCode())) }
+    return .Ok(queue.current)
+}
+
+public func tcpReadQueueReceive(queue: inout TcpReadQueue, maximumBytes: Int): Result<String?, NetworkError> {
+    if maximumBytes < 1 || maximumBytes > maximumReceiveBytes { return .Err(.InvalidInput(networkInvalidCode())) }
+    let index = readQueueSelection(queue: queue)?
+    if queue.readStatus < 0 { return .Err(failed(status: queue.readStatus)) }
+    if queue.readStatus == 0 { return .Ok(.Some("")) }
+
+    var buffer = zeroBuffer(count: maximumBytes)
+    let received = nativeTcpReceive(handle: queue.connections[index].handle, buffer: &buffer, count: maximumBytes)
+    if received > 0 { return .Ok(.Some(stringFromBytes(bytes: buffer, count: received))) }
+    if nativeTcpInterrupted(status: received) { return .Err(failed(status: received)) }
+    if queue.probeStatus < 0 {
+        &queue.readStatus = queue.probeStatus
+    } else if received < 0 && !nativeTcpWouldBlock(status: received) {
+        &queue.readStatus = received
+    } else if received == 0 {
+        &queue.readStatus = 0
+    } else {
+        return .Ok(nil)
+    }
+    if queue.readStatus < 0 { return .Err(failed(status: queue.readStatus)) }
+    return .Ok(.Some(""))
+}
+
+public func tcpReadQueueSendWithin(queue: inout TcpReadQueue, contents: String,
+    timeoutMillis: Int): Result<Void, NetworkError> {
+    if timeoutMillis < 0 || !validTimeout(timeoutMillis: timeoutMillis) {
+        return .Err(.InvalidInput(networkInvalidCode()))
+    }
+    let index = readQueueSelection(queue: queue)?
+    if contents.count == 0 { return .Ok(()) }
+    let started = if timeoutMillis == 0 { 0 } else { networkClock()? }
+    return sendNonblocking(handle: queue.connections[index].handle, contents: contents, started: started,
+        timeoutMillis: timeoutMillis)
+}
+
+public func tcpReadQueueCloseCurrent(queue: inout TcpReadQueue): Result<Void, NetworkError> {
+    let index = readQueueSelection(queue: queue)?
+    &queue.current = -1
+    let status = closeReadQueueSlot(queue: &queue, index: index)
+    if status < 0 { return .Err(failed(status: status)) }
+    return .Ok(())
+}
+
+public func tcpReceive(connection: TcpConnection, maximumBytes: Int,
+    timeoutMillis: Int): Result<String, NetworkError> {
+    if connection.handle < 0 || maximumBytes < 1 || maximumBytes > maximumReceiveBytes ||
+        !validTimeout(timeoutMillis: timeoutMillis) {
+        return .Err(.InvalidInput(networkInvalidCode()))
+    }
+    return receiveWithin(handle: connection.handle, maximumBytes: maximumBytes, timeoutMillis: timeoutMillis)
+}
+
+@platform(windows, linux)
+private func receiveWithin(handle: Int, maximumBytes: Int, timeoutMillis: Int): Result<String, NetworkError> {
+    let problem = waitFailure(handle: handle, timeoutMillis: timeoutMillis)
     match problem {
         .Some(error) => { return .Err(error) },
         .None => { },
     }
     var buffer = zeroBuffer(count: maximumBytes)
-    let received = nativeTcpReceive(handle: connection.handle, buffer: &buffer, count: maximumBytes)
+    let received = nativeTcpReceive(handle: handle, buffer: &buffer, count: maximumBytes)
+    if received < 0 { return .Err(failed(status: received)) }
+    return .Ok(stringFromBytes(bytes: buffer, count: received))
+}
+
+@platform(macos)
+private func receiveWithin(handle: Int, maximumBytes: Int, timeoutMillis: Int): Result<String, NetworkError> {
+    var buffer = zeroBuffer(count: maximumBytes)
+    if timeoutMillis < 0 {
+        let received = nativeTcpReceive(handle: handle, buffer: &buffer, count: maximumBytes)
+        if received < 0 { return .Err(failed(status: received)) }
+        return .Ok(stringFromBytes(bytes: buffer, count: received))
+    }
+    let started = if timeoutMillis > 0 { networkClock()? } else { 0 }
+    var received = nativeTcpReceiveNonblocking(handle: handle, buffer: &buffer, count: maximumBytes)
+    while nativeTcpWouldBlock(status: received) {
+        waitAfterWouldBlock(handle: handle, started: started, timeoutMillis: timeoutMillis)?
+        received = nativeTcpReceiveNonblocking(handle: handle, buffer: &buffer, count: maximumBytes)
+    }
     if received < 0 { return .Err(failed(status: received)) }
     return .Ok(stringFromBytes(bytes: buffer, count: received))
 }
@@ -180,12 +530,13 @@ private func bytesFrom(bytes: [UInt8], start: Int): [UInt8] {
 }
 
 public func tcpSend(connection: TcpConnection, contents: String): Result<Void, NetworkError> {
+    if connection.handle < 0 { return .Err(.InvalidInput(networkInvalidCode())) }
     if contents.count == 0 { return .Ok(()) }
     var pending = contents.utf8()
     while pending.count > 0 {
         var chunk = pending.count
         if chunk > maximumSendChunk { chunk = maximumSendChunk }
-        let sent = nativeTcpSend(handle: connection.handle, buffer: pending, count: chunk)
+        let sent = nativeTcpSend(handle: connection.handle, buffer: pending, count: chunk, retry: true)
         if sent < 0 { return .Err(failed(status: sent)) }
         // A blocking send that accepts nothing would loop forever; report it.
         if sent == 0 { return .Err(.Other(networkInvalidCode())) }
@@ -195,7 +546,63 @@ public func tcpSend(connection: TcpConnection, contents: String): Result<Void, N
     return .Ok(())
 }
 
+private func sendNonblocking(handle: Int, contents: String, started: Int,
+    timeoutMillis: Int): Result<Void, NetworkError> {
+    var position = 0
+    while position < contents.count {
+        var count = contents.count - position
+        if count > 65536 { count = 65536 }
+        var bytes = zeroBuffer(count: count)
+        var index = 0
+        while index < count {
+            &bytes[index] = contents[position + index]
+            index = index + 1
+        }
+        while true {
+            let _remaining = timeRemaining(started: started, timeoutMillis: timeoutMillis)?
+            let sent = nativeTcpSend(handle: handle, buffer: bytes, count: count, retry: false)
+            if sent > 0 {
+                position = position + sent
+                break
+            }
+            if sent == 0 { return .Err(.Other(networkInvalidCode())) }
+            if !nativeTcpWouldBlock(status: sent) {
+                if timeoutMillis > 0 && nativeTcpInterrupted(status: sent) { continue }
+                return .Err(failed(status: sent))
+            }
+            if timeoutMillis == 0 { return .Err(.TimedOut(networkTimeoutCode())) }
+            let remaining = timeRemaining(started: started, timeoutMillis: timeoutMillis)?
+            let ready = nativeTcpWaitWritable(handle: handle, timeoutMillis: remaining)
+            if ready == 0 { return .Err(.TimedOut(networkTimeoutCode())) }
+            if ready < 0 && !nativeTcpInterrupted(status: ready) { return .Err(failed(status: ready)) }
+        }
+    }
+    return .Ok(())
+}
+
+public func tcpSendWithin(connection: inout TcpConnection, contents: String,
+    timeoutMillis: Int): Result<Void, NetworkError> {
+    if timeoutMillis == -1 { return tcpSend(connection: connection, contents: contents) }
+    if connection.handle < 0 || !validTimeout(timeoutMillis: timeoutMillis) {
+        return .Err(.InvalidInput(networkInvalidCode()))
+    }
+    if contents.count == 0 { return .Ok(()) }
+    let started = if timeoutMillis == 0 { 0 } else { networkClock()? }
+    let handle = connection.handle
+    let mode = nativeTcpSetNonblocking(handle: handle, enabled: true)
+    if mode < 0 { return .Err(failed(status: mode)) }
+    let sent = sendNonblocking(handle: handle, contents: contents, started: started, timeoutMillis: timeoutMillis)
+    let restored = nativeTcpSetNonblocking(handle: handle, enabled: false)
+    if restored < 0 {
+        &connection.handle = -1
+        discard(handle: handle)
+        return .Err(failed(status: restored))
+    }
+    return sent
+}
+
 public func tcpCloseConnection(connection: consuming TcpConnection): Result<Void, NetworkError> {
+    if connection.handle < 0 { return .Ok(()) }
     let status = nativeTcpClose(handle: connection.handle)
     &connection.handle = -1
     if status < 0 { return .Err(failed(status: status)) }

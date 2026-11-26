@@ -1,13 +1,14 @@
+cmake_minimum_required(VERSION 3.20)
+
 # Compiles a Joyeer program and checks what the executable imports
 # (decision 0011): a program that never calls the C library starts at its own entry
 # point and imports only the operating system's functions, so the exact list is known;
 # one that does keeps the C startup and imports far more.
 #
 # Inputs: JOYEER_EXECUTABLE, INPUT_FILE, OUTPUT_FILE, READOBJ (Windows) or NM (Linux),
-# COMPILER_ARGS (list), and
-# one of EXPECTED_IMPORTS (the exact list), ALLOWED_IMPORTS (a superset), FORBIDDEN_IMPORTS
-# (names that must be absent) or
-# MINIMUM_COUNT.
+# COMPILER_ARGS (list), and any of EXPECTED_IMPORTS (the exact list),
+# ALLOWED_IMPORTS (a superset), REQUIRED_IMPORTS, or FORBIDDEN_IMPORTS.
+# STARTUP_OBJDUMP restricts AArch64's abort import to a direct call in _start.
 foreach(variable IN ITEMS JOYEER_EXECUTABLE INPUT_FILE OUTPUT_FILE)
     if(NOT DEFINED ${variable})
         message(FATAL_ERROR "${variable} is required")
@@ -47,6 +48,10 @@ foreach(line IN LISTS lines)
 endforeach()
 list(SORT imports)
 list(LENGTH imports count)
+if(NOT DEFINED EXPECTED_IMPORTS AND NOT DEFINED ALLOWED_IMPORTS AND
+   NOT DEFINED REQUIRED_IMPORTS AND NOT DEFINED FORBIDDEN_IMPORTS)
+    message(FATAL_ERROR "At least one import expectation is required")
+endif()
 if(DEFINED EXPECTED_IMPORTS)
     list(SORT EXPECTED_IMPORTS)
     if(NOT "${imports}" STREQUAL "${EXPECTED_IMPORTS}")
@@ -58,17 +63,45 @@ elseif(DEFINED ALLOWED_IMPORTS)
             message(FATAL_ERROR "The program needs ${name}, which is not approved:\n  ${imports}\nAllowed: ${ALLOWED_IMPORTS}")
         endif()
     endforeach()
-elseif(DEFINED FORBIDDEN_IMPORTS)
-    foreach(name IN LISTS FORBIDDEN_IMPORTS)
-        if(name IN_LIST imports)
-            message(FATAL_ERROR "The program imports ${name}, which only the C runtime needs:\n  ${imports}")
+endif()
+foreach(name IN LISTS REQUIRED_IMPORTS)
+    if(NOT name IN_LIST imports)
+        message(FATAL_ERROR "The program does not import required ${name}:\n  ${imports}")
+    endif()
+endforeach()
+foreach(name IN LISTS FORBIDDEN_IMPORTS)
+    if(name IN_LIST imports)
+        message(FATAL_ERROR "The program unexpectedly imports ${name}:\n  ${imports}")
+    endif()
+endforeach()
+if(DEFINED STARTUP_OBJDUMP AND "abort" IN_LIST imports)
+    execute_process(COMMAND "${STARTUP_OBJDUMP}" --disassemble --dynamic-reloc "${OUTPUT_FILE}"
+        RESULT_VARIABLE status OUTPUT_VARIABLE objdump_text ERROR_VARIABLE error)
+    if(NOT status EQUAL 0)
+        message(FATAL_ERROR "${STARTUP_OBJDUMP} failed: ${error}")
+    endif()
+    string(REPLACE "\n" ";" objdump_lines "${objdump_text}")
+    set(in_start FALSE)
+    set(startup_calls 0)
+    foreach(line IN LISTS objdump_lines)
+        if(line MATCHES "^[0-9a-fA-F]+[ \t]+(R_AARCH64_[A-Z0-9_]+)[ \t]+abort([@+ \t]|$)")
+            if(NOT CMAKE_MATCH_1 STREQUAL "R_AARCH64_JUMP_SLOT")
+                message(FATAL_ERROR "abort reference outside _start: ${line}")
+            endif()
+        elseif(line MATCHES "^[0-9a-fA-F]+ <([^>]+)>:")
+            set(in_start FALSE)
+            if(CMAKE_MATCH_1 STREQUAL "_start")
+                set(in_start TRUE)
+            endif()
+        elseif(line MATCHES "<abort@plt>")
+            if(NOT in_start OR NOT line MATCHES "[ \t]bl[ \t]")
+                message(FATAL_ERROR "abort reference outside _start: ${line}")
+            endif()
+            math(EXPR startup_calls "${startup_calls} + 1")
         endif()
     endforeach()
-elseif(DEFINED MINIMUM_COUNT)
-    if(count LESS MINIMUM_COUNT)
-        message(FATAL_ERROR "The program imports ${count} functions (${imports}); expected at least ${MINIMUM_COUNT}")
+    if(NOT startup_calls EQUAL 1)
+        message(FATAL_ERROR "Expected one direct abort call from _start; found ${startup_calls}")
     endif()
-else()
-    message(FATAL_ERROR "EXPECTED_IMPORTS, FORBIDDEN_IMPORTS or MINIMUM_COUNT is required")
 endif()
 message(STATUS "program imports (${count}): ${imports}")

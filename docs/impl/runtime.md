@@ -4,9 +4,9 @@ The runtime is declared in `lib/Runtime/include/joyeer/runtime.h`. Almost all of
 (`lib/Runtime/core/`): UTF-8 validation, string equality and ordering, owned strings,
 arrays, dictionaries, the native buffer helpers, `print` for every scalar,
 `joyeer_panic`, the allocator with its leak counter, and the program entry. The
-build-tree compiler compiles it into four objects in the same archive (the core; the entry
-logic with the Windows `joyeer_start`; the C `main`/`wmain` wrappers; and the thread, mutex and
-condition functions, [decision 0016](../decisions/0016-thread-primitives.md)); there is no C source left in the runtime ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
+build-tree compiler compiles the core, entry logic, C `main`/`wmain` wrappers, thread primitives,
+and channels as separate archive members. Windows ARM64 adds a private memory helper member.
+All runtime members are written in Joyeer ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
 `JoyeerRuntime` static archive is linked into generated programs;
 LLVM and LLD belong to the [compiler backend](backend.md), not the
 program runtime. See [building](../building.md) for platform prerequisites.
@@ -71,9 +71,8 @@ thread, 64 for a mutex or condition, all zeroed), so the functions never allocat
 shape, with an explicit 8 MiB stack on every platform, and at most 256 threads may be unjoined at
 once (`JOYEER_THREAD_LIMIT` beyond that). The rest of the runtime is thread safe from P4 on (next section).
 
-On Linux, macOS and the Windows own-entry link the object is linked only into a program that
-references it. The Windows C-startup link (`/WHOLEARCHIVE`) loads every
-member, so those programs also import the thread functions. The tests are
+The thread object is linked only into a program that references it. On Windows, forcing the
+bundled C startup wrapper does not pull in the thread or channel objects. The tests are
 `tests/unittests/runtime/thread_test.cpp` (start and join, many threads, visibility after join,
 mutual exclusion, wait and wake, the thread limit, null arguments, and `static_assert`s that the
 operating systems' lock types fit the storage) and the `RuntimeThreadsObjectSymbols` gate.
@@ -136,7 +135,11 @@ Windows converts UTF-16 arguments to UTF-8, rejecting invalid
 encoding. A Windows program that calls no C library starts at `joyeer_start`, which splits
 `GetCommandLineW` by the C runtime's rules and never initialises the C runtime; one that does,
 or that links a native library, keeps the C startup and `wmain` (the linker reads the program
-object's undefined symbols to decide, [decision 0011](../decisions/0011-runtime-without-the-c-library.md)). The runtime owns the array until the Joyeer function has returned
+object's undefined symbols to decide, [decision 0011](../decisions/0011-runtime-without-the-c-library.md)).
+On Windows ARM64 the own-entry link resolves `memcpy`, `memmove`, `memset`, and `memcmp` through
+private Joyeer wrappers over kernel32. The static ARM64 VCRuntime versions can depend on CRT
+initialization; the C-startup link still uses those standard CRT routines.
+The runtime owns the array until the Joyeer function has returned
 and cleaned its local values and temporaries. It then destroys the argument
 storage and checks the runtime-managed allocation balance. Leaks fail the
 process; otherwise an exit status in `0..255` is returned. An out-of-range
@@ -439,6 +442,10 @@ address plus one. Everything, including the "last closer frees the block" decisi
 closing the receiver moves queued values into a private buffer while holding it and destroys them after
 unlocking. A wait with no unjoined thread (static slot 11
 zero) traps as `channel deadlock`. The tests are `tests/unittests/runtime/channel_test.cpp`.
+`waitForChannel` registers an optional waiter in each channel block only if none is ready. A send
+or sender close latches the waiter's condition predicate while holding the channel lock; the waiter
+never holds its mutex while taking a channel lock. It detaches every registration before releasing
+its storage.
 
 ## Tasks
 
@@ -453,3 +460,12 @@ the private task-block owner's `deinit` traps (`task dropped without join`) if o
 live. `join` consumes that owner field and clears its address after freeing the block. Linux links
 `-lpthread` after the runtime archive group when emitted source functions reference the thread/channel
 ABI, including destruction paths. No concurrency type kind, opcode, or backend task thunk remains.
+
+## Concurrency validation
+
+The [final platform validator](../decisions/0023-library-concurrency.md#final-platform-validation)
+covered tasks, channels, thread safety, and idle-worker dispatch on Windows
+ARM64, macOS ARM64, and WSL2 AArch64. The new Linux run also exercised bounded
+connect and send, capped poll, and the one-shot read queue through the real
+`System` library. Its [glibc 2.31 link check](../decisions/0016-thread-primitives.md#gating-and-the-link)
+verified that task and channel programs need `-lpthread` on older glibc.

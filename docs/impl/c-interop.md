@@ -302,6 +302,13 @@ validation is recorded separately for Windows ARM64.
 
 #### macOS ARM64
 
+At `5c21924e`, native Debug and Release with LLVM/LLD 22.1.8 and macOS SDK
+and deployment target 26.5 each passed unfiltered CTest 2230/2230 and
+`fern test` 7/7 without reruns. Both included all **158 `c-interop`-labeled
+tests**: the static and shared C scalar round trips, target-derived C types,
+mixed register and stack arguments, and signature and target rejection.
+Separate configure probes rejected Intel and universal macOS builds.
+
 On 2026-11-01, native macOS ARM64 `main` based on `3a09bb7` with its macOS
 fixes passed all **55 `c-interop`-labeled tests in both Debug and Release**.
 The toolchain was AppleClang 21.0.0 (clang-2100.4.1.1), LLVM/LLD 22.1.8, and
@@ -373,6 +380,6 @@ Windows SDK 10.0.28000.0, and LLVM/LLD 22.1.8:
   x86-64 and ARM64 on Windows, Linux, and macOS. This is ABI inspection,
   not native execution on those other hosts.
 
-Complete scalar native acceptance on Windows x64, Linux, and macOS remains
-open until measured on those targets. These gates do not establish native
+Complete scalar native acceptance on Windows x64 and Linux remains open
+until measured on those targets. These gates do not establish native
 memory safety, general user FFI, or production runtime migration.

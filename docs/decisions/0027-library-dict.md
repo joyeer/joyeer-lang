@@ -12,7 +12,7 @@
 - Implementation: [library collection switch](https://github.com/joyeer/joyeer-lang/pull/31).
   Builds on [0025](0025-library-collection-capabilities.md)
   and [0026](0026-library-array.md) and **amends 0025's dictionary paragraph** (Decision 3); relates to
-  [plan 0012](../plan/0012-equatable.md).
+  [0031 (`Equatable`)](0031-equatable.md).
 
 ## Context
 

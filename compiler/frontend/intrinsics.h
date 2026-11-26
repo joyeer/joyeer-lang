@@ -7,10 +7,9 @@
 #include <string_view>
 #include <vector>
 
-// Runtime-only memory operations (spec §19.4.5). They are ordinary `@c_extern`
-// imports whose symbol is reserved: the backend lowers each to inline LLVM
-// instead of a call, so authorization, signature checking, and IR transport
-// are those of a native binding. An address is an `Int`.
+// Runtime-only operations (spec §19.4.5). A reserved `@c_extern` symbol is
+// lowered by the backend instead of being linked as written. Authorization,
+// signature checking, and IR transport are those of a native binding.
 namespace joyeer::intrinsic {
 
 inline constexpr std::string_view prefix = "joyeer_intrinsic_";
@@ -46,6 +45,7 @@ enum class Operation {
     floatBits,
     systemCall,
     targetArchitecture,
+    darwinFcntlInt,
     stringData,
     stringCount,
 };
@@ -62,7 +62,7 @@ struct Descriptor {
 
 using typing::TypeKind;
 
-inline constexpr std::array<Descriptor, 27> table {{
+inline constexpr std::array<Descriptor, 28> table {{
     { "joyeer_intrinsic_address_of", Operation::addressOf, TypeKind::integer,
       { TypeKind::structure, TypeKind::error }, 1, true },
     { "joyeer_intrinsic_load_u8", Operation::load8, TypeKind::uint8,
@@ -136,6 +136,8 @@ inline constexpr std::array<Descriptor, 27> table {{
     // can pick the system call numbers of the architecture it was built for.
     { "joyeer_intrinsic_target_architecture", Operation::targetArchitecture, TypeKind::integer,
       { TypeKind::error, TypeKind::error, TypeKind::error }, 0, false },
+    { "joyeer_intrinsic_darwin_fcntl_int", Operation::darwinFcntlInt, TypeKind::int32,
+      { TypeKind::int32, TypeKind::int32, TypeKind::int32 }, 3, false },
     // The two halves of a borrowed String (decision 0028 stage 3): the address of its bytes and its byte count, as a
     // C binding already passes them. The collections prelude's String roles build on these; no call is emitted.
     { "joyeer_intrinsic_string_data", Operation::stringData, TypeKind::integer,

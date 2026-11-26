@@ -1,8 +1,7 @@
 # 0016: Thread primitives
 
 - Status: accepted (2026-11-09), implemented, amended the same day after a backend review that ran the
-  mechanism on Windows x64 and Linux x86-64. Phase P3 of the
-  [concurrency plan](../plan/0009-concurrency.md). It decides the runtime's lowest layer for threads;
+  mechanism on Windows x64 and Linux x86-64. This is the runtime's lowest layer for threads;
   there is no language surface here. The language-level tasks and channels are
   [0013](0013-concurrency-model.md), built on this in P5 and P6.
 - Spec: amends [§19.6](../../specs/19-c-interop.md) (a thread the runtime created entering Joyeer
@@ -24,10 +23,9 @@ Facts, checked against the code:
   C `int`, `DWORD` and `BOOL` results are `Int32` or `UInt32`, widened with `as Int`, because the
   upper half of the register is undefined), and `@c_export` functions whose address `symbol_address`
   takes in the same unit.
-- **Archive members are not always linked lazily.** Linux, macOS, and the Windows own-entry link
-  omit unreferenced members. [0026](0026-library-array.md), amendment A7, removed the macOS
-  `-force_load`. The Windows C-startup link still uses `/WHOLEARCHIVE`, which loads every member,
-  so a thread object would add its imports to those programs. See "Gating".
+- **Archive members are now linked lazily.** [0026](0026-library-array.md), amendment A7, removed the
+  macOS `-force_load`. The Windows C-startup link now roots only the C wrapper rather than using
+  `/WHOLEARCHIVE`; see [backend implementation](../impl/backend.md).
 - Static slots are 64 eight-byte, zero-initialised words shared by the program. Used today: 0
   counter, 1 allocator, 2 stream state, 3 to 10 stream scratch, 16 the process environment block,
   32 to 33 string scratch, 34 to 36 the argument handle, 37 the byte buffer. The slot table is
@@ -75,8 +73,8 @@ All Windows names are in `kernel32`, which the link line already names. Not `Wai
 (`Synchronization.lib`, outside the link line and the import gate). On POSIX the program already
 links libc for its startup. A raw `clone`/`futex` path is rejected for v1: the child would get a
 TLS block without libc's layout and crash on the first stack-protector load, `errno` access or
-support-function call. AArch64 uses the same `pthread` calls and stays untested until it runs
-natively; macOS is written and gated until it runs on a Mac.
+support-function call. AArch64 uses the same `pthread` calls, verified natively on
+[Linux and macOS](0023-library-concurrency.md#final-platform-validation).
 
 **Stack size is explicit and the same everywhere: 8 MiB**, reserved lazily (Windows with the
 reservation flag, POSIX through `pthread_attr_setstacksize`). Defaults differ by up to a factor of
@@ -121,18 +119,23 @@ each have one), with the yield decision, and its slots come from the core range 
 - On **Linux and the Windows own-entry link**, `runtime-threads` is linked only into a program that
   references it, so hello-world and `System` programs get no thread symbol; the existing
   `RuntimeSystemProgramNeedsOnlyTheCStartup` tests guard this.
-- On the **Windows C-startup link** (`/WHOLEARCHIVE`) and on **macOS** (`-force_load`) every member
+- Originally, on the **Windows C-startup link** (`/WHOLEARCHIVE`) and on **macOS** (`-force_load`) every member
   is loaded, so those programs import the thread functions even if they never use them. That is
   harmless (the functions are in `kernel32` or libSystem) but it breaks "the imports never reach
-  those gates". v1 accepts it and says so; the Windows fix, a plain archive plus `/INCLUDE:wmain`,
-  is deferred with a regression test. The gate tests that use whole-archive check only a minimum
-  import count, so none fails.
+  those gates". The original gates checked a minimum import count, so they did not catch the extra
+  imports. The current Windows linker roots the bundled `wmain` archive member through a dedicated
+  symbol so another `wmain` cannot satisfy the root. The `-O0` import gate checks that CRT startup
+  remains and task/channel imports stay out of a program that does not use them.
 - A new gate test allows the thread object exactly its per-platform imports, plus `joyeer_panic`
   (a bounds trap on a static slot) and defines `joyeer_static_slots`.
-- `-lpthread`: a Joyeer program linked with a `pthread_create@GLIBC_2.34` reference links and runs
-  without it on glibc 2.43; older glibc, musl and macOS are unverified. P5 adds a `usesThreads`
-  link option and emits `-lpthread` after the archive group only then. Until then the documented
-  minimum is glibc 2.34.
+- Linux adds `-lpthread` after the archive group only for programs that
+  reference task or channel runtime symbols. glibc 2.34 and later provide
+  pthread in libc. On 2026-11-26 the embedded ELF backend linked
+  `task_basic` and `channel_basic` at `-O0` and `-O2` against a native
+  AArch64 Ubuntu glibc 2.31 (`2.31-0ubuntu9.18`) sysroot. All four outputs
+  needed `libpthread.so.0` and ran with the isolated 2.31 loader; omitting
+  `-lpthread` produced unresolved pthread references. This verifies the
+  generated programs and link argument, not running the compiler on glibc 2.31.
 
 ### The spec text (§19.6)
 

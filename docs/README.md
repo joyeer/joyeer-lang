@@ -21,7 +21,7 @@ Explanations and plans do not add language rules or implementation guarantees.
 | Use the optional miniz-backed ZIP library | [Compression](impl/compression.md) |
 | Disassemble Java classes and JARs with an AI agent | [moss](../tools/moss/README.md) and its [skill](../tools/moss/skills/moss/SKILL.md) |
 | Track runtime work and see the public library | [Runtime in Joyeer](plan/0008-runtime-in-joyeer.md) and [Standard modules](../specs/12-modules.md#125-standard-modules) |
-| Plan how the compiler finds the standard library | [Toolchain library resolution](plan/0006-toolchain-libraries.md) |
+| See how the compiler finds the standard library | [Compiler CLI](impl/backend.md#2-cli) |
 | See a larger program (a Markdown web server over the provisional [TCP API](../specs/18-host.md#186-tcp-networking)) | [example/](../example/README.md) |
 | Build from source | [building.md](building.md) |
 | Install a local Debug compiler | [Debug installation](building.md#local-debug-installation) |
@@ -75,10 +75,8 @@ iteration, a progress log, and deletion once every item is done. Start from the
 | [0002](plan/0002-c-interop.md) | C interoperation: remaining scalar ABI implementation, cross-platform acceptance, and separate memory/alias proposals |
 | [0004](plan/0004-native-link-inputs.md) | Linking native libraries by logical name and search path (proposed) |
 | [0005](plan/0005-test-audit.md) | Test coverage gaps: fuzzing, sanitizers, CI, ownership generators, spec traceability |
-| [0006](plan/0006-toolchain-libraries.md) | How the compiler finds standard modules (implemented) and what is left: the runtime in `lib/`, `--sysroot` in fern, precompiled modules |
+| [0006](plan/0006-toolchain-libraries.md) | Compiler-relative standard modules and runtime packaging; Windows ARM64 and Linux AArch64 validation remain |
 | [0008](plan/0008-runtime-in-joyeer.md) | The plan to write the whole runtime in Joyeer: definition of done, the core dialect, open design decisions, capabilities, phases and acceptance gates |
-| [0009](plan/0009-concurrency.md) | What is left of the concurrency work (tasks, channels and the worker-pool server are done): gates not yet run, compiler gaps, deferred features |
-| [0012](plan/0012-equatable.md) | `==` and `!=` through the `Equatable` protocol: builtin, derived and generic equality, `nil` comparison |
 
 ## Decisions
 
@@ -99,9 +97,9 @@ in the spec.
 | [0009](decisions/0009-runtime-core-capabilities.md) | What the Joyeer runtime core needs from the compiler: static storage, indirect calls, core units, the entry point, data symbols, panic messages |
 | [0010](decisions/0010-floating-point-printing.md) | `Float` and `Double` printing in Joyeer: exact `%.17g` / `%.9g` bytes, big-integer digit generation, `nan` |
 | [0011](decisions/0011-runtime-without-the-c-library.md) | The runtime without the C library (Tier 2): size-class allocator over the system, owned output and exit, own entry |
-| [0012](decisions/0012-tcp-networking.md) | Blocking IPv4 TCP in `System` (provisional, Windows and Linux implemented): opaque listener and connection handles, bounded receive, no concurrency yet |
+| [0012](decisions/0012-tcp-networking.md) | Provisional IPv4 TCP in `System`: opaque listener and connection owners, bounded receive, and platform backends |
 | [0013](decisions/0013-concurrency-model.md) | Concurrency (accepted direction): share-nothing threads, ownership moved through tasks and bounded channels, no shared mutable state; timeouts and readiness polling first |
-| [0014](decisions/0014-network-timeouts.md) | `timeoutMillis` on `tcpAccept` and `tcpReceive` (accepted, implemented on Windows and Linux): a bounded wait per call, no send or connect timeout, no total deadline |
+| [0014](decisions/0014-network-timeouts.md) | TCP receive and accept timeouts, bounded send and connect, and an HTTP request-head deadline |
 | [0015](decisions/0015-noncopyable-and-linear-types.md) | Noncopyable and linear types and handles that close (accepted, implemented): copy and consume checks, a "must be consumed" analysis, consuming a pattern binding; the open fork is `deinit` versus a restricted resource annotation |
 | [0016](decisions/0016-thread-primitives.md) | Thread, mutex and condition primitives in the runtime (accepted, implemented): runtime-owned trampoline, caller-supplied storage, 8 MiB stacks, at most 256 unjoined threads |
 | [0017](decisions/0017-runtime-thread-safety.md) | Runtime thread safety (accepted, implemented): locks taken only while a second thread exists, OS-assisted sleeping locks, atomic `print`, first-panic-wins |
@@ -110,7 +108,7 @@ in the spec.
 | [0020](decisions/0020-function-values.md) | Function values: non-capturing references to top-level functions, `(effect T, ...): R` types without labels, positional calls, parenthesized non-identifier callees, one indirect call |
 | [0021](decisions/0021-protocols-and-generic-functions.md) | Protocols and monomorphized generic functions |
 | [0022](decisions/0022-generic-types-and-layout-intrinsics.md) | Generic structs/enums and runtime-only typed layout operations |
-| [0023](decisions/0023-library-concurrency.md) | Concurrency as a source prelude, with closed compatibility/transfer metadata and verified x86_64 and macOS ARM64 acceptance |
+| [0023](decisions/0023-library-concurrency.md) | Concurrency as a source prelude, with closed compatibility/transfer metadata and native platform validation |
 | [0024](decisions/0024-library-optional-and-result.md) | `Optional` and `Result` as role-bound library enums |
 | [0025](decisions/0025-library-collection-capabilities.md) | Borrowed element access and conditional ownership for library collections |
 | [0026](decisions/0026-library-array.md) | `Array` as a library struct |
@@ -118,7 +116,8 @@ in the spec.
 | [0028](decisions/0028-ir-opcode-set.md) | A smaller IR opcode set described by one table (accepted, in implementation) |
 | [0029](decisions/0029-contracts-and-owned-host-resources.md) | Prelude contracts, host queries and clocks, and noncopyable native resource owners |
 | [0030](decisions/0030-literal-patterns-are-not-promoted.md) | Literal patterns match only their own type; no implicit Optional promotion (accepted, implemented) |
-| [0031](decisions/0031-equatable.md) | Equality through a compiler-known `Equatable` protocol: opt-in derived conformances, `== nil` presence test (accepted, implemented; acceptance gates open) |
+| [0031](decisions/0031-equatable.md) | Equality through a compiler-known `Equatable` protocol: opt-in derived conformances and `== nil` presence test (implemented and validated) |
+| [0032](decisions/0032-tcp-read-queue.md) | Fixed-membership TCP read readiness over owned connections (provisional) |
 
 ## Conventions
 

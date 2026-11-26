@@ -1,0 +1,66 @@
+// Spec 21.9: readiness observes the selected queue but does not dequeue it.
+func publish(sender: consuming ChannelSender<Int>) {
+    let _queued = sender.send(value: consume 7)
+}
+
+struct Mailbox {
+    var jobs: ChannelReceiver<Void>
+    var idle: ChannelSender<Void>
+}
+
+func serveUntilClosed(mailbox: consuming Mailbox): Int {
+    var processed = 0
+    while true {
+        match mailbox.idle.send(value: consume ()) {
+            .Ok(_) => { },
+            .Err(_) => { return processed },
+        }
+        match mailbox.jobs.receive() {
+            .Ok(_) => { processed = processed + 1 },
+            .Err(_) => { return processed },
+        }
+    }
+    return processed
+}
+
+func shutdownAfterOneJob(): Int {
+    var jobs: ChannelSender<Void>
+    var inbox: ChannelReceiver<Void>
+    channel(capacity: 1, sender: &jobs, receiver: &inbox)
+    var ready: ChannelSender<Void>
+    var receiver: ChannelReceiver<Void>
+    channel(capacity: 1, sender: &ready, receiver: &receiver)
+    var availability = [consume receiver]
+    let worker = spawn(function: serveUntilClosed,
+        input: consume Mailbox(jobs: consume inbox, idle: consume ready))
+    let first = waitForChannel(receivers: availability)
+    let _token = availability[first].receive()
+    let _assigned = jobs.send(value: consume ())
+    let _readyAgain = waitForChannel(receivers: availability)
+    consume jobs.close()
+    match &availability.removeLast() {
+        .Some(end) => { consume end.close() },
+        .None => { },
+    }
+    return consume worker.join()
+}
+
+func main() {
+    var quiet: ChannelSender<Int>
+    var first: ChannelReceiver<Int>
+    channel(capacity: 1, sender: &quiet, receiver: &first)
+    var active: ChannelSender<Int>
+    var second: ChannelReceiver<Int>
+    channel(capacity: 1, sender: &active, receiver: &second)
+    let receivers = [consume first, consume second]
+    let worker = spawn(function: publish, input: consume active)
+    let readable = waitForChannel(receivers: receivers)
+    print(value: readable)
+    print(value: match receivers[readable].receive() { .Ok(value) => value, .Err(_) => 0 })
+    consume worker.join()
+    let closed = waitForChannel(receivers: receivers)
+    print(value: closed)
+    print(value: match receivers[closed].receive() { .Ok(_) => false, .Err(_) => true })
+    consume quiet.close()
+    print(value: shutdownAfterOneJob())
+}

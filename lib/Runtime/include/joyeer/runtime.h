@@ -225,8 +225,11 @@ int64_t joyeer_channel_send_abi(void* sender, const void* value);
 /* Moves the oldest value into `value` and returns 1, or returns 0 when the queue is empty and the
  * sender is closed. Waits while the queue is empty and the sender is open. */
 int64_t joyeer_channel_receive_abi(void* receiver, void* value);
+/* Borrows an unchanged array of 1..64 distinct live receivers owned by this thread.
+ * Returns a zero-based index when a value is queued or the sender has closed; it does not dequeue. */
+int64_t joyeer_channel_wait_ready_abi(void* const* receivers, int64_t count);
 /* Closes an end. The second end to close frees the channel; closing the receiver destroys the
- * queued values, under the channel's lock. */
+ * queued values after removing them under the lock and releasing it. */
 void joyeer_channel_close_abi(void* end);
 
 #ifdef __cplusplus

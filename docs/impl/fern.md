@@ -318,3 +318,23 @@ invalidating the stamp did not recompile them.
 and type-checked `System.isWindows()` for Windows, Linux, and macOS targets.
 `SystemTests` exercised native path selection on macOS ARM64. The migration
 was not run natively on Windows or Linux in this validation.
+
+### macOS ARM64 toolchain validation
+
+At `5c21924e` with LLVM/LLD 22.1.8 and macOS SDK and deployment target 26.5,
+Debug and Release each passed unfiltered CTest 2230/2230 and the root
+`fern test` 7/7 without reruns. This included every fern-labeled CTest gate
+(16/16), including `Fern.Bootstrap`, `Fern.SelfBuild`, and `Fern.Installed`.
+The regular Debug build produced `fern.dSYM`.
+
+The Debug installer and Release CMake components were staged into temporary
+prefixes. After relocation, fern ran and the relocated compiler compiled and
+ran `hello`. The installed `lib/` contained the runtime archive, the standard
+modules, and their index. The backend still loaded LLD, Z3, and zstd from
+Homebrew, so these checks do not establish standalone
+[release packaging](../building.md#release-staging).
+
+With `JOYEER_DSYMUTIL_EXECUTABLE` empty, `Fern.Bootstrap` regenerated and ran
+fern without a dSYM. `Fern.SelfBuild`, `Fern.Installed`, and the default Debug
+build of `moss.app` still ask for `-gfull` during a subsequent fern build and
+fail with `linker.missing-tool`.

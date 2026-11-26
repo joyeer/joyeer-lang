@@ -542,6 +542,10 @@ introduced. A call that cannot return, and a trap, are not exits.
   reinitialises it. An array element of linear type cannot be overwritten.
 - **Commit.** A `consume` in an argument or aggregate list takes effect when the call or
   construction commits, so a later operand that exits (`?`, `return`) leaves the value live.
+  In an array literal or enum construction, a move from a named linear place reserves that
+  place until the last operand succeeds. Later operands must not access overlapping storage.
+  An exit that abandons the construction cancels the reservation without consuming the place;
+  the usual rule for ending any linear binding whose scope is exited still applies.
 - **Temporaries.** An owned linear temporary must be moved at once: as a binding initialiser, the
   right-hand side of an assignment to an ended place, a `return` value, a consuming argument, an
   aggregate or enum component, an `append`, or a `match` scrutinee. Any other use, including a
@@ -551,8 +555,9 @@ introduced. A call that cannot return, and a trap, are not exits.
 
 A function that only borrows, or takes `inout`, a linear value has no owning binding to end, so
 the rule does not apply to it. `defer` remains reserved. **Implementation status:** the exits,
-overwrite, statement-result, borrowed-temporary and match rules are implemented; the commit
-order of consuming arguments and `?`/`!`/`??`/`?.` on a linear operand are not yet.
+overwrite, statement-result, borrowed-temporary and match rules are implemented, as is committing
+named moves in array literals and enum payloads. The commit order of ordinary call arguments
+and struct initializers, and `?`/`!`/`??`/`?.` on a linear operand, are not yet implemented.
 
 ### 4.8 No reference types
 

@@ -1,7 +1,7 @@
 # 0002: C Interoperation
 
-- Status: in progress (updated 2026-11-12); the scalar boundary is implemented, acceptance and memory
-  design remain
+- Status: in progress (updated 2026-11-26); the scalar boundary is implemented and macOS ARM64
+  native acceptance has passed. Other platform acceptance and memory design remain.
 - Decisions: [0005](../decisions/0005-runtime-unsafe-memory.md), [0009](../decisions/0009-runtime-core-capabilities.md)
 - Spec: [§19](../../specs/19-c-interop.md)
 
@@ -55,7 +55,9 @@ unsupported targets and non-scalar signatures.
 - [ ] Windows ARM64.
 - [ ] Linux x86-64.
 - [ ] Linux AArch64.
-- [ ] macOS arm64.
+- [x] macOS ARM64. At `5c21924e`, Debug and Release each passed all 158 `c-interop`-labeled
+  cases within an unfiltered run. See [native evidence](../impl/c-interop.md#macos-arm64)
+  for real static/shared C callers and callees, ABI coverage, and rejection tests.
 
 ### Native memory (design needed, no accepted syntax)
 
@@ -96,4 +98,6 @@ User FFI; public native capabilities without their own proposal.
 
 ## Progress log
 
+- 2026-11-26: Checked off macOS ARM64 scalar acceptance after verifying the native Debug and
+  Release runs at `5c21924e`. No native-memory design items changed.
 - 2026-11-12: converted to the plan template; no items changed.

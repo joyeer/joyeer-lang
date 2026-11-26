@@ -6,9 +6,7 @@ import System
 // request body, no chunked encoding and no TLS.
 
 let maximumHeadBytes: Int = 16384
-// How long one read may wait for the next bytes of a request head. A client that stays
-// silent this long is answered with 408 and dropped, so it cannot hold the server.
-let headTimeoutMillis: Int = 5000
+private let headTimeoutMillis: Int = 5000
 private let receiveChunk: Int = 4096
 
 struct Request {
@@ -20,6 +18,7 @@ enum HeadError {
     Closed,
     TooLarge,
     TimedOut,
+    Clock(HostQueryError),
     Network(NetworkError),
 }
 
@@ -36,19 +35,32 @@ private func findHeadEnd(text: String, from: Int): Int {
     return -1
 }
 
-// Reads from the connection until the end of the request head. The head is
-// bounded by maximumHeadBytes plus one receive, whatever the peer sends.
+private func readHeadClock(): Result<Int, HeadError> {
+    return match monotonicMilliseconds() {
+        .Ok(now) => .Ok(now),
+        .Err(error) => .Err(.Clock(error)),
+    }
+}
+
+// All receives share one deadline. A partial read does not extend it.
 func readRequestHead(connection: TcpConnection): Result<String, HeadError> {
+    let started = readHeadClock()?
     var head = ""
     var scanFrom = 0
     while head.count <= maximumHeadBytes {
-        let received = tcpReceive(connection: connection, maximumBytes: receiveChunk, timeoutMillis: headTimeoutMillis)
+        let elapsed = readHeadClock()? - started
+        if elapsed >= headTimeoutMillis { return .Err(.TimedOut) }
+        let received = tcpReceive(connection: connection, maximumBytes: receiveChunk,
+            timeoutMillis: headTimeoutMillis - elapsed)
         match received {
             .Ok(chunk) => {
                 if chunk.count == 0 { return .Err(.Closed) }
                 head = head + chunk
                 let end = findHeadEnd(text: head, from: scanFrom)
-                if end >= 0 { return .Ok(substring(text: head, start: 0, end: end)) }
+                if end >= 0 {
+                    if readHeadClock()? - started >= headTimeoutMillis { return .Err(.TimedOut) }
+                    return .Ok(substring(text: head, start: 0, end: end))
+                }
                 // A terminator split across two reads starts at most three bytes back.
                 scanFrom = head.count - 3
                 if scanFrom < 0 { scanFrom = 0 }

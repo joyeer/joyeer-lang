@@ -1,0 +1,6 @@
+@c_extern(symbol: "abort")
+func abortProcess(): Never
+
+func main() {
+    abortProcess()
+}

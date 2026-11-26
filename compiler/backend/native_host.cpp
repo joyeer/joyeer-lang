@@ -49,6 +49,10 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
         const llvm::Triple target(llvm::sys::getDefaultTargetTriple());
         return integer(target.getArch() == llvm::Triple::x86_64 ? 1 : target.getArch() == llvm::Triple::aarch64 ? 2 : 0);
     }
+    if (descriptor.operation == Operation::darwinFcntlInt) {
+        // Darwin ARM64 passes fcntl's int vararg on the stack, unlike a fixed third parameter.
+        return builder.CreateCall(declareDarwinFcntl(), arguments, temporary());
+    }
     if (descriptor.operation == Operation::systemCall) {
         // Only the Linux kernel promises a stable system call interface, and only a Linux
         // program can use this (the runtime selects it with `@platform(linux)`), but the IR is
@@ -195,6 +199,7 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
         case Operation::floatBits:
         case Operation::systemCall:
         case Operation::targetArchitecture:
+        case Operation::darwinFcntlInt:
         case Operation::stringData:
         case Operation::stringCount:
             break;

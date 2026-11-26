@@ -66,6 +66,11 @@ type is noncopyable (§4.1.1) cannot be copied, so a pattern that binds one
 give it up: an owned temporary, or `consume` of an owning local or consuming
 parameter (§4.3).
 
+When the scrutinee already owns a temporary value, a copyable enum payload
+may also be transferred to an identifier binding without cloning (§4.1,
+§4.6), including through nested enum patterns. A borrowed place or projection
+still supplies an independent copy for a copyable binding.
+
 ```joyeer
 func close(slot: consuming Slot): Int {
   return match consume slot {

@@ -1,0 +1,61 @@
+import System
+
+private let requestLine: String = "GET / HTTP/1.1\r\n"
+
+private func serveOnce(listener: consuming TcpListener): Result<Void, NetworkError> {
+    let connection = tcpAccept(listener: listener, timeoutMillis: 5000)?
+    let reply = match readRequestHead(connection: connection) {
+        .Ok(head) => if head == requestLine + "\r\n" { "O" } else { "E" },
+        .Err(.TimedOut) => "T",
+        .Err(_) => "E",
+    }
+    return tcpSend(connection: connection, contents: reply)
+}
+
+private func clock(): Int {
+    return match monotonicMilliseconds() {
+        .Ok(now) => now,
+        .Err(_) => fatalError(message: "loopback test needs a monotonic clock"),
+    }
+}
+
+private func drive(port: Int, slow: Bool): Result<Bool, NetworkError> {
+    let connection = tcpConnect(address: "127.0.0.1", port: port)?
+    tcpSend(connection: connection, contents: requestLine)?
+    if !slow {
+        tcpSend(connection: connection, contents: "\r\n")?
+        return .Ok(tcpReceive(connection: connection, maximumBytes: 1, timeoutMillis: 5000)? == "O")
+    }
+
+    let started = clock()
+    // Keep delivering bytes long enough to extend the old timeout past the check.
+    // Stop well before the new deadline so writes cannot race the server closing.
+    tcpSend(connection: connection, contents: "X-Example: ")?
+    while clock() - started < 8000 {
+        match tcpReceive(connection: connection, maximumBytes: 1, timeoutMillis: 200) {
+            .Ok(reply) => { return .Ok(reply == "T" && clock() - started >= 4000) },
+            .Err(.TimedOut(_)) => {
+                if clock() - started < 3800 { tcpSend(connection: connection, contents: "x")? }
+            },
+            .Err(error) => { return .Err(error) },
+        }
+    }
+    return .Ok(false)
+}
+
+private func exercise(slow: Bool): Result<Bool, NetworkError> {
+    let listener = tcpListen(address: "127.0.0.1", port: 0, backlog: 1)?
+    let port = tcpLocalPort(listener: listener)?
+    let task = spawn(function: serveOnce, input: consume listener)
+    let client = drive(port: port, slow: slow)
+    (consume task.join())?
+    return client
+}
+
+func main() {
+    assert(condition: match exercise(slow: false) { .Ok(ok) => ok, .Err(_) => false, },
+        message: "a complete request head should succeed")
+    assert(condition: match exercise(slow: true) { .Ok(ok) => ok, .Err(_) => false, },
+        message: "partial reads must not reset the request-head deadline")
+    print(value: "request-head deadline passed")
+}

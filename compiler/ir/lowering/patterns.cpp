@@ -1,5 +1,6 @@
 // `match`: a switch over the arms' patterns, then each arm with its bindings. A pattern that
-// binds a noncopyable payload moves it out of the scrutinee's storage instead of copying it.
+// binds a noncopyable payload moves it from the scrutinee's storage. A live owned temporary
+// can also give up its bound copyable payloads without cloning.
 
 #include "internal.h"
 
@@ -7,49 +8,71 @@ namespace joyeer::lowering::detail {
 
 // True when a pattern binds a noncopyable value, so the match must move it out of the
 // scrutinee instead of copying it.
-bool Builder::patternBindsNoncopyable(const syntax::PatternPtr& pattern) const {
+bool Builder::patternBindsMovablePayload(
+        const syntax::PatternPtr& pattern, bool moveCopyable) const {
     if (pattern == nullptr) return false;
     if (pattern->kind == syntax::Kind::bindingPattern) {
         const auto type = typeOf(pattern);
-        return type.has_value() && !copyableInBody(pattern, *type);
+        return type.has_value() &&
+                (!copyableInBody(pattern, *type) || (moveCopyable && requiresDestroy(*type)));
     }
     if (pattern->kind != syntax::Kind::enumCasePattern) return false;
     const auto enumPattern = std::static_pointer_cast<syntax::EnumCasePatternSyntax>(pattern);
     for (const auto& argument : enumPattern->arguments) {
-        if (patternBindsNoncopyable(argument->pattern)) return true;
+        if (patternBindsMovablePayload(argument->pattern, moveCopyable)) return true;
     }
     return false;
 }
 
 std::optional<ir::Value> Builder::lowerMatch(const syntax::MatchExprSyntax::Ptr& expression) {
-    bool movesPayloads = false;
+    bool movesNoncopyable = false;
     for (const auto& arm : expression->arms) {
-        movesPayloads = movesPayloads || patternBindsNoncopyable(arm->pattern);
+        movesNoncopyable = movesNoncopyable || patternBindsMovablePayload(arm->pattern, false);
     }
-    // With a moving pattern the scrutinee needs storage to move payloads out of: the place
-    // of `match consume x`, or a slot that takes over an owned temporary. Whatever the arms
-    // do not take is destroyed with that storage.
+    auto operand = expression->scrutinee;
+    bool consumesPlace = false;
+    while (true) {
+        if (operand->kind == syntax::Kind::parenthesizedExpr) {
+            operand = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(operand)->expression;
+        } else if (operand->kind == syntax::Kind::accessExpr) {
+            const auto access = std::static_pointer_cast<syntax::AccessExprSyntax>(operand);
+            consumesPlace |= access->marker != nullptr && access->marker->kind == kwConsume;
+            operand = access->operand;
+        } else {
+            break;
+        }
+    }
+    const bool addressable = isAddressable(operand);
+    bool moveCopyable = false;
     std::optional<ir::Value> scrutineeAddress;
     std::optional<ir::Value> scrutinee;
-    if (movesPayloads) {
-        auto operand = expression->scrutinee;
-        if (operand->kind == syntax::Kind::accessExpr) {
-            const auto access = std::static_pointer_cast<syntax::AccessExprSyntax>(operand);
-            if (access->marker == nullptr || access->marker->kind != kwConsume) {
-                report(
-                        DiagnosticId::ownershipViolation,
-                        operand->span,
-                        "only 'consume' can move a noncopyable payload out of a place");
-                return std::nullopt;
-            }
-            operand = access->operand;
+    if (movesNoncopyable && addressable) {
+        if (!consumesPlace) {
+            report(
+                    DiagnosticId::ownershipViolation,
+                    expression->scrutinee->span,
+                    "only 'consume' can move a noncopyable payload out of a place");
+            return std::nullopt;
         }
-        if (isAddressable(operand)) {
-            scrutineeAddress = lowerAddress(operand);
-        } else {
-            const auto temporary = lowerExpression(expression->scrutinee);
-            if (!temporary.has_value()) return std::nullopt;
-            const auto owned = acquireOwned(*temporary, expression->scrutinee->span);
+        scrutineeAddress = lowerAddress(operand);
+        if (!scrutineeAddress.has_value()) return std::nullopt;
+    } else {
+        scrutinee = lowerExpression(expression->scrutinee);
+        if (!scrutinee.has_value()) return std::nullopt;
+        // A non-addressable projection can still be borrowed. Check ownership before acquiring,
+        // or spilling it for a move would introduce a clone of the whole scrutinee.
+        if (!addressable && ownershipOf(*scrutinee) == ValueOwnership::owned &&
+            liveOwnedTemporaries.contains(scrutinee->id)) {
+            for (const auto& arm : expression->arms) {
+                if (arm->pattern != nullptr && arm->pattern->kind == syntax::Kind::enumCasePattern &&
+                    patternBindsMovablePayload(arm->pattern, true)) {
+                    moveCopyable = true;
+                    break;
+                }
+            }
+        }
+        if (movesNoncopyable || moveCopyable) {
+            const auto owned = acquireOwned(*scrutinee, expression->scrutinee->span);
             if (!owned.has_value()) return std::nullopt;
             scrutineeAddress = emitValue(
                     ir::Opcode::stackAllocate,
@@ -60,15 +83,14 @@ std::optional<ir::Value> Builder::lowerMatch(const syntax::MatchExprSyntax::Ptr&
             emitRawStore(*owned, *scrutineeAddress, expression->scrutinee->span);
             registerOwnedStorage(*scrutineeAddress);
         }
-        if (!scrutineeAddress.has_value()) return std::nullopt;
+    }
+    if (scrutineeAddress.has_value()) {
         scrutinee = emitValue(
                 ir::Opcode::load,
                 scrutineeAddress->type,
                 ir::ValueCategory::value,
                 { scrutineeAddress->id },
                 expression->scrutinee->span);
-    } else {
-        scrutinee = lowerExpression(expression->scrutinee);
     }
     const auto resultType = typeOf(expression);
     if (!scrutinee.has_value() || !resultType.has_value()) return std::nullopt;
@@ -120,7 +142,7 @@ std::optional<ir::Value> Builder::lowerMatch(const syntax::MatchExprSyntax::Ptr&
                 currentDebugScope,
                 debugScopeForNode(arm, currentFunctionId));
         pushScope();
-        bindPattern(arm->pattern, *scrutinee, scrutineeAddress);
+        bindPattern(arm->pattern, *scrutinee, scrutineeAddress, moveCopyable);
         const auto value = lowerExpression(arm->body);
         if (currentBlockTerminated()) {
             discardScopeAfterTerminator();
@@ -272,9 +294,8 @@ void Builder::storeBinding(
     registerOwnedStorage(address);
 }
 
-// Moves the payloads that `pattern` binds and cannot copy out of the enum stored at
-// `address`, leaving each emptied so the storage can still be destroyed whole.
-void Builder::bindMovedPayloads(const syntax::PatternPtr& pattern, ir::Value address) {
+// Takes the bound payloads that cannot be copied, or need not be copied for an owned temporary.
+void Builder::bindMovedPayloads(const syntax::PatternPtr& pattern, ir::Value address, bool moveCopyable) {
     if (pattern == nullptr || pattern->kind != syntax::Kind::enumCasePattern) return;
     const auto enumPattern = std::static_pointer_cast<syntax::EnumCasePatternSyntax>(pattern);
     const auto caseSymbol = model->referencedSymbol(enumPattern);
@@ -298,8 +319,7 @@ void Builder::bindMovedPayloads(const syntax::PatternPtr& pattern, ir::Value add
         if (payloadPattern->kind == syntax::Kind::bindingPattern) {
             const auto symbol = model->semanticModel()->declaredSymbol(payloadPattern);
             if (!symbol.has_value()) continue;
-            if (copyableInBody(payloadPattern, *payloadType)) {
-                // A copyable payload beside a moved one still binds by copy.
+            if (!patternBindsMovablePayload(payloadPattern, moveCopyable)) {
                 const auto loaded = emitValue(
                         ir::Opcode::load,
                         *payloadType,
@@ -318,7 +338,7 @@ void Builder::bindMovedPayloads(const syntax::PatternPtr& pattern, ir::Value add
             const auto owned = acquireOwned(taken, payloadPattern->span);
             if (owned.has_value()) storeBinding(payloadPattern, *symbol, *owned);
         } else {
-            bindMovedPayloads(payloadPattern, payloadAddress);
+            bindMovedPayloads(payloadPattern, payloadAddress, moveCopyable);
         }
     }
 }
@@ -326,10 +346,12 @@ void Builder::bindMovedPayloads(const syntax::PatternPtr& pattern, ir::Value add
 void Builder::bindPattern(
         const syntax::PatternPtr& pattern,
         ir::Value value,
-        std::optional<ir::Value> address) {
+        std::optional<ir::Value> address,
+        bool moveCopyable) {
     if (pattern == nullptr) return;
-    if (address.has_value() && patternBindsNoncopyable(pattern)) {
-        bindMovedPayloads(pattern, *address);
+    if (address.has_value() && pattern->kind == syntax::Kind::enumCasePattern &&
+        patternBindsMovablePayload(pattern, moveCopyable)) {
+        bindMovedPayloads(pattern, *address, moveCopyable);
         return;
     }
     if (pattern->kind == syntax::Kind::bindingPattern) {

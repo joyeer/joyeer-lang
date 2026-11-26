@@ -1,7 +1,7 @@
 # 0017: Runtime thread safety
 
-- Status: accepted (2026-11-09). Phase P4 of the [concurrency plan](../plan/0009-concurrency.md),
-  built on [0016](0016-thread-primitives.md). It makes the runtime safe to call from several
+- Status: accepted (2026-11-09). Concurrency phase P4 builds on
+  [0016](0016-thread-primitives.md). It makes the runtime safe to call from several
   threads; it adds no language feature and changes no single-threaded behaviour.
 - Spec: [§19.4.5](../../specs/19-c-interop.md) gains three runtime-only intrinsics (atomic load,
   exchange and compare-and-exchange). The memory-model facts the runtime keeps are those
@@ -172,8 +172,8 @@ never freed, and the balance stays zero).
 - **`System`'s own first-use state and `runProcess` rejection while tasks exist**: P5, because a task
   can only call them once tasks exist.
 - **Per-thread allocator caches** and lock-free remote frees: only if a baseline shows contention.
-- **The Windows C-startup `/WHOLEARCHIVE` link** imports the thread functions into every such
-  program (0016); still to decide.
+- **The Windows C-startup link** originally imported the thread functions into every such program
+  (0016). It now forces only the C wrapper's archive member; see [backend](../impl/backend.md).
 
 ## Consequences
 

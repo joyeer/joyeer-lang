@@ -5,9 +5,10 @@
   the [markdown web server example](../../example/web-server/README.md)
   served over real HTTP). The Linux implementation (raw system calls) followed
   and is verified on x86-64 Ubuntu under WSL2: `SystemTests`, the compiler
-  module-service and symbol-import gates, and the example over HTTP. macOS is a
-  placeholder that fails with `.Other(38)`; AArch64 Linux is untested; full
-  validation and the role reviews have not run.
+  module-service and symbol-import gates, and the example over HTTP. The
+  macOS libSystem implementation still needs native verification, as does
+  AArch64 Linux. Later deadlines and readiness are in [0014](0014-network-timeouts.md)
+  and [0032](0032-tcp-read-queue.md).
 - Spec: [§18.6 TCP networking](../../specs/18-host.md#186-tcp-networking)
   (provisional)
 
@@ -89,7 +90,11 @@ Implementation shape (informative, to be confirmed while building):
   `recvfrom`, `sendto`, `shutdown`, `getsockname`, `setsockopt`, `close`)
   through `joyeer_intrinsic_syscall`, selected by architecture as in 0011.
 - macOS: libSystem. `sockaddr_in` carries a length byte there; `SO_NOSIGPIPE`
-  replaces `MSG_NOSIGNAL`.
+  replaces `MSG_NOSIGNAL`. Darwin's `fcntl` sets close-on-exec before publishing
+  each descriptor and switches blocking modes. ARM64 requires the third
+  argument in a variadic stack slot, so the compiler lowers a private,
+  integer-only intrinsic to the correct C call, rather than assuming a
+  fixed prototype or adding a C shim.
 - New files `lib/System/network.joyeer` (portable logic: address parsing,
   argument validation, loops, error classification) and
   `network_windows.joyeer`, `network_posix.joyeer`, `network_linux.joyeer`
@@ -134,10 +139,8 @@ Implementation shape (informative, to be confirmed while building):
      resource. Whether to leave this as is, let a pattern binding be consumed
      when the scrutinee is a temporary, or make the close take a borrowed
      handle is open.
-  2. The macOS (libSystem) implementation is still to write, and the Linux
-     AArch64 system call numbers (from memory, like the rest of that table in
-     0011) need a native run; both need the same acceptance steps as the POSIX
-     filesystem, which has not run there either.
+  2. The macOS libSystem and Linux AArch64 paths passed native loopback
+     validation. See [0032](0032-tcp-read-queue.md#evidence).
 
 ## Evidence
 

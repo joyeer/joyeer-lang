@@ -1,8 +1,8 @@
 # 0019: Channels
 
 - Status: accepted as a design (2026-11-10), after a `language-designer` review whose findings are
-  folded in below. Phases P5b and P6 of the [concurrency plan](../plan/0009-concurrency.md): the compiler
-  support and the runtime for bounded single-sender, single-receiver channels, on top of tasks
+  folded in below. Concurrency phases P5b and P6 cover the compiler support and the
+  runtime for bounded single-sender, single-receiver channels, on top of tasks
   ([0018](0018-tasks.md)). It amends two details of [0013](0013-concurrency-model.md) (see
   "Amendments"). Implemented on Linux and Windows.
 - Spec: [§21.9](../../specs/21-concurrency.md#219-channels) (new) and
@@ -127,15 +127,15 @@ with `invalid channel capacity`, and a capacity whose buffer size overflows trap
 All operations on one channel are totally ordered by its lock; there is no ordering across different
 channels beyond each thread's program order. A `send` happens before the `receive` that gets its value;
 closing the sender, after all earlier sends, happens before the receiver sees the closed result. The
-runtime copies only the value's own bytes into and out of the queue and never clones. A `match` that
-binds the payload of `receive()` **clones a copyable payload** (a `String`, an array) until §7.1.2 moves
-payloads out of owned temporaries for every type; this is the existing behavior of `removeLast`, it is
-not a runtime copy, a test pins it, and moving it is a follow-up. A noncopyable payload is moved.
+runtime copies only the value's own bytes into and out of the queue and never clones.
+A direct `match` of a `receive()` result now takes bound payloads from the owned temporary
+without an additional clone (spec §7.1.2). The original clone of a copyable payload was
+in pattern binding, not in the channel runtime; matching a borrowed value still copies.
 
 ### The runtime object and its close protocol
 
 `lib/Runtime/core/channels.joyeer` is a fifth archive object, referenced only by a program that uses a
-channel. It defines the four exports below, uses the thread object's `joyeer_mutex_*` and
+channel. It defines the original four exports below, uses the thread object's `joyeer_mutex_*` and
 `joyeer_condition_*`, the allocator and `joyeer_panic`, and no operating-system function of its own.
 
 ```c
@@ -214,10 +214,9 @@ An end moves into a task as (part of) its input and out as part of its result. T
 stands: a program that joins a task while still holding **an end the task waits on** (the sender its loop
 receives from, or the receiver a blocked producer needs) never ends. Close that end by consuming it
 before the join. A cycle of full bounded channels hangs. These are stated, not prevented; the
-self-deadlock trap above catches only the single-threaded case. A compiler **warning**
-(`semantic-analysis.channel-end-live-at-join`: a join while an end of a channel created in the same
-function is still possibly live, with a `consume x.close()` fix-it) is planned for P6 and is not required
-to ship P5b.
+self-deadlock trap above catches only the single-threaded case. P6 considered a compiler warning
+for any possibly live channel end created in the same function, with a `consume x.close()`
+fix-it. That heuristic was not adopted (see [Diagnostic follow-up](#diagnostic-follow-up)).
 
 ### Diagnostics
 
@@ -239,8 +238,7 @@ assignability error.
 ## Not in this decision
 
 Multi-sender channels, unbounded channels, `select`, `trySend`, `tryReceive`, timeouts, `SendError<T>`,
-iterating a receiver, a must-use warning for `send`, moving copyable payloads out of owned temporaries in
-`match`, and the worker-pool example (P7).
+iterating a receiver, a must-use warning for `send`, and the worker-pool example (P7).
 
 ## Consequences
 
@@ -275,9 +273,37 @@ iterating a receiver, a must-use warning for `send`, moving copyable payloads ou
 
 ## Open questions
 
-1. **A `must-use` warning for `send` and `receive` results.** Recommended: add one with the `channel-end-
-   live-at-join` warning.
-2. **A documented capacity bound.** Recommended: only the overflow trap in v1.
+**A documented capacity bound.** Recommended: only the overflow trap in v1.
+
+### Diagnostic follow-up
+
+Keep `Any` reserved in source until its own type and layout are designed. Do not accept an otherwise
+unsupported type just to change a channel diagnostic. A written `Any` fails in the lexer;
+`Never` is a valid source type and fails the channel's element-type check.
+
+Do not infer a deadlock from a channel end merely being live at `join`: the task may not depend
+on that end, and closing it can drop queued values. Keep the runtime's single-thread check and the
+close-before-join guidance until analysis can identify the relevant dependency. Handle discarded
+channel results with a general must-use design rather than special-casing these two methods.
+
+### Receiver ownership at creation
+
+A concrete channel creation rejects an element type that could own a receiver for that same
+element type ([§21.9.1](../../specs/21-concurrency.md#2191-creating-a-channel)). Exact structural
+containment covers wrapped messages and generic instantiations without scanning sent values,
+changing the runtime ABI, or tracing object graphs. The trade-off is conservative rejection of
+receivers from different instances with the same element type. Closing the sender still leaves
+queued values for the receiver; distinct-queue cycles remain possible.
+
+### Waiting for an available worker
+
+The bounded blocking `waitForChannel` in [§21.9.3](../../specs/21-concurrency.md#waiting-for-any-receiver)
+observes readiness without taking values or changing single-sender ownership. The ready path needs
+no allocation. On the blocking path, registration is rechecked under each channel lock. Producers
+latch a signal under the waiter's mutex before waking it; the waiter releases that mutex before
+rescanning or removing registrations. Only registered queues notify the waiter. The web server uses
+a capacity-one idle signal for each worker, consumes it before sending a job, and closes both
+directions before joining. General `select`, multi-sender queues, and channel timeouts remain separate.
 
 ## Evidence
 

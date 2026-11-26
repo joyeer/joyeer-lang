@@ -1,0 +1,76 @@
+import System
+
+// §18.6: a queue and its outstanding read registrations move with the owner.
+func openOnTask(connection: consuming TcpConnection): Result<TcpReadQueue, NetworkError> {
+    return tcpOpenReadQueue(connections: consume [consume connection])
+}
+
+struct Handoff {
+    let queue: TcpReadQueue
+    let returned: ChannelSender<TcpReadQueue>
+    let done: ChannelReceiver<Int>
+}
+
+func handBack(input: consuming Handoff) {
+    var queue = consume input.queue
+    let returned = consume input.returned
+    let done = consume input.done
+    let ready = tcpReadQueueWait(queue: &queue, timeoutMillis: 5000)
+    assert(condition: match ready { .Ok(.Some(0)) => true, _ => false }, message: "first owner dequeues readiness")
+    let sent = returned.send(value: consume queue)
+    assert(condition: match sent { .Ok(_) => true, _ => false }, message: "task hands the selected queue back")
+    consume returned.close()
+    done.receive()
+    consume done.close()
+}
+
+func readByte(queue: consuming TcpReadQueue): Result<String?, NetworkError> {
+    var owned = consume queue
+    let ready = tcpReadQueueWait(queue: &owned, timeoutMillis: 5000)?
+    assert(condition: ready == .Some(0), message: "receive readiness on a new owner task")
+    return tcpReadQueueReceive(queue: &owned, maximumBytes: 1)
+}
+
+func transfer(): Result<Void, NetworkError> {
+    let listener = tcpListen(address: "127.0.0.1", port: 0, backlog: 1)?
+    let port = tcpLocalPort(listener: listener)?
+    let peer = tcpConnect(address: "127.0.0.1", port: port)?
+    let connection = tcpAccept(listener: listener, timeoutMillis: 5000)?
+    let issuer = spawn(function: openOnTask, input: consume connection)
+    var queue = (consume issuer.join())?
+    // No bytes were sent before the issuing task exited. Its pending Winsock
+    // probe can have been cancelled, so the new owner must rearm it.
+    tcpSend(connection: peer, contents: "ab")?
+    let ready = tcpReadQueueWait(queue: &queue, timeoutMillis: 5000)?
+    assert(condition: ready == .Some(0), message: "a pending probe survives task exit or is rearmed")
+    let first = tcpReadQueueReceive(queue: &queue, maximumBytes: 1)?
+    assert(condition: first == .Some("a"), message: "read after the issuing task exits")
+
+    var returned: ChannelSender<TcpReadQueue>
+    var incoming: ChannelReceiver<TcpReadQueue>
+    var stop: ChannelSender<Int>
+    var done: ChannelReceiver<Int>
+    channel(capacity: 1, sender: &returned, receiver: &incoming)
+    channel(capacity: 1, sender: &stop, receiver: &done)
+    let worker = spawn(function: handBack, input: consume Handoff(queue: consume queue,
+        returned: consume returned, done: consume done))
+    let last = match incoming.receive() {
+        .Ok(moved) => readByte(queue: consume moved),
+        .Err(_) => fatalError(message: "queue was not returned"),
+    }
+    consume incoming.close()
+    consume stop.close()
+    consume worker.join()
+    let second = last?
+    assert(condition: second == .Some("b"), message: "rearm and read while the former owner task still lives")
+    let eof = tcpReceive(connection: peer, maximumBytes: 1, timeoutMillis: 5000)?
+    assert(condition: eof == "", message: "dropping the moved queue closes the socket")
+    return .Ok(())
+}
+
+func main() {
+    match transfer() {
+        .Ok(_) => print(value: "TCP read queue transfer passed"),
+        .Err(_) => fatalError(message: "TCP read queue transfer failed"),
+    }
+}

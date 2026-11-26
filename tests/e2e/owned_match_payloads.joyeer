@@ -1,0 +1,55 @@
+// Spec 7.1.2: take only the selected payload from an owned temporary, then destroy the rest.
+struct Guard {
+    let label: String
+    deinit() { print(value: self.label) }
+}
+
+enum Entry {
+    Item(Bool, Optional<String>, Guard),
+    Empty,
+}
+
+func entry(): Entry {
+    return .Item(false, .Some("owned"), Guard(label: "unbound guard"))
+}
+
+func inspect(): String {
+    match entry() {
+        .Item(true, .Some(text), _) => { return "wrong arm" },
+        .Item(false, .Some(text), _) => { return text },
+        _ => { return "missing payload" },
+    }
+    return "missing branch"
+}
+
+func square(value: consuming Int): Int { return value * value }
+
+func main() {
+    print(value: inspect())
+
+    var strings: [String] = ["dynamic" + " text"]
+    print(value: match &strings.removeLast() { .Some(text) => text, .None => "empty" })
+    print(value: match &strings.removeLast() { .Some(text) => text, .None => "empty" })
+
+    var sender: ChannelSender<[String]>
+    var receiver: ChannelReceiver<[String]>
+    channel(capacity: 1, sender: &sender, receiver: &receiver)
+    let sent = sender.send(value: consume ["received" + " array"])
+    consume sender.close()
+    match receiver.receive() {
+        .Ok(values) => print(value: values[0]),
+        .Err(_) => print(value: "missing"),
+    }
+    match receiver.receive() {
+        .Ok(_) => print(value: "unexpected"),
+        .Err(_) => print(value: "closed"),
+    }
+
+    var handles: [JoinHandle<Int>] = []
+    &handles.append(element: consume spawn(function: square, input: consume 3))
+    match (&handles.removeLast()) {
+        .Some(handle) => print(value: (consume handle.join())),
+        .None => print(value: "missing task"),
+    }
+    consume handles.consumeEmpty()
+}

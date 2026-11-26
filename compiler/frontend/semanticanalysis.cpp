@@ -345,6 +345,12 @@ private:
     // been evaluated but which has not committed yet (decision 0015, rule 3): an early exit in a later
     // operand would leave them to be dropped.
     size_t pendingLinearMoves = 0;
+    // Named linear operands remain initialized, but exclusively reserved until construction commits.
+    struct ReservedMove {
+        InitializationState::ProjectionPath place;
+        SourceSpan span;
+    };
+    std::vector<ReservedMove> reservedConstructionMoves;
     std::vector<InitializationState::ProjectionPath*> activePaths;
     std::vector<std::vector<semantic::SymbolId>> localScopes;
     struct LoopFlow {
@@ -359,6 +365,7 @@ private:
         assert(activePaths.empty());
         assert(localScopes.empty());
         assert(loops.empty());
+        assert(reservedConstructionMoves.empty());
         tracked.clear();
         initializingParameters.clear();
         linearParameters.clear();
@@ -473,14 +480,53 @@ private:
         if (!state.reachable || pendingLinearMoves <= pendingAtEntry) return;
         diagnostics.push_back(Diagnostic {
             DiagnosticId::linearNotConsumed, Severity::error, span,
-            "a linear value already moved into the enclosing call would be dropped by " + exit,
-            "evaluate the exiting operand first, then move the value into the call",
+            "a linear value already moved into the enclosing call or construction would be dropped by " + exit,
+            "evaluate the exiting operand first, then move the value",
         });
     }
 
     void trackPendingOwnedValue(const syntax::ExprPtr& value, const InitializationState& state) {
         const auto type = model->typeOf(value);
         if (state.reachable && type.has_value() && model->isLinear(*type)) ++pendingLinearMoves;
+    }
+
+    void analyzeConstructionOperand(
+            const syntax::ExprPtr& value, bool marked, InitializationState& state) {
+        if (!state.reachable) return;
+        if (const auto source = model->linearConstructionMoveSource(value, marked)) {
+            const auto place = storagePath(source);
+            assert(place.has_value());
+            reportPartialConsumeOfDeinitType(source);
+            if (analyzeStorageRead(source, state)) reservedConstructionMoves.push_back({ *place, source->span });
+            return;
+        }
+        if (marked) {
+            analyzeConsume(value, state);
+        } else {
+            analyzeExpression(value, state);
+        }
+        trackPendingOwnedValue(value, state);
+    }
+
+    void finishConstruction(size_t firstMove, size_t pendingAtEntry, InitializationState& state) {
+        if (state.reachable) {
+            for (size_t index = firstMove; index < reservedConstructionMoves.size(); ++index) {
+                commitNamedMove(reservedConstructionMoves[index].place, state);
+            }
+        }
+        reservedConstructionMoves.resize(firstMove);
+        pendingLinearMoves = pendingAtEntry;
+    }
+
+    void analyzeEnumConstruction(
+            const std::vector<syntax::CallArgumentSyntax::Ptr>& arguments, InitializationState& state) {
+        const auto firstMove = reservedConstructionMoves.size();
+        const auto pendingAtEntry = pendingLinearMoves;
+        for (const auto& argument : arguments) {
+            analyzeConstructionOperand(argument->value,
+                    argument->accessMarker != nullptr && argument->accessMarker->kind == kwConsume, state);
+        }
+        finishConstruction(firstMove, pendingAtEntry, state);
     }
 
     // Every owning binding in scope, innermost first, and the consuming parameters: an exit of the
@@ -723,20 +769,6 @@ private:
                 const auto propagated =
                         std::static_pointer_cast<syntax::PropagateExprSyntax>(expression);
                 analyzeExpression(propagated->operand, state);
-                // The failure path of `?` leaves the function, so nothing linear may be live.
-                if (state.reachable) {
-                    checkAllLinearEnded(state, expression->span, "this '?' returns early");
-                }
-                if (state.reachable && pendingLinearMoves > 0) {
-                    diagnostics.push_back(Diagnostic {
-                        DiagnosticId::linearNotConsumed,
-                        Severity::error,
-                        expression->span,
-                        "a linear value already moved into the enclosing call would be dropped if this '?' returns early",
-                        "evaluate the '?' first and bind its result, then make the call: let r = f()?",
-                    });
-                }
-
                 if (state.reachable) {
                     const auto operandType = model->typeOf(propagated->operand);
                     const auto* container = operandType.has_value()
@@ -745,6 +777,8 @@ private:
                     if (container == nullptr ||
                         !model->types().isResult(container) ||
                         container->arguments[1] != model->types().neverType()) {
+                        checkAllLinearEnded(state, expression->span, "this '?' returns early");
+                        checkPendingLinearExit(state, expression->span, "the early return of '?'");
                         reportUninitializedParameters(expression->span, state);
                     }
                     if (model->typeOf(expression) == model->types().neverType()) {
@@ -779,6 +813,12 @@ private:
                 const auto* callableSymbol = target.has_value()
                         ? model->semanticModel()->symbol(*target)
                         : nullptr;
+                if (callableSymbol != nullptr &&
+                    (callableSymbol->kind == semantic::SymbolKind::enumCase ||
+                     callableSymbol->kind == semantic::SymbolKind::builtinEnumCase)) {
+                    analyzeEnumConstruction(call->arguments, state);
+                    break;
+                }
                 std::vector<semantic::SymbolId> initializedArguments;
                 std::vector<semantic::SymbolId> mutatedArguments;
                 const auto pendingAtEntry = pendingLinearMoves;
@@ -894,12 +934,12 @@ private:
             }
             case syntax::Kind::arrayExpr: {
                 const auto array = std::static_pointer_cast<syntax::ArrayExprSyntax>(expression);
+                const auto firstMove = reservedConstructionMoves.size();
                 const auto pendingAtEntry = pendingLinearMoves;
                 for (const auto& element : array->elements) {
-                    analyzeExpression(element, state);
-                    trackPendingOwnedValue(element, state);
+                    analyzeConstructionOperand(element, false, state);
                 }
-                pendingLinearMoves = pendingAtEntry;
+                finishConstruction(firstMove, pendingAtEntry, state);
                 break;
             }
             case syntax::Kind::dictionaryExpr: {
@@ -918,17 +958,7 @@ private:
             case syntax::Kind::contextualCaseExpr: {
                 const auto enumCase =
                         std::static_pointer_cast<syntax::ContextualCaseExprSyntax>(expression);
-                const auto pendingAtEntry = pendingLinearMoves;
-                for (const auto& argument : enumCase->arguments) {
-                    if (argument->accessMarker != nullptr &&
-                        argument->accessMarker->kind == kwConsume) {
-                        analyzeConsume(argument->value, state);
-                    } else {
-                        analyzeExpression(argument->value, state);
-                    }
-                    trackPendingOwnedValue(argument->value, state);
-                }
-                pendingLinearMoves = pendingAtEntry;
+                analyzeEnumConstruction(enumCase->arguments, state);
                 break;
             }
             case syntax::Kind::blockExpr:
@@ -990,35 +1020,39 @@ private:
         analyzeStorageOperands(expression, state);
         activePaths.pop_back();
         if (!state.reachable || !tracked.contains(path->root)) return;
+        if (rejectAccessToReservedPlace(*path, expression->span)) return;
         analyzeStorageRead(expression, state);
-        invalidateIndexIdentity(path->root, state);
-        if (path->projections.empty()) {
-            state.initialized.erase(path->root);
-            state.possiblyInitialized.erase(path->root);
-            state.consumed.insert(path->root);
-            clearConsumedProjections(path->root, state);
+        reportPartialConsumeOfDeinitType(expression);
+        commitNamedMove(*path, state);
+    }
+
+    void commitNamedMove(
+            const InitializationState::ProjectionPath& path, InitializationState& state) {
+        invalidateIndexIdentity(path.root, state);
+        if (path.projections.empty()) {
+            state.initialized.erase(path.root);
+            state.possiblyInitialized.erase(path.root);
+            state.consumed.insert(path.root);
+            clearConsumedProjections(path.root, state);
             // The whole value is consumed, which covers every field path under it at a join.
-            state.definitelyConsumedProjections.push_back({ path->root, {} });
+            state.definitelyConsumedProjections.push_back({ path.root, {} });
         } else {
-            reportPartialConsumeOfDeinitType(expression);
-            addConsumedProjection(*path, state);
+            addConsumedProjection(path, state);
         }
     }
 
-    // `consume a[i]` of a linear element leaves a zero-filled slot that nothing could ever end
-    // (decision 0025), so it is rejected here rather than later on the array itself.
+    // Moving an element or a linear field of an element would leave a slot that cannot be ended.
     void reportConsumeOfLinearElement(const syntax::ExprPtr& expression) {
-        auto inner = expression;
-        while (inner != nullptr && inner->kind == syntax::Kind::parenthesizedExpr) {
-            inner = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(inner)->expression;
-        }
-        if (inner == nullptr || inner->kind != syntax::Kind::subscriptExpr) return;
-        const auto type = model->typeOf(inner);
+        const auto type = model->typeOf(expression);
         if (!type.has_value() || !model->isLinear(*type)) return;
+        const auto place = storagePath(expression);
+        if (!place.has_value() ||
+            std::all_of(place->projections.begin(), place->projections.end(),
+                        [](const auto& projection) { return projection.field.has_value(); })) return;
         diagnostics.push_back(Diagnostic {
             DiagnosticId::consumeOfLinearElement,
             Severity::error,
-            inner->span,
+            expression->span,
             "cannot consume an element of linear type '" + model->types().displayName(*type) +
                     "' from a collection: the emptied slot could never be ended",
             "drain the collection with removeLast instead; inside the library that owns the elements, move one out "
@@ -1070,6 +1104,7 @@ private:
             return std::nullopt;
         }
         if (!tracked.contains(*symbol)) return std::nullopt;
+        if (rejectAccessToReservedPlace({ *symbol, {} }, expression->span)) return std::nullopt;
         if (state.possiblyInitialized.contains(*symbol)) {
             const auto* declaration = model->semanticModel()->symbol(*symbol);
             diagnostics.push_back(Diagnostic {
@@ -1132,6 +1167,7 @@ private:
             InitializationState& state) {
         auto assigned = storagePath(expression->target);
         if (assigned.has_value()) activePaths.push_back(&*assigned);
+        bool rejectedRead = false;
         if (expression->op != nullptr && expression->op->kind != equal && assigned.has_value()) {
             // Spec 4.4.3: `x op= y` evaluates the target's index operands once, then the right side, and
             // only then reads the old value, which must still be initialized and not consumed.
@@ -1140,7 +1176,7 @@ private:
             const bool readableBeforeValue = state.reachable && !readFailure(read, state).has_value();
             analyzeExpression(expression->value, state);
             if (state.reachable) {
-                analyzeStorageRead(
+                rejectedRead = !analyzeStorageRead(
                         read, state, readableBeforeValue ? RightSide::consumedTheRead : RightSide::notBlamed);
             }
         } else if (!assigned.has_value() || !state.reachable) {
@@ -1161,6 +1197,7 @@ private:
         }
         if (assigned.has_value()) activePaths.pop_back();
         if (state.reachable && assigned.has_value() && tracked.contains(assigned->root)) {
+            if (rejectedRead || rejectAccessToReservedPlace(*assigned, expression->target->span)) return;
             checkLinearOverwrite(expression->target, *assigned, state);
             markInitialized(*assigned, state);
         }
@@ -1322,7 +1359,9 @@ private:
         if (current == nullptr) return false;
         if (current->kind == syntax::Kind::accessExpr) {
             const auto access = std::static_pointer_cast<syntax::AccessExprSyntax>(current);
-            return access->marker != nullptr && access->marker->kind == kwConsume;
+            // `&receiver.method()` mutates the receiver, but the call still returns an owned value.
+            return (access->marker != nullptr && access->marker->kind == kwConsume) ||
+                    matchMovesScrutinee(access->operand);
         }
         return !storagePath(current).has_value();
     }
@@ -1496,13 +1535,29 @@ private:
     // of `x op= y`, or the projected target of `=`, was accessible before the right side ran.
     enum class RightSide { notBlamed, consumedTheRead, consumedTheTarget };
 
+    bool rejectAccessToReservedPlace(const InitializationState::ProjectionPath& place, SourceSpan span) {
+        const auto first = std::find_if(reservedConstructionMoves.begin(), reservedConstructionMoves.end(),
+                         [&](const auto& reserved) { return pathsOverlap(place, reserved.place); });
+        if (first == reservedConstructionMoves.end()) return false;
+        const auto* declaration = model->semanticModel()->symbol(place.root);
+        diagnostics.push_back(Diagnostic {
+            DiagnosticId::overlappingConstructionAccess, Severity::error, span,
+            "storage in '" + (declaration == nullptr ? std::string() : declaration->name) +
+                    "' is reserved by a pending linear move",
+            "finish accessing the storage before moving it into the construction",
+            { { first->span.offset, first->span.length, "the pending move reserves this storage" } },
+        });
+        return true;
+    }
+
     bool analyzeStorageRead(
             const syntax::ExprPtr& expression,
             const InitializationState& state,
             RightSide blame = RightSide::notBlamed) {
+        const auto path = storagePath(expression);
+        if (path.has_value() && rejectAccessToReservedPlace(*path, expression->span)) return false;
         const auto failure = readFailure(expression, state);
         if (!failure.has_value()) return true;
-        const auto path = storagePath(expression);
         const auto* declaration = model->semanticModel()->symbol(path->root);
         const auto reportRead = [&](bool consumed) {
             diagnostics.push_back(Diagnostic {
@@ -2030,6 +2085,8 @@ const char* diagnosticName(DiagnosticId id) {
             return "semantic-analysis.partial-consume-of-deinit-type";
         case DiagnosticId::linearNotConsumed:
             return "semantic-analysis.linear-not-consumed";
+        case DiagnosticId::overlappingConstructionAccess:
+            return "semantic-analysis.overlapping-construction-access";
         case DiagnosticId::linearOverwrite:
             return "semantic-analysis.linear-overwrite";
         case DiagnosticId::consumeOfLinearElement:

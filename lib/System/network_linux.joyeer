@@ -56,7 +56,7 @@ private func putInteger(bytes: inout [UInt8], offset: Int, width: Int, value: In
 
 @platform(linux)
 func classifyNetworkError(code: Int): NetworkError {
-    if code == 22 || code == 14 { return .InvalidInput(code) }
+    if code == 22 { return .InvalidInput(code) }
     if code == 98 { return .AddressInUse(code) }
     if code == 99 { return .AddressNotAvailable(code) }
     if code == 13 || code == 1 { return .PermissionDenied(code) }
@@ -124,6 +124,34 @@ func nativeTcpConnect(handle: Int, address: Int, port: Int): Int {
     return 0
 }
 
+@platform(linux)
+func nativeTcpSetNonblocking(handle: Int, enabled: Bool): Int {
+    var option = zeroBuffer(count: 4)
+    if enabled { &option[0] = 1 }
+    return linuxCall(x86: 16, arm: 29, first: handle, second: 0x5421,
+        third: addressOfBytes(bytes: &option), fourth: 0, fifth: 0, sixth: 0)
+}
+
+@platform(linux)
+func nativeTcpConnectPending(status: Int): Bool { return status == -115 }
+
+@platform(linux)
+func nativeTcpWouldBlock(status: Int): Bool { return status == -11 }
+
+@platform(linux)
+func nativeTcpInterrupted(status: Int): Bool { return status == 0 - interrupted }
+
+@platform(linux)
+func nativeTcpSocketError(handle: Int): Int {
+    var code = zeroBuffer(count: 4)
+    var length = zeroBuffer(count: 4)
+    &length[0] = 4
+    let outcome = linuxCall(x86: 55, arm: 209, first: handle, second: levelSocket, third: 4,
+        fourth: addressOfBytes(bytes: &code), fifth: addressOfBytes(bytes: &length), sixth: 0)
+    if kernelFailed(outcome: outcome) { return outcome }
+    return 0 - socketErrorNumber(bytes: code)
+}
+
 // getsockname(fd, &address, &length); the port is at offset 2, in network order.
 @platform(linux)
 func nativeTcpPort(handle: Int): Int {
@@ -150,11 +178,12 @@ func nativeTcpReceive(handle: Int, buffer: inout [UInt8], count: Int): Int {
 
 // sendto(fd, buffer, count, MSG_NOSIGNAL, NULL, 0)
 @platform(linux)
-func nativeTcpSend(handle: Int, buffer: [UInt8], count: Int): Int {
+func nativeTcpSend(handle: Int, buffer: [UInt8], count: Int, retry: Bool): Int {
     var bytes = buffer
     let address = addressOfBytes(bytes: &bytes)
-    var outcome = 0 - interrupted
-    while outcome == 0 - interrupted {
+    var outcome = linuxCall(x86: 44, arm: 206, first: handle, second: address, third: count,
+        fourth: noSignal, fifth: 0, sixth: 0)
+    while retry && outcome == 0 - interrupted {
         outcome = linuxCall(x86: 44, arm: 206, first: handle, second: address, third: count,
             fourth: noSignal, fifth: 0, sixth: 0)
     }
@@ -168,23 +197,73 @@ func nativeTcpSend(handle: Int, buffer: [UInt8], count: Int): Int {
 // and the returned events; the timeout is a struct timespec of seconds and nanoseconds.
 // ppoll(fds, 1, &timeout, NULL, 8)
 @platform(linux)
-func nativeTcpWait(handle: Int, timeoutMillis: Int): Int {
-    var descriptors = zeroBuffer(count: 8)
-    putInteger(bytes: &descriptors, offset: 0, width: 4, value: handle)
-    &descriptors[4] = 1
+private func pollDescriptors(descriptors: inout [UInt8], count: Int, timeoutMillis: Int, retry: Bool): Int {
     var limit = zeroBuffer(count: 16)
-    putInteger(bytes: &limit, offset: 0, width: 8, value: timeoutMillis / 1000)
-    putInteger(bytes: &limit, offset: 8, width: 8, value: (timeoutMillis % 1000) * 1000000)
+    var limitAddress = 0
+    if timeoutMillis >= 0 {
+        putInteger(bytes: &limit, offset: 0, width: 8, value: timeoutMillis / 1000)
+        putInteger(bytes: &limit, offset: 8, width: 8, value: (timeoutMillis % 1000) * 1000000)
+        limitAddress = addressOfBytes(bytes: &limit)
+    }
     let descriptorAddress = addressOfBytes(bytes: &descriptors)
-    let limitAddress = addressOfBytes(bytes: &limit)
-    var outcome = 0 - interrupted
-    while outcome == 0 - interrupted {
-        outcome = linuxCall(x86: 271, arm: 73, first: descriptorAddress, second: 1, third: limitAddress,
+    var outcome = linuxCall(x86: 271, arm: 73, first: descriptorAddress, second: count, third: limitAddress,
+        fourth: 0, fifth: 8, sixth: 0)
+    while retry && outcome == 0 - interrupted {
+        outcome = linuxCall(x86: 271, arm: 73, first: descriptorAddress, second: count, third: limitAddress,
             fourth: 0, fifth: 8, sixth: 0)
     }
-    if kernelFailed(outcome: outcome) { return outcome }
-    if outcome == 0 { return 0 }
+    return outcome
+}
+
+@platform(linux)
+private func pollOne(handle: Int, timeoutMillis: Int, writable: Bool): Int {
+    var descriptors = zeroBuffer(count: 8)
+    putInteger(bytes: &descriptors, offset: 0, width: 4, value: handle)
+    if writable { &descriptors[4] = 4 } else { &descriptors[4] = 1 }
+    let outcome = pollDescriptors(descriptors: &descriptors, count: 1, timeoutMillis: timeoutMillis,
+        retry: !writable)
+    if outcome <= 0 { return outcome }
+    if (descriptors[6] & 0x20) != 0 { return -9 }
     return 1
+}
+
+@platform(linux)
+func nativeTcpWait(handle: Int, timeoutMillis: Int): Int {
+    return pollOne(handle: handle, timeoutMillis: timeoutMillis, writable: false)
+}
+
+@platform(linux)
+func nativeTcpWaitWritable(handle: Int, timeoutMillis: Int): Int {
+    return pollOne(handle: handle, timeoutMillis: timeoutMillis, writable: true)
+}
+
+@platform(linux)
+func nativeTcpWaitConnect(handle: Int, timeoutMillis: Int): Int {
+    return nativeTcpWaitWritable(handle: handle, timeoutMillis: timeoutMillis)
+}
+
+@platform(linux)
+func nativeTcpPoll(handles: [Int], readiness: inout [UInt8], timeoutMillis: Int): Int {
+    var descriptors = zeroBuffer(count: handles.count * 8)
+    var index = 0
+    while index < handles.count {
+        let offset = index * 8
+        putInteger(bytes: &descriptors, offset: offset, width: 4, value: handles[index])
+        &descriptors[offset + 4] = 1  // POLLIN
+        index = index + 1
+    }
+    let outcome = pollDescriptors(descriptors: &descriptors, count: handles.count, timeoutMillis: timeoutMillis,
+        retry: false)
+    if kernelFailed(outcome: outcome) { return outcome }
+    index = 0
+    while index < handles.count {
+        let offset = index * 8
+        let events = (descriptors[offset + 6] as Int) | ((descriptors[offset + 7] as Int) << 8)
+        if (events & 0x20) != 0 { return -9 }  // POLLNVAL, EBADF
+        if (events & 0x19) != 0 { &readiness[index] = 1 }  // POLLIN | POLLHUP | POLLERR
+        index = index + 1
+    }
+    return 0
 }
 
 @platform(linux)
@@ -193,4 +272,64 @@ func nativeTcpClose(handle: Int): Int {
         sixth: 0)
     if kernelFailed(outcome: outcome) { return outcome }
     return 0
+}
+
+@platform(linux)
+func nativeReadQueueOpen(capacity: Int): Result<NativeTcpReadQueue, NetworkError> {
+    let port = linuxCall(x86: 291, arm: 20, first: closeOnExec, second: 0, third: 0, fourth: 0, fifth: 0, sixth: 0)
+    if port < 0 { return .Err(classifyNetworkError(code: 0 - port)) }
+    return .Ok(NativeTcpReadQueue(handle: port, records: 0, capacity: capacity))
+}
+
+// struct epoll_event is packed on x86-64, but its 64-bit data is aligned on AArch64.
+@platform(linux)
+private func epollIndexOffset(): Int {
+    return if onArm() { 8 } else { 4 }
+}
+
+@platform(linux)
+private func epollRegistration(port: Int, operation: Int, handle: Int, index: Int): Int {
+    var entry = zeroBuffer(count: 16)
+    &entry[0] = 1  // EPOLLIN; EPOLLERR and EPOLLHUP are implicit.
+    &entry[3] = 0x40  // EPOLLONESHOT, without EPOLLET.
+    putInteger(bytes: &entry, offset: epollIndexOffset(), width: 8, value: index)
+    return linuxCall(x86: 233, arm: 21, first: port, second: operation, third: handle,
+        fourth: addressOfBytes(bytes: &entry), fifth: 0, sixth: 0)
+}
+
+@platform(linux)
+func nativeReadQueueRegister(port: NativeTcpReadQueue, handle: Int, index: Int): Int {
+    return epollRegistration(port: port.handle, operation: 1, handle: handle, index: index)  // EPOLL_CTL_ADD
+}
+
+@platform(linux)
+func nativeReadQueueArm(port: NativeTcpReadQueue, handle: Int, index: Int): Int {
+    return epollRegistration(port: port.handle, operation: 3, handle: handle, index: index)  // EPOLL_CTL_MOD
+}
+
+@platform(linux)
+func nativeReadQueueWait(port: NativeTcpReadQueue, timeoutMillis: Int, event: inout TcpReadQueueEvent): Int {
+    var entry = zeroBuffer(count: 16)
+    // epoll_pwait(epfd, events, 1, timeout, NULL, sizeof(kernel_sigset_t)).
+    let outcome = linuxCall(x86: 281, arm: 22, first: port.handle, second: addressOfBytes(bytes: &entry),
+        third: 1, fourth: timeoutMillis, fifth: 0, sixth: 8)
+    if outcome <= 0 { return outcome }
+    let offset = epollIndexOffset()
+    &event.index = (entry[offset] as Int) | ((entry[offset + 1] as Int) << 8)
+    &event.status = 0
+    return 1
+}
+
+@platform(linux)
+func nativeReadQueueCancelled(status: Int): Bool { return false }
+
+@platform(linux)
+func nativeReadQueueCloseSocket(handle: Int): Int {
+    // Linux removes a descriptor even if close reports EINTR. Never retry a recycled descriptor.
+    return nativeTcpClose(handle: handle)
+}
+
+@platform(linux)
+func nativeReadQueueDestroy(port: NativeTcpReadQueue) {
+    if nativeTcpClose(handle: port.handle) < 0 { }
 }

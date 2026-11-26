@@ -1080,6 +1080,26 @@ if(JOYEER_CLANG_EXECUTABLE)
         endforeach()
     endfunction()
 
+    if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
+        add_joyeer_native_regression(E2ETcpReadQueueTransfer tcp_read_queue_transfer
+                "TCP read queue transfer passed\n")
+    endif()
+    if(WIN32)
+        file(GLOB tcp_queue_system_sources "${JOYEER_SOURCE_DIR}/lib/System/*.joyeer")
+        foreach(level IN ITEMS 0 2)
+            add_test(NAME E2ETcpReadQueueWindowsO${level}
+                    COMMAND ${CMAKE_COMMAND}
+                            -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                            "-DINPUT_FILES=${tcp_queue_system_sources};${JOYEER_TESTS_DIR}/e2e/stdlib/system_read_queue_windows.joyeer"
+                            -DMODULE_NAME=System
+                            -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/tcp-read-queue-windows-O${level}.exe
+                            "-DCOMPILER_ARGS=-O${level};--runtime-module;System"
+                            "-DEXPECTED_OUTPUT=TCP read queue failure paths passed\n"
+                            -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake)
+            set_tests_properties(E2ETcpReadQueueWindowsO${level} PROPERTIES LABELS "e2e;network;ownership" TIMEOUT 60)
+        endforeach()
+    endif()
+
     add_joyeer_native_regression(
             E2EDeinitMoves deinit_moves
             "10\n20\n30\n40\n5\n50\n60\n7\n6\n4\n3\n2\n1\n")
@@ -1295,6 +1315,8 @@ none
             E2EChannelCycle channel_cycle
             "built\n"
             0 1 2 3)
+    add_joyeer_native_regression(
+            E2EChannelReadiness channel_readiness "1\n7\n1\ntrue\n1\n" 0 1 2 3)
     add_joyeer_native_regression(
             E2EMatchMoves match_moves
             "1\n1\n9\n9\n20\n30\n3\n41\n2\n")
@@ -1736,6 +1758,17 @@ abcdabcd
             "true\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\ntrue\ntrue\nfalse\nfalse\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\nfalse\ntrue\ntrue\ntrue\nfalse\n200\n-1\n-3\n"
             0 1 2 3)
     add_joyeer_native_regression(
+            E2EQualifiedBuiltinCases qualified_builtin_cases "7\nrange\n" 0 1 2 3)
+    add_joyeer_native_regression(
+            E2EConsumeQualifiedCase consume_qualified_case "end\nendend\n" 0 1 2 3)
+    add_joyeer_native_regression(
+            E2EOwnedMatchPayloads owned_match_payloads
+            "unbound guard\nowned\ndynamic text\nempty\nreceived array\nclosed\n9\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2ELinearAggregateCommit linear_aggregate_commit "5\n11\n7\n15\n9\n19\n23\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
             E2ERadixLiterals radix_literals
             "255
 3988292384
@@ -1951,12 +1984,24 @@ add_joyeer_rejected_regression(TypeGenericTypesRejectExpandingRecursion type-che
         generic_type_recursion type-checking.expanding-generic-recursion)
 add_joyeer_rejected_regression(TypeGenericTypesRejectExpandingRecursionWithUse type-checking
         generic_type_recursion_use type-checking.expanding-generic-recursion)
+add_joyeer_rejected_regression(TypeChannelRejectsOwnReceiver type-checking
+        channel_self_receiver type-checking.channel-receiver-cycle)
+add_test(NAME TypeJoinTemporaryNeedsStoredHandle
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/err/join_temporary.joyeer"
+            "-DEXPECTED_PATTERN='join' needs a value stored"
+            "-DFORBIDDEN_PATTERN=consuming method call requires"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake")
+set_tests_properties(TypeJoinTemporaryNeedsStoredHandle PROPERTIES LABELS "type-checking;tasks;regression" TIMEOUT 30)
 add_joyeer_rejected_regression(DiagnosticsCliRejectsStartProcessValueWithTasks semantic-analysis
         start_process_value_with_tasks semantic-analysis.run-process-with-tasks)
 add_joyeer_rejected_regression(NameResolutionRejectsFabricatedFileOwner name-resolution
         construct_file_owner name-resolution.inaccessible-declaration)
 add_joyeer_rejected_regression(SemanticAnalysisRejectsReuseOfClosedFileOwner semantic-analysis
         reuse_closed_file_owner semantic-analysis.use-after-consume)
+add_joyeer_rejected_regression(SemanticAnalysisRejectsADroppedRemoveLastPayload semantic-analysis
+        match_linear_remove_last_drop semantic-analysis.linear-result-dropped)
 
 add_test(NAME GenericsInstantiationReport
         COMMAND ${CMAKE_COMMAND}

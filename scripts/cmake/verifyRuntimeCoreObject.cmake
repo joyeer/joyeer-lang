@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.20)
+
 # Checks the symbols of the Joyeer runtime core object (docs/plan/0008-runtime-in-joyeer.md).
 # The object must define exactly the approved exports and may call out only to the
 # approved imports, so a runtime function cannot silently gain a dependency (the

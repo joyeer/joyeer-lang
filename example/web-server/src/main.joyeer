@@ -14,7 +14,6 @@ struct Settings {
 }
 
 // How many accepted connections may wait in one worker's queue.
-private let queueCapacity: Int = 4
 private let defaultWorkers: Int = 4
 private let maximumWorkers: Int = 64
 
@@ -172,6 +171,13 @@ private func serveConnection(connection: TcpConnection, root: String) {
                         body: errorPage(status: 408, message: "Request Timeout"),
                         sendBody: true, extraHeaders: "")
                 },
+                .Clock(_) => {
+                    report(message: "could not read the request-head deadline clock")
+                    response = httpResponse(status: 500, reason: "Internal Server Error",
+                        contentType: "text/html; charset=utf-8",
+                        body: errorPage(status: 500, message: "Internal Server Error"),
+                        sendBody: true, extraHeaders: "")
+                },
                 .Network(_) => { },
             }
         },
@@ -184,10 +190,9 @@ private func serveConnection(connection: TcpConnection, root: String) {
     }
 }
 
-// What one worker task owns: the receiving end of its queue and the site directory. The task runs
-// until its queue is closed and empty, then returns how many connections it served.
 struct Worker {
     var inbox: ChannelReceiver<TcpConnection>
+    var ready: ChannelSender<Void>
     var root: String
 }
 
@@ -197,6 +202,10 @@ private func work(worker: consuming Worker): Int {
     var served = 0
     var running = true
     while running {
+        match worker.ready.send(value: consume ()) {
+            .Ok(_) => { },
+            .Err(_) => { return served },
+        }
         match worker.inbox.receive() {
             .Ok(connection) => {
                 serveConnection(connection: connection, root: worker.root)
@@ -212,35 +221,49 @@ private func work(worker: consuming Worker): Int {
     return served
 }
 
-// Accepts connections and deals them to the workers in turn until accepting itself keeps failing, then
-// closes every queue (each worker finishes what it holds and returns) and joins the workers. The accept
-// loop owns every sender and every connection until it sends one; a worker owns it from then on.
-// `send` waits when the chosen worker's queue is full, so a slow connection can hold the dealer up.
+// A worker advertises exactly one idle token before waiting on its inbox. The
+// accept loop consumes that token before assigning a connection, so work is
+// never queued behind a worker already handling another connection.
 private func serve(listener: TcpListener, root: String, workerCount: Int): Int {
     var senders: [ChannelSender<TcpConnection>] = []
+    var idle: [ChannelReceiver<Void>] = []
     var workers: [JoinHandle<Int>] = []
     var created = 0
     while created < workerCount {
         var sender: ChannelSender<TcpConnection>
         var receiver: ChannelReceiver<TcpConnection>
-        channel(capacity: queueCapacity, sender: &sender, receiver: &receiver)
+        var ready: ChannelSender<Void>
+        var availability: ChannelReceiver<Void>
+        channel(capacity: 1, sender: &sender, receiver: &receiver)
+        channel(capacity: 1, sender: &ready, receiver: &availability)
         &workers.append(element: consume spawn(function: work,
-            input: consume Worker(inbox: consume receiver, root: root)))
+            input: consume Worker(inbox: consume receiver, ready: consume ready, root: root)))
         &senders.append(element: consume sender)
+        &idle.append(element: consume availability)
         created = created + 1
     }
 
     var consecutiveFailures = 0
-    var next = 0
     while consecutiveFailures < 16 {
         match tcpAccept(listener: listener, timeoutMillis: -1) {
             .Ok(connection) => {
                 consecutiveFailures = 0
-                match senders[next].send(value: consume connection) {
-                    .Ok(_) => { },
-                    .Err(_) => { report(message: "a worker stopped; dropped a connection") },
+                let next = waitForChannel(receivers: idle)
+                match idle[next].receive() {
+                    .Ok(_) => {
+                        match senders[next].send(value: consume connection) {
+                            .Ok(_) => { },
+                            .Err(_) => {
+                                report(message: "an idle worker closed its inbox")
+                                consecutiveFailures = 16
+                            },
+                        }
+                    },
+                    .Err(_) => {
+                        report(message: "a worker stopped before shutdown")
+                        consecutiveFailures = 16
+                    },
                 }
-                next = (next + 1) % workerCount
             },
             .Err(failure) => {
                 consecutiveFailures = consecutiveFailures + 1
@@ -249,7 +272,7 @@ private func serve(listener: TcpListener, root: String, workerCount: Int): Int {
         }
     }
 
-    // Close the queues before joining: a worker waiting on its queue ends only when its sender is gone.
+    // Close both directions before joining so either blocked operation can finish.
     while true {
         let popped = &senders.removeLast()
         match consume popped {
@@ -258,6 +281,13 @@ private func serve(listener: TcpListener, root: String, workerCount: Int): Int {
         }
     }
     consume senders.consumeEmpty()
+    while true {
+        match &idle.removeLast() {
+            .Some(receiver) => { consume receiver.close() },
+            .None => { break },
+        }
+    }
+    consume idle.consumeEmpty()
     var served = 0
     while true {
         let popped = &workers.removeLast()

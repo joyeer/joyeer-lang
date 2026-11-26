@@ -1,5 +1,5 @@
-# The runtime is Joyeer (docs/plan/0008-runtime-in-joyeer.md): four "core" modules compiled
-# by the just-built compiler into the four objects the archive holds: the core
+# The runtime is Joyeer (docs/plan/0008-runtime-in-joyeer.md): "core" modules compiled
+# by the just-built compiler into separate archive members, including the core
 # (everything but the entry), the entry (the program startup logic and, on Windows, the
 # own entry point `joyeer_start`) and the main wrappers (the C `main` / `wmain`). They are
 # separate objects so that linking the core into a test executable does not add a second
@@ -86,9 +86,8 @@ set(JOYEER_RUNTIME_CHANNELS_OBJECT
 joyeer_runtime_core_object("${JOYEER_RUNTIME_CHANNELS_OBJECT}" runtime.channels
         "Compiling the Joyeer runtime channels" ${JOYEER_RUNTIME_CHANNELS_SOURCES})
 
-# The archive holds the five Joyeer objects and nothing else: there is no C source
-# left, so the target needs its linker language named (tests/unittests/runtime
-# checks the members).
+# The archive holds only these Joyeer objects, so the target needs its linker
+# language named (tests/unittests/runtime checks the members).
 add_library(JoyeerRuntime STATIC
         "${JOYEER_RUNTIME_CORE_OBJECT}"
         "${JOYEER_RUNTIME_ENTRY_OBJECT}"
@@ -96,6 +95,14 @@ add_library(JoyeerRuntime STATIC
         "${JOYEER_RUNTIME_THREADS_OBJECT}"
         "${JOYEER_RUNTIME_CHANNELS_OBJECT}"
 )
+if(JOYEER_WINDOWS_ARCH STREQUAL "arm64")
+    set(memory_object "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/runtime-memory-windows-arm64${CMAKE_C_OUTPUT_EXTENSION}")
+    joyeer_runtime_core_object("${memory_object}" runtime.windows_memory
+            "Compiling the Joyeer Windows ARM64 memory helpers"
+            "${CMAKE_CURRENT_SOURCE_DIR}/core/memory_windows_arm64.joyeer")
+    target_sources(JoyeerRuntime PRIVATE "${memory_object}")
+    set_target_properties(JoyeerRuntime PROPERTIES JOYEER_WINDOWS_MEMORY_OBJECT "${memory_object}")
+endif()
 target_include_directories(JoyeerRuntime PUBLIC ${JOYEER_RUNTIME_INCLUDE_DIR})
 # The symbol gates in tests/unittests/runtime read the object paths from here.
 set_target_properties(JoyeerRuntime PROPERTIES

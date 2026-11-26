@@ -1,0 +1,9 @@
+@c_extern(symbol: "abort")
+func abortProcess(): Never
+
+@c_extern(symbol: "joyeer_intrinsic_symbol_address")
+func symbolAddress(name: String): Int
+
+func main() {
+    print(value: symbolAddress(name: "abort"))
+}

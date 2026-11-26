@@ -288,18 +288,17 @@ point.
 
 ### 18.6 TCP networking
 
-> **Status: provisional.** Implemented and tested on Windows x64 and Linux
-> x86-64 (Debug); the AArch64 system call numbers are untested. On macOS every
-> operation currently fails with `.Other(38)`. The
-> design record is [0012](../docs/decisions/0012-tcp-networking.md). Rules here
-> may change before acceptance. The first version is deliberately small:
-> blocking IPv4 TCP between literal addresses. Names, IPv6, UDP, timeouts,
-> non-blocking I/O, concurrency, socket options, peer addresses, and TLS are
-> deferred.
+> **Status: provisional.** Basic IPv4 TCP passed Windows x64 and Linux x86-64
+> testing. The newer poll and deadline APIs have native Windows x64 and
+> macOS ARM64 coverage. Linux still needs native acceptance for these APIs. See
+> [0012](../docs/decisions/0012-tcp-networking.md) and
+> [0014](../docs/decisions/0014-network-timeouts.md). The read readiness queue
+> has its own provisional contract below.
 
 ```joyeer
 struct TcpListener { /* representation unspecified */ }
 struct TcpConnection { /* representation unspecified */ }
+struct TcpReadQueue { /* representation unspecified */ }
 
 enum NetworkError {
     InvalidInput(Int),
@@ -315,20 +314,28 @@ enum NetworkError {
 func tcpListen(address: String, port: Int, backlog: Int): Result<TcpListener, NetworkError>
 func tcpAccept(listener: TcpListener, timeoutMillis: Int): Result<TcpConnection, NetworkError>
 func tcpConnect(address: String, port: Int): Result<TcpConnection, NetworkError>
+func tcpConnectWithin(address: String, port: Int, timeoutMillis: Int): Result<TcpConnection, NetworkError>
 func tcpLocalPort(listener: TcpListener): Result<Int, NetworkError>
+func tcpPoll(connections: [TcpConnection], listeners: [TcpListener], timeoutMillis: Int): Result<TcpReadiness, NetworkError>
+func tcpOpenReadQueue(connections: consuming [TcpConnection]): Result<TcpReadQueue, NetworkError>
+func tcpReadQueueWait(queue: inout TcpReadQueue, timeoutMillis: Int): Result<Int?, NetworkError>
+func tcpReadQueueReceive(queue: inout TcpReadQueue, maximumBytes: Int): Result<String?, NetworkError>
+func tcpReadQueueSendWithin(queue: inout TcpReadQueue, contents: String, timeoutMillis: Int): Result<Void, NetworkError>
+func tcpReadQueueCloseCurrent(queue: inout TcpReadQueue): Result<Void, NetworkError>
 func tcpReceive(connection: TcpConnection, maximumBytes: Int, timeoutMillis: Int): Result<String, NetworkError>
 func tcpSend(connection: TcpConnection, contents: String): Result<Void, NetworkError>
+func tcpSendWithin(connection: inout TcpConnection, contents: String, timeoutMillis: Int): Result<Void, NetworkError>
 func tcpCloseConnection(connection: consuming TcpConnection): Result<Void, NetworkError>
 func tcpCloseListener(listener: consuming TcpListener): Result<Void, NetworkError>
 ```
 
-These are public functions of `System`. Arguments are borrowed and evaluated
-once in declaration order. Every successful `String` is independently owned.
-A `TcpListener` or `TcpConnection` is a handle to one operating-system
-resource. It declares a `deinit` (§3.7), so it is noncopyable (§4.1.1): a program
-cannot copy it into a second owner, and a `Result` or `Optional` that holds one is
-noncopyable too. Programs must not construct or inspect one; only the functions
-above produce and use it.
+These are public functions of `System`. Arguments are borrowed unless the
+signature says otherwise, and evaluated once in declaration order. Every
+successful `String` is independently owned.
+`TcpListener`, `TcpConnection`, and `TcpReadQueue` own native resources. Each
+declares a `deinit` (§3.7), so it is noncopyable (§4.1.1): a program cannot copy
+it into a second owner, and a `Result` or `Optional` that holds one is
+noncopyable too. Their storage is not public.
 
 #### Addresses, ports, and limits
 
@@ -367,9 +374,10 @@ All `.InvalidInput` results are produced before any resource is created.
   It exists chiefly so that programs and tests can speak to their own
   listener; it is a complete client for literal addresses.
 - `tcpLocalPort` returns the port a listener is bound to.
-- Every handle is created non-inheritable (`O_CLOEXEC`/`SOCK_CLOEXEC`, or
-  `WSA_FLAG_NO_HANDLE_INHERIT`), so a child started by `runProcess` does not
-  share a socket with its parent.
+- Socket and readiness queue handles are non-inheritable before they are
+  returned, so a child started by `runProcess` does not share them with its
+  parent. See [§21.6](21-concurrency.md#216-restrictions) for the restriction
+  on running processes alongside tasks.
 
 #### Accepting
 
@@ -391,14 +399,94 @@ peer's address is not reported in this version.
   of stream, and an error; the call then returns the data, the empty string, or
   the error exactly as it would have after an unlimited wait.
 - When the wait expires the call returns `.Err(.TimedOut(code))`, with `code`
-  `WSAETIMEDOUT` (10060) on Windows and `ETIMEDOUT` (110) on POSIX. No data is
-  consumed and the handle stays valid.
+  `WSAETIMEDOUT` (10060) on Windows or `ETIMEDOUT` (Linux 110, macOS 60).
+  No data is consumed and the handle stays valid.
 - A wait interrupted by a signal restarts with its full timeout.
 
-The limit bounds one wait, not a sequence of calls: a peer that sends a byte just
-before each timeout still holds a connection that the caller keeps reading.
-Callers can track a total deadline with the monotonic clock (§18.8). `tcpSend` and
-`tcpConnect` have no timeout, because bounding them needs non-blocking sockets.
+The receive and accept limit bounds one wait, not a sequence of calls. Callers
+can track a longer-lived deadline with the monotonic clock (§18.8).
+
+`tcpConnectWithin` and `tcpSendWithin` use the same timeout range, checked
+before opening a socket or touching a connection, even for an empty send.
+`-1` uses the unbounded operation. `0` permits immediate nonblocking progress,
+but no wait. A positive timeout shares one monotonic budget across waits and
+partial progress, rather than restarting after a short write or interrupted
+wait. Expiry returns `.TimedOut`; scheduling and host timer resolution can
+delay the return. A clock query failure returns `.Other(code)`.
+
+`tcpConnectWithin` checks the socket error after a pending connect becomes
+ready, and publishes a blocking connection only on success. If the host reports
+readiness within the bounded wait, that result wins even if rescheduling is late.
+Failure closes the
+new socket. `tcpSendWithin(connection: &connection, ...)` temporarily uses
+nonblocking mode. A send error, including expiry, may follow acceptance of an
+unknown prefix: do not retry the entire message blindly. If restoring blocking
+mode fails, that error takes precedence; the function invalidates and closes
+the owner. Later I/O returns `.InvalidInput`; explicit close and destruction
+have nothing left to close.
+
+#### Polling several sockets
+
+`tcpPoll` borrows both arrays and waits on the whole set. It accepts 1 to 64 sockets
+combined, with either array allowed to be empty. The timeout uses the range above.
+An invalid count or timeout returns `.InvalidInput` before calling the OS.
+
+`TcpReadiness` has public `connections` and `listeners` fields of type `[Int]`.
+Each contains zero-based indices into its corresponding input array, in ascending
+input order. Timeout is success with two empty lists. A pending connection, readable
+data, end of stream, or a socket error may indicate readiness; an invalid local
+descriptor or an interrupted poll is an error. Polling does not read, accept, or
+clear socket errors. Readiness is advisory: a subsequent blocking call is not
+guaranteed to complete immediately.
+
+The bounded implementation uses `WSAPoll` on Windows, `ppoll` on Linux, and
+`poll` on macOS.
+
+#### TCP read readiness queues
+
+> Provisional; see [decision 0032](../docs/decisions/0032-tcp-read-queue.md).
+
+`tcpOpenReadQueue` consumes an array of 1–4096 live local connection owners.
+An invalid count or a locally invalidated owner returns `.InvalidInput`
+before registering sockets. On any setup failure, the call closes all inputs
+before returning the error. Native resource limits may prevent a queue from
+reaching the API ceiling. Ownership is transferred to the call on every
+outcome.
+
+`tcpReadQueueWait` takes the same timeout range as `tcpPoll`. An invalid timeout
+does not change the current selection. A valid wait releases that selection,
+rearming the socket unless a read already confirmed EOF or a terminal error;
+in those cases it closes and retires the slot instead, without reporting
+close errors. The wait returns
+`.Ok(.Some(index))` when it selects a connection and `.Ok(nil)` on expiry or
+when no connections remain, even with an unlimited timeout. A timeout leaves
+no selection and does not cancel registrations. A positive timeout shares a
+single monotonic budget across rearm, interruptions and the wait; zero does
+not block for readiness. Indices are zero-based and stable for the lifetime
+of the queue. Notification order and fairness are unspecified.
+
+Readiness is advisory: data, EOF or a socket failure can make a slot ready.
+It does not itself consume data or confirm EOF. `tcpReadQueueReceive` makes a
+nonblocking read of up to `maximumBytes` (1–1048576). `.Ok(nil)` means a read
+would block, `.Ok(.Some(""))` confirms EOF, and a nonempty string holds the
+bytes read. A failed read probe selects its slot, with the socket error
+available to receive if there are no bytes to return. Confirmed EOF and
+terminal read errors repeat until the selection is released or closed.
+
+`tcpReadQueueSendWithin` sends on the selected socket with a timeout of
+0–2147483647 milliseconds and the same partial-send rule as `tcpSendWithin`.
+It can be used to reply after a read confirms EOF, before releasing the slot.
+`tcpReadQueueCloseCurrent` clears the selection and permanently retires the
+slot; a reported close error does not revive it. These three operations
+return `.InvalidInput` without a selection. Bad sizes or budgets leave the
+selection unchanged.
+
+An unrecoverable queue-level wait or rearm failure closes all owned sockets
+and retains that failure for subsequent calls with valid arguments.
+Destroying a queue closes all remaining connections and releases its
+registrations. A queue can move between tasks, but all use is exclusive.
+There is no operation to extract a connection, insert a new connection, or
+register a listener. Waiting does not scan the full set.
 
 #### Receiving
 
@@ -445,8 +533,8 @@ failure to close is not reported. Close explicitly when the result matters.
 #### Errors
 
 `NetworkError` payloads are `Int`. The payload is the original platform code:
-`WSAGetLastError()` on Windows, the positive `errno` on POSIX (raw system calls
-on Linux return `-errno`, which is negated). `.InvalidInput` carries
+`WSAGetLastError()` or `GetLastError()` on Windows, the positive `errno` on POSIX
+(raw system calls on Linux return `-errno`, which is negated). `.InvalidInput` carries
 the platform's invalid-argument code. Classification:
 
 | Case | POSIX | Windows |
@@ -456,7 +544,7 @@ the platform's invalid-argument code. Classification:
 | `AddressNotAvailable` | `EADDRNOTAVAIL` | `WSAEADDRNOTAVAIL` |
 | `PermissionDenied` | `EACCES`, `EPERM` | `WSAEACCES` |
 | `ConnectionRefused` | `ECONNREFUSED` | `WSAECONNREFUSED` |
-| `ConnectionReset` | `ECONNRESET`, `EPIPE`, `ECONNABORTED` | `WSAECONNRESET`, `WSAECONNABORTED`, `WSAESHUTDOWN` |
+| `ConnectionReset` | `ECONNRESET`, `EPIPE`, `ECONNABORTED` | `WSAECONNRESET`, `WSAECONNABORTED`, `WSAESHUTDOWN`; `ERROR_NETNAME_DELETED`, `ERROR_CONNECTION_ABORTED` for read-probe completions |
 | `TimedOut` | `ETIMEDOUT` | `WSAETIMEDOUT` |
 | `Other` | everything else, including a failed Winsock startup | everything else |
 
@@ -475,14 +563,14 @@ On Linux the operations are system calls made directly (decision 0011), with no
 C library or resolver; a program that uses them needs no library beyond the C
 startup that every Linux program already has.
 
+On macOS the operations use libSystem. The read queue registers socket read
+events in `kqueue`; a hangup can be reported with bytes still buffered.
+
 #### Not provided
 
-Blocking is the only mode. One call that waits stops the whole program, so a
-server built on this API serves one connection at a time. A receive or accept
-timeout keeps one idle client from holding the others out indefinitely, but a
-slow client that never reads can still stall `tcpSend`. There is no send or
-connect timeout, total deadline, cancellation, non-blocking mode, readiness wait
-over several handles, or thread. There is no one-directional
+These calls are synchronous on the calling thread. A slow client can still
+stall unbounded `tcpSend`. There is no exposed socket mode, general cancellation,
+or dynamic readiness set. There is no one-directional
 `shutdown`, no peer or local address query beyond `tcpLocalPort`, no socket
 options, no host-name resolution, no IPv6, no UDP, no Unix-domain sockets, and
 no TLS. Binding `"0.0.0.0"` exposes the program to the network; these

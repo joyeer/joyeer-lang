@@ -68,6 +68,9 @@ it when linking programs. Unit tests, fern, and Compression are enabled by
 default. Keep them enabled for acceptance;
 filtered CTest runs are only for focused iteration.
 
+Linux runtime tests use the SDK's `llvm-nm`; on AArch64 they also use
+`llvm-objdump` to distinguish C startup imports from program references.
+
 The Debug presets also set `JOYEER_BACKEND_TEST_HOOKS=ON`: the backend verifies
 the optimized module again and accepts a test fault injection. It is off by
 default and in the Release presets, which build the packages; never enable it
@@ -172,9 +175,12 @@ are embedded in that compiler and aren't installed as separate source files.
 Before redistribution, assemble applicable LLVM/LLD, support-library,
 Windows LibXml2, Linux Clang, and other dependency notices.
 
-**Homebrew macOS limitation:** the backend depends on shared LLVM/LLD, Z3,
-and zstd libraries that the install does not bundle or relocate. A standalone
-package needs a suitable static SDK or dependency bundling/relocation.
+**Shared SDK limitation:** the backend follows the SDK's LLVM linkage on
+Linux and macOS. With a shared SDK (such as LLVM's Ubuntu packages or
+Homebrew), the install does not bundle or relocate the backend's shared
+dependencies. Even for a local Debug install, the matching libraries must be
+on the system loader's search path (`LLVM_HOME` only selects the build SDK).
+A standalone package needs a suitable static SDK or dependency bundling/relocation.
 Generated Joyeer programs do not inherit LLVM/LLD dependencies.
 
 ## Troubleshooting

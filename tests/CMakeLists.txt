@@ -44,6 +44,29 @@ endif()
 
 if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     add_subdirectory(c-interop)
+    if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
+        set(web_server_head "${JOYEER_SOURCE_DIR}/example/web-server/src/http.joyeer")
+        set(web_server_markdown "${JOYEER_SOURCE_DIR}/example/web-server/src/markdown.joyeer")
+        set(web_server_fixture "${CMAKE_CURRENT_SOURCE_DIR}/e2e/web-server/request_head_deadline.joyeer")
+        add_test(NAME WebServer.RequestHeadDeadline
+            COMMAND "${CMAKE_COMMAND}"
+                "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+                "-DINPUT_FILES=${web_server_head};${web_server_markdown};${web_server_fixture}"
+                "-DMODULE_NAME=test.request_head"
+                "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/web-request-head-deadline${CMAKE_EXECUTABLE_SUFFIX}"
+                "-DCOMPILER_ARGS=-O0;-g0"
+                "-DEXPECTED_OUTPUT=request-head deadline passed\n"
+                -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+        set_tests_properties(WebServer.RequestHeadDeadline PROPERTIES LABELS "e2e;network" TIMEOUT 60)
+        if(Python3_Interpreter_FOUND)
+            foreach(level IN ITEMS 0 2)
+                add_test(NAME "WebServer.IdleDispatchO${level}"
+                    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_idle_workers.py"
+                        "$<TARGET_FILE:joyeer>" "${JOYEER_SOURCE_DIR}/example/web-server" "${level}")
+                set_tests_properties("WebServer.IdleDispatchO${level}" PROPERTIES LABELS "e2e;network;channels" TIMEOUT 150)
+            endforeach()
+        endif()
+    endif()
     if(APPLE)
         add_subdirectory(lib/System)
     endif()

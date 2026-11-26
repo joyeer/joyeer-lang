@@ -356,6 +356,7 @@ private:
     std::optional<ir::Value> acquireOwned(ir::Value value, SourceSpan span);
     // Lowers `consume place`: moves the value out and leaves the place empty.
     std::optional<ir::Value> lowerTake(const syntax::ExprPtr& expression);
+    ir::Value takeFromPlace(ir::Value address, SourceSpan span);
     // Whether a call argument is written with `consume`.
     static bool movesArgument(const syntax::CallArgumentSyntax& argument);
     // Lowers an operand, moved if `moved`, coerced to `destination` and readied to be owned.
@@ -363,6 +364,15 @@ private:
             const syntax::ExprPtr& expression,
             typing::TypeId destination,
             bool moved = false);
+    struct ConstructionOperand {
+        ir::Value value;
+        SourceSpan span;
+        bool deferredTake;
+    };
+    std::optional<ConstructionOperand> prepareConstructionOperand(
+            const syntax::ExprPtr& expression, typing::TypeId destination, bool marked = false);
+    std::optional<ir::Value> commitConstructionOperand(
+            ConstructionOperand operand, typing::TypeId destination);
     // Acquires each operand and appends it to the instruction; false if one cannot be owned.
     bool transferOperands(
             ir::Instruction& instruction,
@@ -548,8 +558,8 @@ private:
             const syntax::PropagateExprSyntax::Ptr& expression);
 
     // ---- patterns.cpp: `match`, patterns, and pattern bindings
-    // Whether a pattern binds a noncopyable value, so the match must move it out.
-    bool patternBindsNoncopyable(const syntax::PatternPtr& pattern) const;
+    // Noncopyable bindings must move; bindings needing destruction can also move from a temporary.
+    bool patternBindsMovablePayload(const syntax::PatternPtr& pattern, bool moveCopyable) const;
     // Lowers `match` to a pattern switch, one block per arm up to the first that matches every
     // value, and a merge block.
     std::optional<ir::Value> lowerMatch(const syntax::MatchExprSyntax::Ptr& expression);
@@ -562,13 +572,14 @@ private:
             const syntax::PatternPtr& pattern,
             semantic::SymbolId symbol,
             ir::Value owned);
-    // Moves the noncopyable payloads a pattern binds out of the enum stored at `address`.
-    void bindMovedPayloads(const syntax::PatternPtr& pattern, ir::Value address);
+    // Takes selected payloads out of the enum stored at `address`.
+    void bindMovedPayloads(const syntax::PatternPtr& pattern, ir::Value address, bool moveCopyable);
     // Binds a matched pattern's names, copying payloads, or moving them when `address` is given.
     void bindPattern(
             const syntax::PatternPtr& pattern,
             ir::Value value,
-            std::optional<ir::Value> address = std::nullopt);
+            std::optional<ir::Value> address = std::nullopt,
+            bool moveCopyable = false);
 
     // ---- calls.cpp: direct and indirect calls, arguments, and struct construction
     // Lowers a call: special targets first, then the receiver and arguments, then the call.

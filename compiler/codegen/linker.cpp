@@ -273,7 +273,7 @@ bool needsCRuntime(const std::filesystem::path& objectFile) {
         // Winsock exports its Berkeley socket functions in lower case; ws2_32.lib is always linked and
         // none of these needs the C runtime's startup (decision 0012).
         static const char* const winsock[] = {"socket", "bind", "listen", "accept", "connect", "recv", "send",
-            "closesocket", "getsockname"};
+            "closesocket", "getsockname", "getsockopt", "ioctlsocket", "select"};
         if (name.rfind("joyeer_", 0) == 0 || std::find(std::begin(support), std::end(support), name) != std::end(support) ||
             std::find(std::begin(winsock), std::end(winsock), name) != std::end(winsock)) {
             continue;
@@ -640,7 +640,7 @@ LinkResult Linker::link(
         "/MANIFESTUAC:level='asInvoker' uiAccess='false'",
         "/OUT:" + outputPath,
         objectPath,
-        ownEntry ? runtimePath : "/WHOLEARCHIVE:" + runtimePath,
+        runtimePath,
         // The runtime is Joyeer objects, which no longer carry a default-library
         // directive for the C runtime, so name the static one (/MT) explicitly.
         "libcmt.lib",
@@ -656,9 +656,20 @@ LinkResult Linker::link(
             ? "/OPT:NOICF"
             : "/OPT:ICF";
     if (ownEntry) {
-        // memcpy, memset, memmove and memcmp live in the static VCRuntime, which needs no startup.
+#if defined(_M_ARM64)
+        // ARM64 VCRuntime memory routines can pull in CRT initialization and the C heap.
+        lldArguments.emplace_back("/ALTERNATENAME:memcpy=joyeer_windows_move_memory");
+        lldArguments.emplace_back("/ALTERNATENAME:memmove=joyeer_windows_move_memory");
+        lldArguments.emplace_back("/ALTERNATENAME:memset=joyeer_windows_fill_memory");
+        lldArguments.emplace_back("/ALTERNATENAME:memcmp=joyeer_windows_compare_memory");
+#else
+        // The x64 VCRuntime memory routines need no startup.
         lldArguments.emplace_back("libvcruntime.lib");
+#endif
         lldArguments.emplace_back("/ENTRY:joyeer_start");
+    } else {
+        // Pull in the wrapper before LLD selects the CRT startup; leave unrelated members lazy.
+        lldArguments.emplace_back("/INCLUDE:joyeer_runtime_crt_startup_anchor");
     }
     lldArguments.emplace_back(optimizeReferences);
     lldArguments.emplace_back(foldIdenticalCode);

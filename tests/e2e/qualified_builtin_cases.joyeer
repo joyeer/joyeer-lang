@@ -1,0 +1,12 @@
+func ioError(): IOError { return IOError.Other(7) }
+func rangeError(): ConversionError { return ConversionError.OutOfRange }
+
+func main() {
+    let code = match ioError() {
+        .Other(value) => value,
+        _ => 0,
+    }
+    print(value: code)
+    let error = rangeError()
+    print(value: match error { .OutOfRange => "range" })
+}

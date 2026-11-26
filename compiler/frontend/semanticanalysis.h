@@ -18,6 +18,7 @@ enum class DiagnosticId {
     unreachableCode,
     useBeforeInitialization,
     useAfterConsume,
+    overlappingConstructionAccess,
     initializingInitializedStorage,
     initializingParameterNotInitialized,
     partialConsumeOfDeinitType,
@@ -35,6 +36,7 @@ struct Diagnostic {
     SourceSpan span;
     std::string message;
     std::optional<std::string> help;
+    std::vector<DiagnosticSourceNote> notes {};
 };
 
 struct Result {

@@ -101,12 +101,13 @@ private:
     llvm::FunctionType* signatureType(ir::TypeId functionType);
     llvm::Function* declareFunction(const ir::Function& function);
     llvm::Function* declareNativeFunction(const ir::Function& function);
+    llvm::Function* declareDarwinFcntl();
     // The external global behind a `@c_data` binding; declared once per symbol.
     llvm::GlobalVariable* declareDataSymbol(const std::string& symbol);
     llvm::Function* declareCFunction(std::string_view name, llvm::Type* result,
             llvm::ArrayRef<llvm::Type*> parameters,
             llvm::ArrayRef<typing::TypeKind> parameterKinds = {},
-            typing::TypeKind resultKind = typing::TypeKind::error);
+            typing::TypeKind resultKind = typing::TypeKind::error, bool variadic = false);
     llvm::CallInst* call(std::string_view name, llvm::Type* result,
             llvm::ArrayRef<llvm::Value*> arguments);
     llvm::Value* stack(llvm::Type* type, const llvm::Twine& name = "");

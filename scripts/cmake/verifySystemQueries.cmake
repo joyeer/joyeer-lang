@@ -10,9 +10,14 @@ endif()
 
 get_filename_component(test_directory "${INPUT_FILE}" DIRECTORY)
 string(REPEAT "123" 130 long_value)
+set(environment_unsets --unset=JOYEER_QUERY_TEST_MISSING)
+if(NOT CMAKE_HOST_WIN32)
+    # Windows resolves the lowercase name to the same entry as the uppercase assignment.
+    list(APPEND environment_unsets --unset=joyeer_query_test_long)
+endif()
 string(TIMESTAMP before "%s" UTC)
 execute_process(
-    COMMAND "${CMAKE_COMMAND}" -E env --unset=JOYEER_QUERY_TEST_MISSING --unset=joyeer_query_test_long
+    COMMAND "${CMAKE_COMMAND}" -E env ${environment_unsets}
         "JOYEER_QUERY_TEST_EMPTY=" "JOYEER_QUERY_TEST_LONG=${long_value}" "PWD=/not-the-current-directory"
         "${OUTPUT_FILE}"
     WORKING_DIRECTORY "${test_directory}"
