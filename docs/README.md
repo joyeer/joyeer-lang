@@ -17,6 +17,7 @@ Explanations and plans do not add language rules or implementation guarantees.
 | Understand contracts and verification limits | [specs/09-contracts.md](../specs/09-contracts.md) |
 | Read the C binding design and distinguish its implemented subset | [specs/19-c-interop.md](../specs/19-c-interop.md) and [impl/c-interop.md](impl/c-interop.md) |
 | See what the compiler implements | [impl/supported-features.md](impl/supported-features.md) |
+| Follow a compilation through the source code | [Reading the Joyeer compiler](../compiler/README.md) |
 | Use the first local project-manager version | [impl/fern.md](impl/fern.md) |
 | Use the optional miniz-backed ZIP library | [Compression](impl/compression.md) |
 | Disassemble Java classes and JARs with an AI agent | [moss](../tools/moss/README.md) and its [skill](../tools/moss/skills/moss/SKILL.md) |

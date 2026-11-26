@@ -72,6 +72,23 @@ add_library(JoyeerCompilerCore OBJECT
 	frontend/token.h
 	frontend/typechecking.cpp
 	frontend/typechecking.h
+	frontend/typechecking/builder.h
+	frontend/typechecking/calls.cpp
+	frontend/typechecking/collections.cpp
+	frontend/typechecking/context.cpp
+	frontend/typechecking/declarations.cpp
+	frontend/typechecking/exclusivity.cpp
+	frontend/typechecking/expressions.cpp
+	frontend/typechecking/inference.cpp
+	frontend/typechecking/instances.cpp
+	frontend/typechecking/members.cpp
+	frontend/typechecking/model.cpp
+	frontend/typechecking/native.cpp
+	frontend/typechecking/patterns.cpp
+	frontend/typechecking/prelude.cpp
+	frontend/typechecking/protocols.cpp
+	frontend/typechecking/statements.cpp
+	frontend/typechecking/storage.cpp
 	ir/constants.cpp
 	ir/constants.h
 	ir/debuginfo.h

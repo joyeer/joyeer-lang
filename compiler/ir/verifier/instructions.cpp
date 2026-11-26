@@ -53,7 +53,7 @@ bool literalPatternFits(PatternKind kind, typing::TypeKind type, int64_t value, 
     return false;
 }
 
-// The type checker's pattern matrix (`patternMatrixIsExhaustive` in compiler/frontend/typechecking.cpp)
+// The type checker's pattern matrix (`patternMatrixIsExhaustive` in frontend/typechecking/patterns.cpp)
 // over IR patterns of verified types: whether the rows cover every tuple of values of the column types.
 // A wildcard covers its column; `true` and `false` together cover `Bool`; one case pattern per case
 // covers an enum when the rows of each case cover its payloads. Other literals cover nothing alone, an
