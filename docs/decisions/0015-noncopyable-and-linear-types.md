@@ -1,8 +1,8 @@
 # 0015: Noncopyable and linear types, and handles that close
 
-- Status: accepted (2026-11-10), implemented. Phase P2 of the
-  [concurrency plan](../plan/0009-concurrency.md). `deinit`, noncopyable types, owning pattern
-  bindings and `Array.removeLast` are implemented (P2a, P2b); linear types (P2c) are specified
+- Status: accepted (2026-11-10), implemented as concurrency phase P2.
+  `deinit`, noncopyable types, owning pattern bindings and `Array.removeLast`
+  are implemented (P2a, P2b); linear types (P2c) are specified
   below; their checks are implemented (see "Implemented as" under the stages) except as noted.
   The one fork in it, how a handle closes, was settled the same day in favor of a
   real `deinit` ("The fork"); that revises the answer accepted in

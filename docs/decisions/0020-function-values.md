@@ -18,7 +18,7 @@ param_type      ::= [ access_effect ] type
 but no stage implements it. The parser has no function-type syntax, the type model has no function
 kind, and a function name is accepted only as a callee or as the `function:` argument of `spawn`, which
 is read as a name, not checked as a value (§21.2.1). Everywhere else, using a function as a value fails
-late or misleadingly ([concurrency plan](../plan/0009-concurrency.md)).
+late or misleadingly.
 
 The runtime already calls through addresses, but untyped: `joyeer_intrinsic_call_void1/2`
 ([0009](0009-runtime-core-capabilities.md), D2) take an `Int` address, and nothing checks the target's
@@ -353,7 +353,7 @@ not needed now; if Phase 4 finds that it is, it gets its own record.
   declarations. Rust's `fn` item-to-pointer coercion is the non-capturing case chosen here, and Rust's
   `(s.f)(x)` is the parenthesized-callee rule.
 - The concurrency work found that a function used as a value gives a late or misleading diagnostic
-  ([0009 plan](../plan/0009-concurrency.md)); this record replaces that with a defined feature.
+  (plan 0009); this record replaces that with a defined feature.
 - The backend already generates per-type thunks and helpers that Joyeer code cannot express
   ([native_collections.cpp](../../compiler/backend/native_collections.cpp)). Typed function values are
   the first step to [moving them into the library](0023-library-concurrency.md).

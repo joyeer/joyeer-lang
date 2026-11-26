@@ -77,8 +77,6 @@ iteration, a progress log, and deletion once every item is done. Start from the
 | [0005](plan/0005-test-audit.md) | Test coverage gaps: fuzzing, sanitizers, CI, ownership generators, spec traceability |
 | [0006](plan/0006-toolchain-libraries.md) | Compiler-relative standard modules and runtime packaging; Windows ARM64 and Linux AArch64 validation remain |
 | [0008](plan/0008-runtime-in-joyeer.md) | The plan to write the whole runtime in Joyeer: definition of done, the core dialect, open design decisions, capabilities, phases and acceptance gates |
-| [0009](plan/0009-concurrency.md) | Tasks, channels, idle-worker dispatch, and TCP read readiness; remaining native and legacy glibc verification |
-| [0012](plan/0012-equatable.md) | `==` and `!=` through the `Equatable` protocol: builtin, derived and generic equality, `nil` comparison |
 
 ## Decisions
 
@@ -110,7 +108,7 @@ in the spec.
 | [0020](decisions/0020-function-values.md) | Function values: non-capturing references to top-level functions, `(effect T, ...): R` types without labels, positional calls, parenthesized non-identifier callees, one indirect call |
 | [0021](decisions/0021-protocols-and-generic-functions.md) | Protocols and monomorphized generic functions |
 | [0022](decisions/0022-generic-types-and-layout-intrinsics.md) | Generic structs/enums and runtime-only typed layout operations |
-| [0023](decisions/0023-library-concurrency.md) | Concurrency as a source prelude, with closed compatibility/transfer metadata and verified x86_64 and macOS ARM64 acceptance |
+| [0023](decisions/0023-library-concurrency.md) | Concurrency as a source prelude, with closed compatibility/transfer metadata and native platform validation |
 | [0024](decisions/0024-library-optional-and-result.md) | `Optional` and `Result` as role-bound library enums |
 | [0025](decisions/0025-library-collection-capabilities.md) | Borrowed element access and conditional ownership for library collections |
 | [0026](decisions/0026-library-array.md) | `Array` as a library struct |
@@ -118,7 +116,7 @@ in the spec.
 | [0028](decisions/0028-ir-opcode-set.md) | A smaller IR opcode set described by one table (accepted, in implementation) |
 | [0029](decisions/0029-contracts-and-owned-host-resources.md) | Prelude contracts, host queries and clocks, and noncopyable native resource owners |
 | [0030](decisions/0030-literal-patterns-are-not-promoted.md) | Literal patterns match only their own type; no implicit Optional promotion (accepted, implemented) |
-| [0031](decisions/0031-equatable.md) | Equality through a compiler-known `Equatable` protocol: opt-in derived conformances, `== nil` presence test (accepted, implemented; acceptance gates open) |
+| [0031](decisions/0031-equatable.md) | Equality through a compiler-known `Equatable` protocol: opt-in derived conformances and `== nil` presence test (implemented and validated) |
 | [0032](decisions/0032-tcp-read-queue.md) | Fixed-membership TCP read readiness over owned connections (provisional) |
 
 ## Conventions

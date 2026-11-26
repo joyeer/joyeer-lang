@@ -34,15 +34,12 @@ target_include_directories(JoyeerBackend SYSTEM PRIVATE
         ${LLVM_INCLUDE_DIRS}
         ${LLD_INCLUDE_DIRS}
 )
-llvm_map_components_to_libnames(JOYEER_BACKEND_LLVM_LIBRARIES
-        AsmParser
-        IRReader
-        Passes
-        native
-)
-target_link_libraries(JoyeerBackend PRIVATE
-        ${JOYEER_BACKEND_LLVM_LIBRARIES}
-)
+if(NOT WIN32 AND LLVM_LINK_LLVM_DYLIB)
+        # Clang and LLD from a shared-LLVM SDK already use libLLVM.
+        llvm_config(JoyeerBackend USE_SHARED AsmParser IRReader Passes native)
+else()
+        llvm_config(JoyeerBackend AsmParser IRReader Passes native)
+endif()
 if(WIN32)
         target_link_libraries(JoyeerBackend PRIVATE
                 lldCOFF

@@ -3,7 +3,8 @@
 - Status: accepted and implemented in stage 10 of the
   [runtime plan](../plan/0008-runtime-in-joyeer.md) (decided and built 2026-11-08). Verified on
   Windows x64 and Linux x86-64 (Ubuntu under WSL2, the full suite). See
-  [plan 0009](../plan/0009-concurrency.md) for subsequent native platform acceptance.
+  [final platform validation](0023-library-concurrency.md#final-platform-validation)
+  for subsequent native platform acceptance.
 - Spec: [§19.4.6](../../specs/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)
   gains the syscall and target-architecture intrinsics when 10.2 lands.
 

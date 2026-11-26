@@ -94,10 +94,10 @@ lookup for direct `joyeer` calls, not for fern. Workspace validation is unchange
 - [x] Move `JoyeerRuntime.*` into `lib/` (9.3 of the [runtime plan](0008-runtime-in-joyeer.md#11-todo)).
   Evidence: macOS ARM64 Debug and Release passed the full validator and the installed compiler
   and fern packaging tests. A relocated `install-debug.py` install also linked and ran `hello`.
-- [x] Windows x64: [post-layout validation at `5d75dad`](0012-equatable.md#phase-5-acceptance).
+- [x] Windows x64: [post-layout validation at `5d75dad`](../decisions/0031-equatable.md#platform-validation).
   Debug and Release each passed unfiltered CTest 2200/2200 and `fern test` 7/7;
   some CTest cases passed on the validator's rerun.
-- [x] Linux x86-64 (WSL): [post-layout validation at `5d75dad`](0012-equatable.md#phase-5-acceptance).
+- [x] Linux x86-64 (WSL): [post-layout validation at `5d75dad`](../decisions/0031-equatable.md#platform-validation).
   Debug and Release each passed unfiltered CTest 2175/2175 and `fern test` 7/7.
 - [x] macOS ARM64: the archive move in `8289622` recorded unfiltered CTest 2019/2019 and
   `fern test` 7/7 in Debug and Release, including `Fern.Installed` and

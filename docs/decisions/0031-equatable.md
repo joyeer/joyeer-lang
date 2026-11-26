@@ -1,9 +1,10 @@
 # 0031: Equality through `Equatable`
 
-- Status: accepted (2026-11-21, by the user, as revised after review); implemented in plan 0012 phases 2 to 4 (2026-11-22), with the acceptance gates of phase 5 open. The user chose explicit
+- Status: accepted (2026-11-21, by the user, as revised after review); implemented
+  and [validated](#platform-validation). The user chose explicit
   opt-in, the requirement `equals(other:)`, `x == nil` as a presence test on any optional, and conformance for
   noncopyable but not linear types. The other answers are the author's, revised after a language-designer and a
-  type-system review (see "Review"). Work is tracked in [plan 0012](../plan/0012-equatable.md).
+  type-system review (see "Review").
 - Spec: [§2.1.2, §2.4, §2.5, §2.6](../../specs/02-types.md), [§5.2](../../specs/05-expressions.md),
   [§12.4](../../specs/12-modules.md), [§20.1–20.6, §20.8, §20.10, §20.12.2, §20.12.5 and §20.13](../../specs/20-protocols.md),
   [Appendix C](../../specs/appendix-c-grammar.md), amended 2026-11-21. [0024](0024-library-optional-and-result.md) is
@@ -274,3 +275,30 @@ choices.
   median ratio within noise; scalars at -O0 emit identical IR); array `==` costs the same as the same loop written
   by hand (0.993 at -O0, 0.988 at -O2), and derived struct `==` the same as a hand-written field comparison at -O2
   (1.005) and less at -O0 (0.677).
+
+### Platform validation
+
+Plan 0012 closed on 2026-11-26. Each row records unfiltered CTest and the root
+`fern test` in both Debug and Release with LLVM 22.1.8.
+
+| Platform | Revision or build inputs | CTest per configuration | `fern test` per configuration |
+|---|---|---:|---:|
+| Windows x64 | `5d75dad` | 2200/2200 | 7/7 |
+| Linux x86-64 (WSL2) | `5d75dad` | 2175/2175 | 7/7 |
+| Windows ARM64 | `c7a185f`, MSVC 14.52.37025 | 2260/2260 | 7/7 |
+| macOS ARM64 | `5c21924e`, macOS 26.5 SDK and deployment target | 2230/2230 | 7/7 |
+| Linux AArch64 | `c7a185f` plus shared LLVM and startup-import fixes; WSL2 Ubuntu 26.04.1, GCC 15.2, glibc 2.43 | 2235/2235 | 7/7 |
+
+Both ARM64 Windows and native AArch64 Linux runs passed all 24 `E2EEquatable`
+cases. Earlier Linux AArch64 QEMU runs at `5c21924e` and `4089941a` could not
+clear the full gate: the compiler reported heap corruption and the runtime
+import tests rejected `abort` from glibc's AArch64 `crt1.o`. Native WSL2
+reproduced both problems. The backend now follows the SDK's shared LLVM
+linkage instead of mixing static and shared copies, and the import tests
+allow only the direct `abort` call from `_start` on AArch64. They reject
+application calls and address references at `-O0` and `-O2`.
+
+The adversarial and independent type-system and IR/backend reviews were
+completed separately, with the final fixes at `55ae981` and `1d9d006`.
+Large aggregate copy elision and equality-specific overlap diagnostic wording
+are separate follow-ups.

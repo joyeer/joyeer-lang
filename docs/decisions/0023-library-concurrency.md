@@ -1,7 +1,7 @@
 # 0023: Concurrency as a source-library prelude
 
-- Status: accepted (2026-11-14), implemented in [#23](https://github.com/joyeer/joyeer-lang/pull/23)
-  and validated on Windows x64, Linux x86_64 (WSL2), and macOS ARM64.
+- Status: accepted (2026-11-14), implemented in [#23](https://github.com/joyeer/joyeer-lang/pull/23).
+  See [final platform validation](#final-platform-validation).
 - Spec: §2.6.3, §4.1.1/§4.7.1, §5.6.1, §19.4.5, §20.5/.6/.12,
   [§21](../../specs/21-concurrency.md), and Appendix C.
 
@@ -130,8 +130,8 @@ ordinary `deinit` structures have a hidden live flag. Neither is assumed free: i
 must establish the plan's no-regression gate in both profiles.
 
 Independent implementation reviews and failing regressions checked the compatibility metadata,
-must-transfer analysis, and verified-IR boundary. The recorded native macOS ARM64 results cover
-macOS and AArch64 on a supported OS; they are not Linux AArch64 results.
+must-transfer analysis, and verified-IR boundary. The early native macOS ARM64 results do not substitute for the separate
+Linux AArch64 run recorded below.
 
 ### Language review
 
@@ -230,7 +230,24 @@ The macOS run on 2026-11-22 used LLVM 22.1.8 and SDK/deployment target 26.5.
 It needed no reruns and covered the task and channel fixtures at `-O0` through
 `-O3` and both `JoyeerCInterop.GenericCallbacks` gates. The separate
 [generic debugger check](0021-protocols-and-generic-functions.md#validation-and-measurements)
-also passed. Linux AArch64 remains tracked in the [concurrency plan](../plan/0009-concurrency.md).
+also passed.
 
 The later migration of `Optional`, `Result`, `Array`, and `Dict` to library declarations is covered
 by the [collection validation](../impl/runtime.md#collection-validation).
+
+### Final platform validation
+
+Plan 0009 closed on 2026-11-26. These later runs used LLVM 22.1.8 and the
+unfiltered platform validator; each count is for **each** of Debug and Release.
+The table above records the initial x86-64 acceptance.
+
+| Platform | Revision or build inputs | CTest | `fern test` |
+|---|---|---:|---:|
+| Windows ARM64 | `c7a185f`, MSVC 14.52.37025 | 2260/2260 | 7/7 |
+| macOS ARM64 | `5c21924e`, macOS 26.5 SDK and deployment target | 2230/2230 | 7/7 |
+| Linux AArch64 | `c7a185f` plus shared LLVM and startup-import fixes; WSL2 Ubuntu 26.04.1, GCC 15.2, glibc 2.43 | 2235/2235 | 7/7 |
+
+These runs cover task and channel ownership, idle dispatch, and the HTTP
+request-head deadline. The updates for Linux socket validation are recorded
+in [0032](0032-tcp-read-queue.md#evidence); the pre-2.34 `-lpthread` check is in
+[0016](0016-thread-primitives.md#gating-and-the-link).

@@ -125,8 +125,11 @@ add_custom_target(runtime-benchmark
 # only the approved imports. Update both lists in the same change that adds a
 # function to lib/Runtime/core/ (runtime plan §4).
 get_filename_component(joyeer_llvm_bin "${JOYEER_CLANG_EXECUTABLE}" DIRECTORY)
-find_program(JOYEER_RUNTIME_NM_EXECUTABLE NAMES llvm-nm llvm-nm.exe
-    HINTS "${JOYEER_LLVM_ROOT}/bin" "${joyeer_llvm_bin}")
+find_program(JOYEER_RUNTIME_NM_EXECUTABLE NAMES llvm-nm llvm-nm-${LLVM_VERSION_MAJOR}
+    HINTS "${JOYEER_LLVM_ROOT}/bin" "${LLVM_TOOLS_BINARY_DIR}" "${joyeer_llvm_bin}")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT JOYEER_RUNTIME_NM_EXECUTABLE)
+    message(FATAL_ERROR "Linux runtime tests need llvm-nm from the LLVM SDK.")
+endif()
 get_target_property(JOYEER_RUNTIME_CORE_OBJECT JoyeerRuntime JOYEER_CORE_OBJECT)
 if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
     # The calls the core may make: compare, copy and fill (a variable-size
@@ -365,7 +368,42 @@ endif()
 # On Linux `System` calls the kernel directly (decision 0011): a program that uses each
 # part of it needs, from the C library, only the startup the linker adds and the compiler
 # support functions.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND JOYEER_RUNTIME_NM_EXECUTABLE)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(joyeer_linux_startup_imports __libc_start_main __cxa_atexit __gmon_start__
+        _ITM_registerTMCloneTable _ITM_deregisterTMCloneTable memcpy memset memmove memcmp)
+    set(joyeer_linux_import_options)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|AARCH64|arm64|ARM64)$")
+        # AArch64 glibc's crt1.o calls abort if __libc_start_main returns.
+        list(APPEND joyeer_linux_startup_imports abort)
+        find_program(JOYEER_RUNTIME_OBJDUMP_EXECUTABLE NAMES llvm-objdump llvm-objdump-${LLVM_VERSION_MAJOR}
+            HINTS "${JOYEER_LLVM_ROOT}/bin" "${LLVM_TOOLS_BINARY_DIR}" "${joyeer_llvm_bin}" REQUIRED)
+        list(APPEND joyeer_linux_import_options "-DSTARTUP_OBJDUMP=${JOYEER_RUNTIME_OBJDUMP_EXECUTABLE}")
+        foreach(kind IN ITEMS Call Address)
+            if(kind STREQUAL "Call")
+                set(fixture abort-import)
+            else()
+                set(fixture abort-address-import)
+            endif()
+            foreach(level IN ITEMS 0 2)
+                set(test_name "RuntimeStartupImportsRejectProgramAbort${kind}O${level}")
+                add_test(NAME "${test_name}"
+                    COMMAND "${CMAKE_COMMAND}"
+                        "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+                        "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/c-interop/${fixture}.joyeer"
+                        "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/${fixture}-O${level}"
+                        "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
+                        "-DCOMPILER_ARGS=-O${level};-g0;--module-name;test.abort_import;--runtime-module;test.abort_import"
+                        "-DALLOWED_IMPORTS=${joyeer_linux_startup_imports}"
+                        ${joyeer_linux_import_options}
+                        -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
+                set_tests_properties("${test_name}" PROPERTIES LABELS "runtime;native;entry" TIMEOUT 120
+                    PASS_REGULAR_EXPRESSION "abort reference outside _start")
+            endforeach()
+        endforeach()
+    endif()
+    set(joyeer_linux_thread_imports pthread_attr_init pthread_attr_setstacksize pthread_attr_destroy
+        pthread_create pthread_join pthread_mutex_lock pthread_mutex_unlock pthread_mutex_destroy
+        pthread_mutex_init pthread_cond_wait pthread_cond_signal pthread_cond_broadcast pthread_cond_destroy pthread_cond_init)
     foreach(fixture IN ITEMS filesystem process read_file stdin_lines)
         add_test(NAME RuntimeSystemProgramNeedsOnlyTheCStartup_${fixture}
             COMMAND "${CMAKE_COMMAND}"
@@ -374,7 +412,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND JOYEER_RUNTIME_NM_EXECUTABLE)
                 "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/system-${fixture}"
                 "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
                 "-DCOMPILER_ARGS=-O0;-g0"
-                "-DALLOWED_IMPORTS=__libc_start_main;__cxa_atexit;__gmon_start__;_ITM_registerTMCloneTable;_ITM_deregisterTMCloneTable;memcpy;memset;memmove;memcmp"
+                "-DALLOWED_IMPORTS=${joyeer_linux_startup_imports}"
+                ${joyeer_linux_import_options}
                 -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
         set_tests_properties(RuntimeSystemProgramNeedsOnlyTheCStartup_${fixture}
             PROPERTIES LABELS "runtime;native;entry;host" TIMEOUT 120)
@@ -389,7 +428,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND JOYEER_RUNTIME_NM_EXECUTABLE)
             "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/task-program"
             "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
             "-DCOMPILER_ARGS=-O0;-g0"
-            "-DALLOWED_IMPORTS=__libc_start_main;__cxa_atexit;__gmon_start__;_ITM_registerTMCloneTable;_ITM_deregisterTMCloneTable;memcpy;memset;memmove;memcmp;pthread_attr_init;pthread_attr_setstacksize;pthread_attr_destroy;pthread_create;pthread_join;pthread_mutex_lock;pthread_mutex_unlock;pthread_mutex_destroy;pthread_mutex_init;pthread_cond_wait;pthread_cond_signal;pthread_cond_broadcast;pthread_cond_destroy;pthread_cond_init"
+            "-DALLOWED_IMPORTS=${joyeer_linux_startup_imports};${joyeer_linux_thread_imports}"
+            ${joyeer_linux_import_options}
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
     set_tests_properties(RuntimeTaskProgramNeedsOnlyThePthreadFunctions
         PROPERTIES LABELS "runtime;native;entry;tasks" TIMEOUT 120)
@@ -402,7 +442,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND JOYEER_RUNTIME_NM_EXECUTABLE)
             "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/channel-program"
             "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
             "-DCOMPILER_ARGS=-O0;-g0"
-            "-DALLOWED_IMPORTS=__libc_start_main;__cxa_atexit;__gmon_start__;_ITM_registerTMCloneTable;_ITM_deregisterTMCloneTable;memcpy;memset;memmove;memcmp;pthread_attr_init;pthread_attr_setstacksize;pthread_attr_destroy;pthread_create;pthread_join;pthread_mutex_lock;pthread_mutex_unlock;pthread_mutex_destroy;pthread_mutex_init;pthread_cond_wait;pthread_cond_signal;pthread_cond_broadcast;pthread_cond_destroy;pthread_cond_init"
+            "-DALLOWED_IMPORTS=${joyeer_linux_startup_imports};${joyeer_linux_thread_imports}"
+            ${joyeer_linux_import_options}
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
     set_tests_properties(RuntimeChannelProgramNeedsOnlyThePthreadFunctions
         PROPERTIES LABELS "runtime;native;entry;channels" TIMEOUT 120)

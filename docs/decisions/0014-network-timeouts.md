@@ -1,12 +1,11 @@
 # 0014: Receive and accept timeouts
 
-- Status: accepted (2026-11-10). First step (1a) of stage 1 in the
-  [concurrency plan](../plan/0009-concurrency.md). Implemented for Windows and Linux
+- Status: accepted (2026-11-10). Implemented for Windows and Linux
   in the same change and verified on Windows x64 and Linux x86-64 (WSL2) Debug:
   `SystemTests` (the timeout cases) and the web server over real connections,
   where a silent client received `408` after 5.0 s and later clients were served.
-  The Linux AArch64 `ppoll` number and macOS are untested; full validation and
-  the role reviews have not run.
+  Subsequent native macOS ARM64 and WSL2 AArch64 validation is recorded in
+  [0032](0032-tcp-read-queue.md#evidence).
 - Spec: [§18.6 TCP networking](../../specs/18-host.md#186-tcp-networking)
   (provisional)
 

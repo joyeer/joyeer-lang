@@ -286,8 +286,8 @@ intentional change to accepted programs:
 - **It does not compile.** `Builder::comparison` handles only floating point and `joyeer.string`, then
   falls through to an integer comparison that cannot take an enum aggregate. No fixture compares
   optionals or results.
-- **The replacement** is a `match`, or equality through a protocol: plan
-  [0012](../plan/0012-equatable.md) brings `==` back for these types, for user types, and in generic code.
+- **The replacement** is a `match`, or equality through a protocol:
+  [0031](0031-equatable.md) brings `==` back for these types, for user types, and in generic code.
 - **The diagnostic** stays `type-checking.invalid-operator-operands` (the ID today's rejection of
   `Point == Point` uses), with help text: "compare with `match`, for example
   `match x { .Some(_) => …, .None => … }`".
@@ -334,8 +334,8 @@ line-level inventory.
   compiler"; state the sugar binding and the no-look-through rule.
 - §2.9: `Never` as an argument of a role-bound enum.
 - §4.1.1: the copyability and linearity paragraphs name role-bound enums instead of builtins.
-- §5.2: `==` and `!=` are not defined on `Optional` or `Result` (until [plan 0012](../plan/0012-equatable.md);
-  [0031](0031-equatable.md) defines them through `Equatable`).
+- §5.2: `==` and `!=` are not defined on `Optional` or `Result` by this decision;
+  [0031](0031-equatable.md) defines them through `Equatable`.
 - §5.4, §5.4.1, §5.6.1, §7.1.2, §8.3, §8.5: refer to the `optional` and `result` roles.
 - §19.4.7: core units still cannot use these types; the stated reason changes.
 - §20.4.2, §20.5: `T?` is a role-bound enum instance, not a builtin container. It still satisfies no

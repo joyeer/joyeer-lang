@@ -460,3 +460,12 @@ the private task-block owner's `deinit` traps (`task dropped without join`) if o
 live. `join` consumes that owner field and clears its address after freeing the block. Linux links
 `-lpthread` after the runtime archive group when emitted source functions reference the thread/channel
 ABI, including destruction paths. No concurrency type kind, opcode, or backend task thunk remains.
+
+## Concurrency validation
+
+The [final platform validator](../decisions/0023-library-concurrency.md#final-platform-validation)
+covered tasks, channels, thread safety, and idle-worker dispatch on Windows
+ARM64, macOS ARM64, and WSL2 AArch64. The new Linux run also exercised bounded
+connect and send, capped poll, and the one-shot read queue through the real
+`System` library. Its [glibc 2.31 link check](../decisions/0016-thread-primitives.md#gating-and-the-link)
+verified that task and channel programs need `-lpthread` on older glibc.

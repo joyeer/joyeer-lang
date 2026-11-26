@@ -1,6 +1,6 @@
 # 0032: Owned TCP read readiness queue
 
-- Status: proposed; implemented on Windows, Linux, and macOS, with native Linux validation pending
+- Status: proposed; implemented and validated on Windows, Linux, and macOS
 - Spec: [§18.6, TCP read readiness queues](../../specs/18-host.md#tcp-read-readiness-queues)
 
 ## Context
@@ -69,8 +69,13 @@ isolation, synchronous probe errors, and cleanup counters. Both passed at
 read queue's native calls; `-O0` retains unused System bindings.
 
 Linux x86-64 and WSL2 AArch64 kernel probes checked the respective event
-layouts, one-shot disarm and rearm, and FIN readiness. They do not replace
-validation of the Joyeer library on Linux; see [plan 0009](../plan/0009-concurrency.md).
+layouts, one-shot disarm and rearm, and FIN readiness. The later native
+WSL2 AArch64 validator passed unfiltered CTest 2235/2235 and `fern test` 7/7
+in Debug and Release. `SystemTests` covered bounded connect and send
+(including refusal and backpressure), the 64-socket poll cap, listener
+and connection indices, and one-shot queue rearm and EOF with 80 sockets.
+`E2ETcpReadQueueTransfer` passed at `-O0` and `-O2`, and the idle-worker and
+HTTP request-head deadline gates passed in both builds.
 
 Native macOS ARM64 Debug and Release at `5c21924e` passed unfiltered CTest
 2230/2230 and `fern test` 7/7. `SystemTests` covered selection beyond the

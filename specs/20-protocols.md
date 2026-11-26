@@ -731,8 +731,8 @@ no memory-safety claim about an address held across a reallocation.
 
 ### 20.13 `Equatable`
 
-[Decision 0031](../docs/decisions/0031-equatable.md). **Implementation status:** in part
-([plan 0012](../docs/plan/0012-equatable.md)). Implemented: the protocol, the builtin conformers,
+[Decision 0031](../docs/decisions/0031-equatable.md). **Implementation status:** implemented
+and validated. This covers the protocol, the builtin conformers,
 hand-written and derived conformances, the conformances of `Optional`, `Result` and arrays, `==` in
 generic code, and the presence test. Recursive types need arrays until `indirect` cases are implemented.
 

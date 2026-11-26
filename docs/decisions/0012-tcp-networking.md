@@ -139,8 +139,8 @@ Implementation shape (informative, to be confirmed while building):
      resource. Whether to leave this as is, let a pattern binding be consumed
      when the scrutinee is a temporary, or make the close take a borrowed
      handle is open.
-  2. The macOS libSystem and Linux AArch64 paths still need native runs.
-     [Plan 0009](../plan/0009-concurrency.md) tracks that evidence.
+  2. The macOS libSystem and Linux AArch64 paths passed native loopback
+     validation. See [0032](0032-tcp-read-queue.md#evidence).
 
 ## Evidence
 
