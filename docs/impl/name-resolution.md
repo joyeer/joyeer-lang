@@ -11,7 +11,9 @@
 ## 1. Boundary
 
 The resolver answers which declaration a syntactic name denotes without
-mutating the syntax AST.
+mutating the syntax AST. Single-file and named-module resolution share the
+[`resolveWithPrelude` pipeline](../../compiler/frontend/nameresolution.cpp);
+single-file lookup has different scoping, not a separate declaration walker.
 
 The semantic model assigns compilation-local identities:
 

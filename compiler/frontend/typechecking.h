@@ -158,7 +158,6 @@ public:
     [[nodiscard]] TypeId stringType() const;
     [[nodiscard]] TypeId uint8Type() const;
     [[nodiscard]] TypeId doubleType() const;
-    [[nodiscard]] TypeId ioErrorType() const;
 
     [[nodiscard]] TypeId arrayType(TypeId element);
     [[nodiscard]] TypeId dictionaryType(TypeId key, TypeId value);
@@ -191,14 +190,14 @@ public:
             const std::vector<syntax::AccessEffect>& effects,
             TypeId result);
 
-    // Resolves a type declaration symbol plus concrete built-in generic
-    // arguments. Invalid arity and non-type symbols return nullopt.
+    // Generic arguments follow the declaration's parameters, including role-bound prelude types.
+    // Invalid arity and non-type symbols return nullopt.
     [[nodiscard]] std::optional<TypeId> typeForSymbol(
             semantic::SymbolId symbol,
             const std::vector<TypeId>& arguments = {});
     [[nodiscard]] std::optional<semantic::SymbolId> builtinSymbol(
             std::string_view name) const;
-        [[nodiscard]] std::optional<size_t> typeArity(semantic::SymbolId symbol) const;
+    [[nodiscard]] std::optional<size_t> typeArity(semantic::SymbolId symbol) const;
 
     [[nodiscard]] const TypeRecord* type(TypeId id) const;
     [[nodiscard]] size_t size() const;
@@ -219,26 +218,18 @@ private:
         size_t operator()(const TypeKey& key) const noexcept;
     };
 
-    struct GenericConstructor {
-        TypeKind kind;
-        size_t arity;
-    };
-
     [[nodiscard]] TypeId intern(
             TypeKind kind,
             semantic::SymbolId symbol,
             std::vector<TypeId> arguments = {},
             std::vector<syntax::AccessEffect> effects = {});
-    [[nodiscard]] semantic::SymbolId requireBuiltinSymbol(const std::string& name);
-    void registerConcreteBuiltin(const std::string& name, TypeKind kind, TypeId& destination);
-    void registerGenericBuiltin(const std::string& name, TypeKind kind, size_t arity);
+    TypeId registerConcreteBuiltin(const std::string& name, TypeKind kind);
 
     const semantic::SemanticModel& model;
     std::vector<TypeRecord> types;
     std::unordered_map<TypeKey, TypeId, TypeKeyHash> internedTypes;
     std::unordered_map<std::string, semantic::SymbolId> builtinSymbols;
     std::unordered_map<semantic::SymbolId, TypeId> zeroArgumentTypes;
-    std::unordered_map<semantic::SymbolId, GenericConstructor> genericConstructors;
 
     TypeId errorTypeId = invalidTypeId;
     TypeId voidTypeId = invalidTypeId;
@@ -248,7 +239,6 @@ private:
     TypeId boolTypeId = invalidTypeId;
     TypeId stringTypeId = invalidTypeId;
     TypeId uint8TypeId = invalidTypeId;
-    TypeId ioErrorTypeId = invalidTypeId;
     TypeId doubleTypeId = invalidTypeId;
 };
 
@@ -409,9 +399,9 @@ public:
     [[nodiscard]] const std::unordered_map<semantic::NodeId, TypeId>& nodeTypeTable() const { return nodeTypes; }
     [[nodiscard]] const TypedCallableSignature* callable(semantic::SymbolId symbol) const;
     [[nodiscard]] const NativeBinding* nativeBinding(semantic::SymbolId symbol) const;
-        [[nodiscard]] std::optional<semantic::SymbolId> referencedSymbol(
+    [[nodiscard]] std::optional<semantic::SymbolId> referencedSymbol(
             const syntax::NodePtr& node) const;
-        [[nodiscard]] std::optional<semantic::SymbolId> callTarget(
+    [[nodiscard]] std::optional<semantic::SymbolId> callTarget(
             const syntax::NodePtr& node) const;
 
     // Copyability (spec 4.1.1, decision 0015). A struct that declares `deinit` is noncopyable,

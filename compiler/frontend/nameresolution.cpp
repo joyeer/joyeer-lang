@@ -177,39 +177,6 @@ std::vector<NameResolutionDiagnostic> validateCallArguments(
 
 class NameResolutionBuilder {
 public:
-    NameResolutionResult build(const syntax::SourceFileSyntax::Ptr& root) {
-        model = SemanticModel::Ptr(new SemanticModel(root));
-        if (root == nullptr) {
-            return NameResolutionResult { model, {} };
-        }
-
-        indexNode(root);
-        buildPrelude();
-        model->fileScope_ = createScope(
-                ScopeKind::file,
-                model->preludeScope_,
-                nodeId(root));
-        setContainingScope(root, model->fileScope_);
-        model->introducedScopes_[nodeId(root)] = model->fileScope_;
-        model->sourceModules_[root->span.sourceId] = 0;
-        for (const auto& import : root->imports) {
-            report(NameResolutionDiagnosticId::unknownImport, import.span,
-                   "imports require named compilation units and explicit dependency source files");
-        }
-
-        collectTopLevelDeclarations(root);
-        collectMembers(root);
-        for (const auto& item : root->items) {
-            resolveTopLevelSignature(item);
-        }
-        validateExposedTypes();
-        for (const auto& item : root->items) {
-            resolveTopLevelBody(item);
-        }
-
-        return NameResolutionResult { model, std::move(diagnostics) };
-    }
-
     NameResolutionResult build(const std::vector<ModuleInput>& modules, bool singleFile = false) {
         auto root = std::make_shared<syntax::SourceFileSyntax>(
                 SourceSpan {}, std::vector<syntax::NodePtr> {});
@@ -2572,7 +2539,7 @@ private:
 
 NameResolutionResult NameResolver::resolve(
         const syntax::SourceFileSyntax::Ptr& root) const {
-    if (root == nullptr) return NameResolutionBuilder().build(root);
+    if (root == nullptr) return {SemanticModel::Ptr(new SemanticModel(root)), {}};
     return resolveWithPrelude({{"", {root}}}, true);
 }
 

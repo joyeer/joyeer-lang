@@ -12,9 +12,19 @@ The type checker consumes the syntax tree and all bindings produced by name
 resolution. Semantic analysis follows type checking; Joyeer IR lowering runs
 only after that analysis succeeds.
 
-The internal API lives in `compiler/frontend/typechecking.h`; the
-implementation is in `compiler/frontend/typechecking.cpp`. A successful result is
-owned by `SourceFile::typeCheckedModel`.
+Start at [`TypeCheckingBuilder::build`](../../compiler/frontend/typechecking.cpp) for the
+pass order. [`typechecking.h`](../../compiler/frontend/typechecking.h) is the interface used
+by other stages; [`typechecking/builder.h`](../../compiler/frontend/typechecking/builder.h)
+holds traversal state for one check and groups private methods by implementation file.
+The driver keeps the result in `SourceFile::typeCheckedModel`.
+
+| Looking for | Implementation |
+|---|---|
+| Canonical `TypeId`s vs. facts about nodes and symbols | [TypeContext](../../compiler/frontend/typechecking/context.cpp) interns and substitutes types; [TypeCheckedModel](../../compiler/frontend/typechecking/model.cpp) answers queries for analysis and lowering. |
+| Types that a declaration introduces | [Declarations and signatures](../../compiler/frontend/typechecking/declarations.cpp), [prelude role contracts](../../compiler/frontend/typechecking/prelude.cpp), [protocols and witnesses](../../compiler/frontend/typechecking/protocols.cpp), [native bindings and intrinsics](../../compiler/frontend/typechecking/native.cpp) |
+| What a generic call means vs. which bodies need code | [Inference](../../compiler/frontend/typechecking/inference.cpp) binds type arguments at the call; [instantiation](../../compiler/frontend/typechecking/instances.cpp) finds reachable concrete instances and rejects expanding recursion. |
+| How a body gets its types | [Bindings, functions and blocks](../../compiler/frontend/typechecking/statements.cpp), [expression dispatch and operators](../../compiler/frontend/typechecking/expressions.cpp), [member lookup](../../compiler/frontend/typechecking/members.cpp), [calls](../../compiler/frontend/typechecking/calls.cpp), [patterns](../../compiler/frontend/typechecking/patterns.cpp), [collections](../../compiler/frontend/typechecking/collections.cpp) |
+| Why a write, copy or call is rejected | [Storage and access markers](../../compiler/frontend/typechecking/storage.cpp) check individual places; [exclusivity](../../compiler/frontend/typechecking/exclusivity.cpp) compares accesses within a call. |
 
 ---
 
@@ -62,18 +72,17 @@ and `TypeCheckedModel::callTarget`.
 
 The checker uses deterministic passes:
 
-1. Register concrete prelude types and built-in signatures.
-2. Resolve all top-level declaration signatures, struct fields, enum payloads,
-   and synthesized initializers.
-3. Validate normalized C symbol signatures and reject duplicate exports.
-4. Check top-level initializers and function bodies in source order.
-5. Complete contextual/deferred references while expression and pattern types
-   become available.
-6. Verify that every `DeferredReference` was visited and either completed or
-   diagnosed.
-7. If checking succeeded, reject expanding generic recursion and discover
-   concrete generic instances. Semantic analysis still runs once over the
-   checked bodies before lowering or reporting any instance.
+1. Register concrete prelude types and built-in signatures, then resolve top-level
+   declarations, fields, enum payloads, and synthesized initializers.
+2. Validate prelude contracts and reject infinitely expanding generic layouts
+   before walking fields for ownership or conformance.
+3. Collect conformances before validating derived ones. Check pending type arguments,
+   enum payload restrictions, and native symbol signatures before checking bodies.
+4. Check initializers and function bodies in source order, completing deferred
+   references as types become available. Check type arguments introduced by bodies.
+5. Verify that every deferred reference was handled. Only a clean check proceeds to
+   generic call recursion checks and concrete instance discovery. Semantic analysis
+   still runs on the checked bodies before lowering.
 
 This ordering preserves forward function/type references while allowing local
 bindings to infer from previously checked initializers.
