@@ -61,16 +61,16 @@ provided.
 
 ## Evidence
 
-Windows x64 `SystemTests` verified the selected index in a set of 80 sockets.
+Windows x64 and ARM64 `SystemTests` verified the selected index in a set of 80 sockets.
 `E2ETcpReadQueueTransfer` moves a queue from both an exited task and a live
 task; `E2ETcpReadQueueWindows` tests partial registration rollback, reset
 isolation, synchronous probe errors, and cleanup counters. Both passed at
 `-O0` and `-O2`. An ordinary TCP program built at `-O2` did not import the
 read queue's native calls; `-O0` retains unused System bindings.
 
-A Linux x86-64 kernel probe checked the packed event layout, one-shot disarm
-and rearm, and FIN readiness. It does not replace validation of the Joyeer
-library on Linux.
+Linux x86-64 and WSL2 AArch64 kernel probes checked the respective event
+layouts, one-shot disarm and rearm, and FIN readiness. They do not replace
+validation of the Joyeer library on Linux; see [plan 0009](../plan/0009-concurrency.md).
 
 Native macOS ARM64 Debug and Release at `5c21924e` passed unfiltered CTest
 2230/2230 and `fern test` 7/7. `SystemTests` covered selection beyond the

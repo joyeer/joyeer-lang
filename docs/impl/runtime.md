@@ -4,9 +4,9 @@ The runtime is declared in `lib/Runtime/include/joyeer/runtime.h`. Almost all of
 (`lib/Runtime/core/`): UTF-8 validation, string equality and ordering, owned strings,
 arrays, dictionaries, the native buffer helpers, `print` for every scalar,
 `joyeer_panic`, the allocator with its leak counter, and the program entry. The
-build-tree compiler compiles it into four objects in the same archive (the core; the entry
-logic with the Windows `joyeer_start`; the C `main`/`wmain` wrappers; and the thread, mutex and
-condition functions, [decision 0016](../decisions/0016-thread-primitives.md)); there is no C source left in the runtime ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
+build-tree compiler compiles the core, entry logic, C `main`/`wmain` wrappers, thread primitives,
+and channels as separate archive members. Windows ARM64 adds a private memory helper member.
+All runtime members are written in Joyeer ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
 `JoyeerRuntime` static archive is linked into generated programs;
 LLVM and LLD belong to the [compiler backend](backend.md), not the
 program runtime. See [building](../building.md) for platform prerequisites.
@@ -135,7 +135,11 @@ Windows converts UTF-16 arguments to UTF-8, rejecting invalid
 encoding. A Windows program that calls no C library starts at `joyeer_start`, which splits
 `GetCommandLineW` by the C runtime's rules and never initialises the C runtime; one that does,
 or that links a native library, keeps the C startup and `wmain` (the linker reads the program
-object's undefined symbols to decide, [decision 0011](../decisions/0011-runtime-without-the-c-library.md)). The runtime owns the array until the Joyeer function has returned
+object's undefined symbols to decide, [decision 0011](../decisions/0011-runtime-without-the-c-library.md)).
+On Windows ARM64 the own-entry link resolves `memcpy`, `memmove`, `memset`, and `memcmp` through
+private Joyeer wrappers over kernel32. The static ARM64 VCRuntime versions can depend on CRT
+initialization; the C-startup link still uses those standard CRT routines.
+The runtime owns the array until the Joyeer function has returned
 and cleaned its local values and temporaries. It then destroys the argument
 storage and checks the runtime-managed allocation balance. Leaks fail the
 process; otherwise an exit status in `0..255` is returned. An out-of-range

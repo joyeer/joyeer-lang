@@ -1,0 +1,41 @@
+@platform(windows)
+@c_extern(symbol: "RtlMoveMemory")
+private func moveMemory(destination: Int, source: Int, count: UInt64): Void
+
+@platform(windows)
+@c_extern(symbol: "RtlFillMemory")
+private func fillMemory(destination: Int, count: UInt64, value: UInt8): Void
+
+@platform(windows)
+@c_extern(symbol: "RtlCompareMemory")
+private func equalPrefixLength(left: Int, right: Int, count: UInt64): UInt64
+
+@platform(windows)
+@c_extern(symbol: "joyeer_intrinsic_load_u8")
+private func loadByte(address: Int): UInt8
+
+// Private libcalls for the ARM64 own-entry link. The C-startup link uses the CRT.
+@platform(windows)
+@c_export(symbol: "joyeer_windows_move_memory")
+public func move(destination: Int, source: Int, count: UInt64): Int {
+    if count != 0 { moveMemory(destination: destination, source: source, count: count) }
+    return destination
+}
+
+@platform(windows)
+@c_export(symbol: "joyeer_windows_fill_memory")
+public func fill(destination: Int, value: Int32, count: UInt64): Int {
+    if count != 0 { fillMemory(destination: destination, count: count, value: value &as UInt8) }
+    return destination
+}
+
+@platform(windows)
+@c_export(symbol: "joyeer_windows_compare_memory")
+public func compare(left: Int, right: Int, count: UInt64): Int32 {
+    if count == 0 { return 0 }
+    let matched = equalPrefixLength(left: left, right: right, count: count)
+    if matched == count { return 0 }
+    let leftByte = loadByte(address: ((left &as UInt64) + matched) &as Int)
+    let rightByte = loadByte(address: ((right &as UInt64) + matched) &as Int)
+    return if leftByte < rightByte { -1 } else { 1 }
+}

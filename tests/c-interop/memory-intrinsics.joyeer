@@ -1,8 +1,17 @@
-@c_extern(symbol: "malloc")
-func allocate(size: UInt64): Int
+@c_extern(symbol: "joyeer_alloc")
+func allocate(size: Int): Int
 
-@c_extern(symbol: "free")
-func release(address: Int): Void
+@c_extern(symbol: "joyeer_free")
+func release(address: Int, size: Int): Void
+
+@c_extern(symbol: "memcmp")
+func compareBytes(left: Int, right: Int, count: UInt64): Int32
+
+@c_extern(symbol: "memmove")
+func moveMemory(destination: Int, source: Int, count: UInt64): Int
+
+@c_extern(symbol: "memset")
+func setMemory(destination: Int, value: Int32, count: UInt64): Int
 
 @c_extern(symbol: "joyeer_intrinsic_load_u8")
 func load8(address: Int): UInt8
@@ -27,9 +36,7 @@ func fill(block: Int, count: Int) {
     }
 }
 
-func exercise(): Int {
-    let block = allocate(size: 64)
-    if block == 0 { return 1 }
+func exercise(block: Int, other: Int): Int {
     fill(block: block, count: 32)
     // memcpy: a disjoint range is copied exactly; the source is unchanged.
     copyBytes(destination: block + 32, source: block, count: 16)
@@ -61,21 +68,30 @@ func exercise(): Int {
     }
     if load8(address: block + 10) == 170 { return 10 }
     // A large copy (not expanded inline) crosses into the library call path.
-    let big = allocate(size: 4096)
-    let other = allocate(size: 4096)
-    if big == 0 || other == 0 { return 11 }
-    fillBytes(destination: big, value: 7, count: 4096)
-    store8(address: big + 4095, value: 9)
-    copyBytes(destination: other, source: big, count: 4096)
+    fillBytes(destination: block, value: 7, count: 4096)
+    store8(address: block + 4095, value: 9)
+    copyBytes(destination: other, source: block, count: 4096)
     if load8(address: other) != 7 || load8(address: other + 4095) != 9 { return 12 }
-    release(address: big)
-    release(address: other)
-    release(address: block)
+    if compareBytes(left: block, right: other, count: 4096) != 0 { return 13 }
+    store8(address: other + 4095, value: 200)
+    if compareBytes(left: block, right: other, count: 4096) >= 0 ||
+        compareBytes(left: other, right: block, count: 4096) <= 0 { return 14 }
+    // Exercise the out-of-line ABI, including overlap, the return value and byte truncation.
+    if moveMemory(destination: block + 1, source: block, count: 4096) != block + 1 ||
+        load8(address: block + 4096) != 9 { return 15 }
+    if moveMemory(destination: block, source: block + 1, count: 4096) != block ||
+        load8(address: block + 4095) != 9 { return 16 }
+    if setMemory(destination: block, value: -1, count: 4096) != block ||
+        load8(address: block) != 255 || load8(address: block + 4095) != 255 ||
+        load8(address: block + 4096) != 9 { return 17 }
     return 0
 }
 
 func main() {
-    let failure = exercise()
+    // The test must work without the C runtime's startup.
+    let block = allocate(size: 8192)
+    let failure = exercise(block: block, other: block + 4096)
+    release(address: block, size: 8192)
     if failure != 0 {
         print(value: failure)
         return

@@ -656,8 +656,16 @@ LinkResult Linker::link(
             ? "/OPT:NOICF"
             : "/OPT:ICF";
     if (ownEntry) {
-        // memcpy, memset, memmove and memcmp live in the static VCRuntime, which needs no startup.
+#if defined(_M_ARM64)
+        // ARM64 VCRuntime memory routines can pull in CRT initialization and the C heap.
+        lldArguments.emplace_back("/ALTERNATENAME:memcpy=joyeer_windows_move_memory");
+        lldArguments.emplace_back("/ALTERNATENAME:memmove=joyeer_windows_move_memory");
+        lldArguments.emplace_back("/ALTERNATENAME:memset=joyeer_windows_fill_memory");
+        lldArguments.emplace_back("/ALTERNATENAME:memcmp=joyeer_windows_compare_memory");
+#else
+        // The x64 VCRuntime memory routines need no startup.
         lldArguments.emplace_back("libvcruntime.lib");
+#endif
         lldArguments.emplace_back("/ENTRY:joyeer_start");
     } else {
         // Pull in the wrapper before LLD selects the CRT startup; leave unrelated members lazy.

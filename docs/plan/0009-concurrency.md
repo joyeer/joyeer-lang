@@ -1,8 +1,8 @@
 # 0009: Concurrency
 
-- Status: blocked (updated 2026-11-26); implementation is in place. Native
-  Windows ARM64 and Linux AArch64 acceptance, the older-glibc link check, and
-  Linux socket validation remain open.
+- Status: blocked (updated 2026-11-26); native Windows and macOS ARM64
+  acceptance passed. WSL2 AArch64 needs its build tools and LLVM 22.1.8 SDK.
+  The older-glibc link check and native Linux socket validation remain open.
 - Decisions: [0013](../decisions/0013-concurrency-model.md), [0014](../decisions/0014-network-timeouts.md),
   [0015](../decisions/0015-noncopyable-and-linear-types.md) to [0019](../decisions/0019-channels.md),
   [0032](../decisions/0032-tcp-read-queue.md)
@@ -25,7 +25,7 @@ Noncopyable and linear types with `deinit` (P2), thread primitives (P3), a threa
 tasks (P5a), channels (P5b, P6), and the worker-pool web server (P7) are implemented. The
 [P1a timeouts](../decisions/0014-network-timeouts.md) cover receive and accept on Windows and Linux.
 The bounded send/connect and poll APIs and the fixed-membership TCP read queue pass
-Windows x64 and macOS ARM64 loopback tests. The Linux socket and queue backends are
+Windows x64, Windows ARM64, and macOS ARM64 loopback tests. The Linux socket and queue backends are
 implemented; their native verification remains open. The implementation notes are in
 [runtime](../impl/runtime.md) and [supported features](../impl/supported-features.md).
 
@@ -33,7 +33,7 @@ implemented; their native verification remains open. The implementation notes ar
 
 ### Platform acceptance
 
-The completed runs are recorded in [0023](../decisions/0023-library-concurrency.md#final-comparison-and-validation).
+The initial runs are recorded in [0023](../decisions/0023-library-concurrency.md#final-comparison-and-validation).
 
 - [x] Windows x64: Debug and Release each passed unfiltered CTest 1665/1665 and `fern test` 7/7.
 - [x] Linux x86-64 (WSL Ubuntu): Debug and Release each passed unfiltered CTest 1641/1641 and
@@ -42,9 +42,15 @@ The completed runs are recorded in [0023](../decisions/0023-library-concurrency.
   `fern test` 7/7. This includes task and channel fixtures and
   [thread-safety tests](../../tests/unittests/runtime/thread_safety_test.cpp) using the macOS
   [`os_unfair_lock` implementation](../../lib/Runtime/core/locks.joyeer).
-- [ ] Windows ARM64: blocked on a native host; no Debug and Release concurrency run is recorded.
-- [ ] Linux AArch64: the thread and channel paths are implemented, but no native Debug and Release
-  validation is recorded. Blocked on a native host.
+- [x] Windows ARM64: MSVC 14.52.37025 and LLVM 22.1.8. Debug and Release
+  each passed unfiltered CTest 2260/2260 and `fern test` 7/7, including
+  `SystemTests`, `E2ETcpReadQueueTransfer`, `E2ETcpReadQueueWindows`, and the
+  web-server regressions. The final unfiltered CTest runs needed no retries.
+- [ ] Linux AArch64: WSL2 Ubuntu 26.04.1 reports `aarch64` and glibc 2.43.
+  Blocked: the guest needs CMake, Ninja, a C++20 compiler and a native
+  LLVM/LLD/Clang 22.1.8 development SDK before Debug and Release validation.
+  Run `python3 scripts/validate.py --llvm-root <linux-arm64-sdk>` from a
+  separate Linux checkout so the build and fern output trees stay native.
 - [x] Find the cause of the `SystemTests` "write zero bytes to a closed stderr" failure under `fern test`
   on Linux WSL2. Evidence: fix `863530f` probes empty writes; the full Debug and Release runs above
   include `SystemTests`.
@@ -53,11 +59,17 @@ The completed runs are recorded in [0023](../decisions/0023-library-concurrency.
 
 - [ ] Test the Linux `-lpthread` link argument on glibc older than 2.34. The
   [linker](../../compiler/codegen/linker.cpp) already emits it for programs that use tasks or channels;
-  this remains blocked on a host with older glibc.
+  this remains blocked on a host with older glibc. The new WSL guest has glibc 2.43.
 - [x] Load only needed Windows C-startup archive members. A dedicated `/INCLUDE` anchor in the
   bundled `wmain` member replaced `/WHOLEARCHIVE`. Windows x64 evidence:
   `RuntimeCRuntimeProgramKeepsTheCStartup` checks that C startup remains without unused thread
   imports, and `RuntimeCStartupRejectsDuplicateWmain` checks that a second `wmain` cannot replace it.
+- [x] Supply CRT-free memory helpers for the Windows ARM64 own-entry link.
+  The `JoyeerCInterop.MemoryIntrinsics` fixtures reproduced the unresolved C
+  heap symbols before the fix, then passed at `-O0` and `-O2` in the native
+  validator. The symbol, archive-member, and own-entry import checks passed in
+  both profiles, as did both tests for the separate C-startup path.
+  See [0011](../decisions/0011-runtime-without-the-c-library.md).
 
 ### Language and compiler gaps
 
@@ -116,7 +128,8 @@ The completed runs are recorded in [0023](../decisions/0023-library-concurrency.
 
 - [ ] Finish native Linux validation for `tcpSendWithin` and `tcpConnectWithin`. Windows x64
   loopback `SystemTests` verified timed success, invalid budgets, local refusal and send
-  backpressure. The Linux `ioctl`/`ppoll`/`SO_ERROR` path type-checks but has not run here.
+  backpressure. A WSL2 AArch64 kernel probe checked `ioctl`/`ppoll`/`SO_ERROR`,
+  loopback refusal, and send backpressure, but did not run the Joyeer implementation.
   Blocked: the local Linux environment has no configured LLVM/LLD/Clang development SDK.
 - [x] Apply one five-second deadline to the entire HTTP request head. `WebServer.RequestHeadDeadline`
   exercises a complete request and a trickled incomplete one on loopback; partial reads cannot
@@ -124,7 +137,8 @@ The completed runs are recorded in [0023](../decisions/0023-library-concurrency.
 - [ ] Finish native Linux validation for capped `tcpPoll`. Windows x64 loopback `SystemTests`
   passed, including distinct connection/listener indices, idle timeout, EOF and the 64-socket cap.
   Linux `ppoll` type-checks in `TheSystemLibraryChecksForEveryTargetPlatform`;
-  native Linux acceptance needs the same SDK.
+  the WSL2 AArch64 kernel probe verified idle timeout and distinct descriptor readiness.
+  Native Joyeer acceptance needs the same SDK.
 - [x] Define and verify scalable read readiness on Windows x64. The
   [owned queue](../decisions/0032-tcp-read-queue.md) uses IOCP rather than
   scanning a poll set. `SystemTests` selected a socket at index 79 of 80 and
@@ -132,8 +146,9 @@ The completed runs are recorded in [0023](../decisions/0023-library-concurrency.
   and `E2ETcpReadQueueWindows` passed at `-O0` and `-O2`, covering task handoff,
   partial setup rollback, isolated read errors, and handle and allocation cleanup.
 - [ ] Verify the Linux one-shot `epoll` backend natively. Cross-target System
-  type checking passed, and a kernel probe confirmed the x86-64 event layout,
-  rearm and EOF. Blocked: full Joyeer validation needs a configured Linux SDK.
+  type checking passed, and kernel probes confirmed the event layout, rearm,
+  and EOF on x86-64 and WSL2 AArch64 (16 bytes, data at offset 8). Blocked:
+  full Joyeer validation needs a configured Linux SDK.
 - [x] Native macOS ARM64 TCP acceptance. At `5c21924e`, Debug and Release each passed
   unfiltered CTest 2230/2230 and `fern test` 7/7 without reruns. `SystemTests` exercised
   libSystem sockets, capped `poll`, send/connect deadlines and backpressure, and the
@@ -162,6 +177,16 @@ Deferred, not forgotten:
 
 - 2026-11-26: Checked off native macOS ARM64 TCP after verifying the full validator
   and the loopback, task-transfer, and web-server gates at `5c21924e`.
+- 2026-11-25: Closed the Windows ARM64 gate. At `5c21924` the original
+  `fern` bootstrap failed in both profiles with MSVC 14.51.36231 because
+  VCRuntime's ARM64 memory helpers pulled the C heap into the own-entry link.
+  The replacement keeps that link CRT-free. With MSVC 14.52.37025, both
+  builds and `fern test` runs passed. Debug initially exposed a CMake fixture
+  issuing a lowercase unset and uppercase assignment for the same Windows
+  environment variable. After correcting it, the final unfiltered Debug
+  and Release CTest runs needed no retries. WSL2 AArch64 passed direct
+  kernel probes for `epoll`, `ppoll`, nonblocking connect, and send
+  backpressure; the guest still needs its build tools and SDK for the full validator.
 - 2026-11-24: Replaced the macOS TCP stubs with libSystem sockets, capped `poll`,
   and a `kqueue` read queue. Enabled the native loopback, task-transfer, and web-server
   tests on macOS. System type-checking passed for all three OS targets; the Darwin

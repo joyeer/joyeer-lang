@@ -2,8 +2,8 @@
 
 - Status: accepted and implemented in stage 10 of the
   [runtime plan](../plan/0008-runtime-in-joyeer.md) (decided and built 2026-11-08). Verified on
-  Windows x64 and Linux x86-64 (Ubuntu under WSL2, the full suite). Linux AArch64, macOS and Windows
-  ARM64 have not run; the AArch64 system call numbers are from memory.
+  Windows x64 and Linux x86-64 (Ubuntu under WSL2, the full suite). See
+  [plan 0009](../plan/0009-concurrency.md) for subsequent native platform acceptance.
 - Spec: [§19.4.6](../../specs/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)
   gains the syscall and target-architecture intrinsics when 10.2 lands.
 
@@ -21,11 +21,13 @@ behaviour that changes with it.
 **What stays: the compiler's support symbols.** LLVM may emit calls to `memcpy`,
 `memmove`, `memset` and `memcmp` for any code, and the Windows targets also reference
 `_fltused` and `__chkstk`. These are the contract between a compiler and its target,
-not the C library in the sense of Tier 2. The runtime does not implement them in
-Joyeer: a Joyeer loop that is recognised as a copy would be compiled back into a call
-to itself. The symbol gates allow exactly these names and nothing else from the C
-library. On Windows they come from the static CRT archive, which the link already
-names (`libcmt.lib`); none of them needs the CRT's startup.
+not the C library in the sense of Tier 2. The runtime does not implement them with
+Joyeer loops: a loop recognised as a copy could become a call to itself. The symbol
+gates allow exactly these names and nothing else from the C library. Windows x64
+can use the static CRT helpers without running CRT startup. In the Windows ARM64
+own-entry link, the linker instead resolves the memory routines to private wrappers
+over kernel32, since the VCRuntime variants can pull in CRT initialization and the
+C heap. The stack probe and floating-point marker still come from `libcmt.lib`.
 
 **Per platform.**
 
@@ -87,8 +89,9 @@ behind, as with the C library.
 **D9: the entry point (10.3).** On Windows the entry object also defines `joyeer_start`.
 The linker reads the program object's undefined symbols: when no native library is selected
 and every one is the runtime's own (`joyeer_`), a compiler support symbol, or a Win32 API
-name, the link passes `/ENTRY:joyeer_start`, links the runtime archive by symbol, and adds
-`libvcruntime.lib` for `memcpy` and its relatives. Win32 names are PascalCase and the C
+name, the link passes `/ENTRY:joyeer_start` and links the runtime archive by symbol. It
+adds `libvcruntime.lib` for memory helpers on x64, or supplies weak aliases to the
+private Joyeer wrappers on ARM64. Win32 names are PascalCase and the C
 library's are lower case or underscored, so a name that does not start with a capital is taken
 for the C library: a wrong guess only keeps the C startup, which is always correct. The C
 `wmain`/`main` wrappers (and their `atexit` call) are a third archive object, so that link
@@ -97,8 +100,8 @@ and `CommandLineToArgvW` use (backslashes are literal unless they precede a quot
 quoting; two quotes inside a quoted part give one), converts each argument to UTF-8 as before,
 runs the shared entry logic and calls `ExitProcess` with the status. The argument memory is
 mapped directly from the system and kept for the life of the process. With a native library,
-or any C library call, the link keeps the CRT startup and `wmain`. The image of a program that
-needs no C library imports twelve `kernel32` functions.
+or any C library call, the link keeps the CRT startup and `wmain`. A program that needs
+no C library still imports only OS functions.
 
 **R12: `System` (10.4).** `System`'s standard error and standard input stop using C
 streams: they call the runtime's stream functions (`joyeer_stdout_flush`,

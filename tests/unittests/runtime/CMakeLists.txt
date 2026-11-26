@@ -153,7 +153,18 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
     set_tests_properties(RuntimeCoreObjectSymbols PROPERTIES LABELS "runtime;native" TIMEOUT 30)
 
-    # The archive is the three Joyeer objects and nothing compiled from C.
+    # The archive contains only Joyeer objects.
+    get_target_property(windows_memory_object JoyeerRuntime JOYEER_WINDOWS_MEMORY_OBJECT)
+    if(windows_memory_object)
+        add_test(NAME RuntimeWindowsMemoryObjectSymbols
+            COMMAND "${CMAKE_COMMAND}"
+                "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
+                "-DOBJECT=${windows_memory_object}"
+                "-DEXPECTED_DEFINED=joyeer_windows_move_memory;joyeer_windows_fill_memory;joyeer_windows_compare_memory"
+                "-DALLOWED_UNDEFINED=RtlMoveMemory;RtlFillMemory;RtlCompareMemory"
+                -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
+        set_tests_properties(RuntimeWindowsMemoryObjectSymbols PROPERTIES LABELS "runtime;native" TIMEOUT 30)
+    endif()
     find_program(JOYEER_RUNTIME_AR_EXECUTABLE NAMES llvm-ar llvm-ar.exe
         HINTS "${JOYEER_LLVM_ROOT}/bin" "${joyeer_llvm_bin}")
     if(JOYEER_RUNTIME_AR_EXECUTABLE)
@@ -166,11 +177,16 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
         get_filename_component(threads_name "${threads_object}" NAME)
         get_target_property(channels_object JoyeerRuntime JOYEER_CHANNELS_OBJECT)
         get_filename_component(channels_name "${channels_object}" NAME)
+        set(runtime_members "${core_name};${entry_name};${main_name};${threads_name};${channels_name}")
+        if(windows_memory_object)
+            get_filename_component(windows_memory_name "${windows_memory_object}" NAME)
+            list(APPEND runtime_members "${windows_memory_name}")
+        endif()
         add_test(NAME RuntimeArchiveMembers
             COMMAND "${CMAKE_COMMAND}"
                 "-DAR=${JOYEER_RUNTIME_AR_EXECUTABLE}"
                 "-DARCHIVE=$<TARGET_FILE:JoyeerRuntime>"
-                "-DEXPECTED_MEMBERS=${core_name};${entry_name};${main_name};${threads_name};${channels_name}"
+                "-DEXPECTED_MEMBERS=${runtime_members}"
                 -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeArchive.cmake")
         set_tests_properties(RuntimeArchiveMembers PROPERTIES LABELS "runtime;native" TIMEOUT 30)
     endif()
@@ -265,6 +281,12 @@ if(WIN32 AND JOYEER_RUNTIME_NM_EXECUTABLE)
     find_program(JOYEER_RUNTIME_READOBJ_EXECUTABLE NAMES llvm-readobj llvm-readobj.exe
         HINTS "${joyeer_nm_directory}")
     if(JOYEER_RUNTIME_READOBJ_EXECUTABLE)
+        set(own_entry_imports AcquireSRWLockExclusive ExitProcess GetCommandLineW GetConsoleMode GetFileType
+            GetLastError GetStdHandle MultiByteToWideChar ReadFile ReleaseSRWLockExclusive Sleep
+            TryAcquireSRWLockExclusive VirtualAlloc VirtualFree WideCharToMultiByte WriteConsoleW WriteFile)
+        if(JOYEER_WINDOWS_ARCH STREQUAL "arm64")
+            list(APPEND own_entry_imports RtlCompareMemory RtlFillMemory RtlMoveMemory)
+        endif()
         add_test(NAME RuntimeOwnEntryImportsOnlySystemFunctions
             COMMAND "${CMAKE_COMMAND}"
                 "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
@@ -272,7 +294,7 @@ if(WIN32 AND JOYEER_RUNTIME_NM_EXECUTABLE)
                 "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/own-entry-imports.exe"
                 "-DREADOBJ=${JOYEER_RUNTIME_READOBJ_EXECUTABLE}"
                 "-DCOMPILER_ARGS=-O0;-g0;--module-name;runtime.own_entry;--runtime-module;runtime.own_entry"
-                "-DEXPECTED_IMPORTS=AcquireSRWLockExclusive;ExitProcess;GetCommandLineW;GetConsoleMode;GetFileType;GetLastError;GetStdHandle;MultiByteToWideChar;ReadFile;ReleaseSRWLockExclusive;Sleep;TryAcquireSRWLockExclusive;VirtualAlloc;VirtualFree;WideCharToMultiByte;WriteConsoleW;WriteFile"
+                "-DEXPECTED_IMPORTS=${own_entry_imports}"
                 -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
         add_test(NAME RuntimeCRuntimeProgramKeepsTheCStartup
             COMMAND "${CMAKE_COMMAND}"
