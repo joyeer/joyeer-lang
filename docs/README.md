@@ -77,7 +77,7 @@ iteration, a progress log, and deletion once every item is done. Start from the
 | [0004](plan/0004-native-link-inputs.md) | Linking native libraries by logical name and search path (proposed) |
 | [0005](plan/0005-test-audit.md) | Test coverage gaps: fuzzing, sanitizers, CI, ownership generators, spec traceability |
 | [0006](plan/0006-toolchain-libraries.md) | Compiler-relative standard modules and runtime packaging; Windows ARM64 and Linux AArch64 validation remain |
-| [0008](plan/0008-runtime-in-joyeer.md) | The plan to write the whole runtime in Joyeer: definition of done, the core dialect, open design decisions, capabilities, phases and acceptance gates |
+| [0008](plan/0008-runtime-in-joyeer.md) | The runtime in Joyeer: remaining platform evidence, the R0 performance gate, and macOS `System` without stdio |
 
 ## Decisions
 

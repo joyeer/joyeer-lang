@@ -1,7 +1,7 @@
 // The runtime allocator and its leak counter (`joyeer_alloc`, `joyeer_realloc`,
 // `joyeer_free`, `joyeer_runtime_active_allocations`). Every runtime allocation
 // goes through here, so there is one counter: the number of blocks allocated and
-// not yet freed, kept in static slot 0 (runtime plan §5, D1) and updated with an
+// not yet freed, kept in static slot 0 (decision 0009, D1) and updated with an
 // atomic add. A program exits non-zero when it ends with a non-zero count.
 //
 // Memory comes straight from the operating system (decision 0011): `VirtualAlloc`

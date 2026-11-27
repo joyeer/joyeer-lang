@@ -18,7 +18,7 @@
 //
 // This is a runtime core unit: scalars and addresses held as `Int` only. It must
 // not use String values, arrays, dictionaries or print, which lower to runtime
-// calls (runtime plan §4).
+// calls (decision 0009, D3).
 
 @c_extern(symbol: "joyeer_intrinsic_literal_address")
 private func literalAddress(text: String): Int

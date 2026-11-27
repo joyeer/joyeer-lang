@@ -91,7 +91,7 @@ lookup for direct `joyeer` calls, not for fern. Workspace validation is unchange
 - [x] Resolve bundled standard modules in the compiler and fern. Evidence:
   [compiler lookup](../impl/backend.md#2-cli) and
   [fern bootstrap, self-build, and restaging validation](../impl/fern.md#standard-library-adoption-validation).
-- [x] Move `JoyeerRuntime.*` into `lib/` (9.3 of the [runtime plan](0008-runtime-in-joyeer.md#11-todo)).
+- [x] Move `JoyeerRuntime.*` into `lib/` (9.3 of the [runtime plan](0008-runtime-in-joyeer.md)).
   Evidence: macOS ARM64 Debug and Release passed the full validator and the installed compiler
   and fern packaging tests. A relocated `install-debug.py` install also linked and ran `hello`.
 - [x] Windows x64: [post-layout validation at `5d75dad`](../decisions/0031-equatable.md#platform-validation).
@@ -101,7 +101,7 @@ lookup for direct `joyeer` calls, not for fern. Workspace validation is unchange
   Debug and Release each passed unfiltered CTest 2175/2175 and `fern test` 7/7.
 - [x] macOS ARM64: the archive move in `8289622` recorded unfiltered CTest 2019/2019 and
   `fern test` 7/7 in Debug and Release, including `Fern.Installed` and
-  `InstalledCompilerNativeHello` ([runtime plan 9.3](0008-runtime-in-joyeer.md#stage-9-remove-the-c-r9)).
+  `InstalledCompilerNativeHello` ([runtime plan](0008-runtime-in-joyeer.md)).
   The earlier run at `9b334ec` still used the old archive location.
 
 ### Remaining

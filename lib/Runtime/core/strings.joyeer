@@ -7,10 +7,10 @@
 //
 // This is a runtime core unit: scalars and addresses held as `Int` only. It
 // must not use String, arrays, dictionaries or print, which lower to runtime
-// calls (runtime plan §4).
+// calls (decision 0009, D3).
 
-// The C library's memcmp, until the bulk-memory intrinsics (runtime plan stage
-// 3.2) let the compiler emit it inline. Both ranges must hold `count` bytes.
+// memcmp is a compiler support symbol, not a Tier 2 C-library import (decision
+// 0011); no intrinsic replaces it. Both ranges must hold `count` bytes.
 @c_extern(symbol: "memcmp")
 private func memoryCompare(left: Int, right: Int, count: Int): Int32
 
