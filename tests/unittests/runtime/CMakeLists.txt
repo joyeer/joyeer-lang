@@ -123,7 +123,7 @@ add_custom_target(runtime-benchmark
 
 # The Joyeer runtime core object may define only the approved exports and call
 # only the approved imports. Update both lists in the same change that adds a
-# function to lib/Runtime/core/ (runtime plan §4).
+# function to lib/Runtime/core/ (decision 0009, D3).
 get_filename_component(joyeer_llvm_bin "${JOYEER_CLANG_EXECUTABLE}" DIRECTORY)
 find_program(JOYEER_RUNTIME_NM_EXECUTABLE NAMES llvm-nm llvm-nm-${LLVM_VERSION_MAJOR}
     HINTS "${JOYEER_LLVM_ROOT}/bin" "${LLVM_TOOLS_BINARY_DIR}" "${joyeer_llvm_bin}")

@@ -151,7 +151,7 @@ using LLVM 22.1.8 and SDK 26.5. The run covered Compression, moss, and the
 macOS ABI, exact error-code and interrupted-call checks. Intel and universal
 macOS builds are rejected at configure time. Windows and Linux platform
 acceptance beyond the recorded runs is tracked in the
-[runtime plan](../plan/0008-runtime-in-joyeer.md#stage-9-remove-the-c-r9).
+[runtime plan](../plan/0008-runtime-in-joyeer.md#phase-3-remaining-platforms).
 See [reader allocation costs](runtime.md#reader-allocation-costs) for the
 measured prefix and stdin tradeoffs.
 

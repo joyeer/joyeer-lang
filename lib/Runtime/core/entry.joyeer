@@ -9,7 +9,7 @@
 // logic here is built alone for the entry encoding tests, which supply their own
 // `joyeer_main`. It reaches the rest of the runtime through its C ABI.
 //
-// A runtime core unit: scalars and addresses held as `Int` only (runtime plan §4).
+// A runtime core unit: scalars and addresses held as `Int` only (decision 0009, D3).
 // Static slots 32 to 37 are this unit's: a 16-byte String being built (32, 33),
 // the argument array handle (34 to 36) and a one-byte output buffer (37); all are written by the
 // main thread before any other thread can exist. Slots 38 and 39 are the panic's (panic.joyeer).

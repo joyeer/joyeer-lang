@@ -4,7 +4,7 @@
 //
 // This is a runtime core unit: it uses only scalars and an address held as an
 // `Int`, and the load intrinsic of spec §19.4.5. It must not use String, arrays,
-// dictionaries or print, which lower to runtime calls (runtime plan §4).
+// dictionaries or print, which lower to runtime calls (decision 0009, D3).
 
 @c_extern(symbol: "joyeer_intrinsic_load_u8")
 private func loadByte(address: Int): UInt8

@@ -20,7 +20,7 @@
 // After a panic starts (slot 38), every other thread that reaches a lock parks for good, so it
 // can neither print nor write after the panicking thread's flush (panic.joyeer).
 //
-// This is a runtime core unit: scalars and addresses held as `Int` only (runtime plan §4).
+// This is a runtime core unit: scalars and addresses held as `Int` only (decision 0009, D3).
 
 @c_extern(symbol: "joyeer_intrinsic_static_slot")
 private func staticSlot(index: Int): Int
