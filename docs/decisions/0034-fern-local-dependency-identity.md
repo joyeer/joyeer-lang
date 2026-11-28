@@ -52,4 +52,6 @@ uses directory links when supported and exercises FIFO rejection on POSIX.
 The full validator passed on both hosts: Windows ARM64 CTest 2274/2274 in
 Debug and 2273/2273 in Release; WSL2 Linux AArch64 2249/2249 and 2248/2248
 (one Release CTest passed on rerun). All four root `fern test` runs passed
-7/7. The macOS implementation has not passed this gate natively.
+7/7. `Fern.LocalDependencies` also passed on macOS ARM64 in Debug and Release
+at `513aeed1`; [full macOS validation](../impl/fern.md#macos-arm64-toolchain-validation)
+remains blocked.

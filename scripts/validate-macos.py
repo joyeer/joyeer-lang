@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the native macOS ARM64 acceptance handoff for plans 0004 and 0001."""
+"""Run native macOS ARM64 validation for native linking and Fern."""
 
 from __future__ import annotations
 

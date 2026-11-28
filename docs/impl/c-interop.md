@@ -193,10 +193,14 @@ name and `--link-path <dir>` adds an existing search directory. Both repeat.
 Names start with an ASCII letter or digit and otherwise allow only letters,
 digits, `_`, `.`, `+`, and `-`. Search directories resolve against the compiler's
 working directory. COFF receives `/LIBPATH:` and `<name>.lib`; Mach-O and ELF
-receive `-L` and `-l`. Directory order and the relative order of explicit and
-logical library inputs are preserved; the linker chooses the library flavor.
-Missing libraries fail the link. Invalid names, directories, or output modes
-report `driver.native-library-error`. There is no shell or linker passthrough.
+normally receive `-L` and `-l`. If a joined `-l<name>` would match another
+Mach-O linker option, Joyeer uses `-needed-l` for that name. Lookup is the
+same, but that option can retain a dylib marked dead-strippable even if
+none of its symbols are used. Directory order and the relative order of
+explicit and logical library inputs are preserved; the linker chooses the
+library flavor. Missing libraries fail the link. Invalid names, directories,
+or output modes report `driver.native-library-error`. There is no shell or
+linker passthrough.
 
 This is ordinary link-time selection of a dynamic dependency. It does not
 implement `dlopen`, `LoadLibrary`, function-address lookup, header import,

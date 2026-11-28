@@ -36,6 +36,9 @@ operation. String byte reads and `count`, concatenation, equality, ordering and 
 functions of the collections prelude ([0028](../decisions/0028-ir-opcode-set.md)); a byte read is an inline bounds
 check and load, and the others call `joyeer_string_concat_abi`, `joyeer_string_equal_abi`,
 `joyeer_string_compare_abi` and the owned-array creation API by their Int signatures.
+String ordering normalizes a nonzero `memcmp` result to -1 or 1. Length
+breaks ties when the common prefix is equal, including when it is empty.
+See the [macOS ARM64 comparison](../../tests/perf/README.md#r0-on-macos-arm64).
 
 Dictionary lookup and replacement share a linear scan. It checks the signed
 last-entry address before reading any key, then advances by the nonnegative
@@ -352,8 +355,9 @@ and return short successful transfers as progress. They close each descriptor
 once and capture `errno` before cleanup. The
 [native fixture](../../tests/lib/System/macos-fixture.c) checks the filesystem
 and spawn layouts against the SDK headers and injects `EINTR` before and after
-short transfers and before `waitpid` succeeds. The native run of the descriptor
-path and the Mach-O no-stdio import gates remain open in [plan 0008](../plan/0008-runtime-in-joyeer.md).
+short transfers and before `waitpid` succeeds. The native descriptor and Mach-O
+no-stdio checks passed at `-O0` and `-O2` in Debug and Release in the
+[repaired macOS ARM64 working tree](fern.md#macos-arm64-toolchain-validation).
 
 The end-to-end filesystem and process cases passed on Windows ARM64 and Linux
 AArch64 (WSL2) in both Debug and Release, compiling the fixtures at `-O0`,

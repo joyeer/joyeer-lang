@@ -415,6 +415,38 @@ Homebrew, so these checks do not establish standalone
 
 With `JOYEER_DSYMUTIL_EXECUTABLE` empty, that revision regenerated and ran
 fern without a dSYM, but `Fern.SelfBuild`, `Fern.Installed`, and the default
-Debug build of `moss.app` failed with `linker.missing-tool`. macOS native
-Debug builds now use `-gauto`; the updated native workflow still needs a
-run on macOS with and without `dsymutil`.
+Debug build of `moss.app` failed with `linker.missing-tool`.
+
+On 2026-11-28, `513aeed179c565d82322dab2d920e029bdd58a65` was tested on a
+native Apple M3 Pro (`Mac15,6`, macOS 27.0.1 build 26A434, no Rosetta) using
+the Command Line Tools macOS 26.5 SDK and deployment target and Homebrew
+LLVM and LLD 22.1.8. Both regular configurations passed the focused
+`JoyeerCInterop.NamedLibrary` and `Fern.Plans` checks, followed by
+`Fern.LocalDependencies`, `Fern.CompilerDiscovery`, and `Fern.Installed`.
+
+A second run used the same host, SDK, and toolchain with the uncommitted
+Mach-O fixes applied in isolated checkouts of `513aeed1`. Unfiltered
+`scripts/validate.py` passed in all three configurations with the fixes,
+without retries or skips:
+
+| Configuration | CTest at `513aeed1` | CTest with fixes | Root `fern test` in both runs |
+|---|---:|---:|---:|
+| Debug | 2275/2284 | 2284/2284 | 7/7 |
+| Release | 2274/2283 | 2283/2283 | 7/7 |
+| Debug without `dsymutil` | 2272/2281 | 2281/2281 | 7/7 |
+
+The same nine CTests failed in each run of the unmodified commit.
+`JoyeerCInterop.NamedLibraryReservedSpellingAndCollision` failed to link:
+Mach-O lowering turned `to_library` into `-lto_library`, which is also an
+LLD option. Eight `RuntimeSystemProgramHasNoStdio_*` cases failed because
+the verifier stripped all leading underscores. The fixes avoid conflicting
+linker options, strip only the Mach-O prefix, and allow the memory primitive
+`bzero` without allowing stdio. The passing runs do not establish acceptance
+of `513aeed1` without the fixes.
+
+The regular Debug build produced `fern.dSYM`. With
+`JOYEER_DSYMUTIL_EXECUTABLE=` in an independent checkout, Debug produced no
+dSYM and passed `Fern.Bootstrap`, `Fern.SelfBuild`, `Fern.Installed`, and
+`Moss.Serve`, including the root workspace's `moss.app` build. Explicit
+`-gfull` exited 1 with `linker.missing-tool` naming `dsymutil`. Three tests
+that require `dsymutil` were not registered in that configuration.

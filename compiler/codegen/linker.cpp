@@ -810,7 +810,12 @@ LinkResult Linker::link(
 #if defined(_WIN32)
             lldArguments.push_back(name + ".lib");
 #elif defined(__APPLE__)
-            lldArguments.push_back("-l" + name);
+            const auto joined = "-l" + name;
+            // These LLD 22.1.8 options take precedence over the joined -l.
+            // Use -needed-l only for collisions; it overrides dylib dead stripping.
+            const bool reserved = joined == "-load_hidden" || joined == "-lazy_framework" ||
+                    joined == "-lazy_library" || joined.starts_with("-lazy-l") || joined == "-lto_library";
+            lldArguments.push_back(reserved ? "-needed-l" + name : joined);
 #else
             lldArguments.push_back("-Wl,-l," + name);
 #endif

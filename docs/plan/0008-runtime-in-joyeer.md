@@ -1,8 +1,7 @@
 # 0008: Runtime in Joyeer
 
-- Status: blocked (updated 2026-11-28). The remaining gates are the R0 performance
-  comparisons on Linux x86-64 and macOS ARM64, and native macOS verification of the
-  `System` descriptor path. The available Windows and WSL hosts are ARM64.
+- Status: blocked (updated 2026-11-28). The remaining gate is the R0 performance
+  comparison on Linux x86-64. The available Windows and WSL hosts are ARM64.
 - Decisions: [0005](../decisions/0005-runtime-unsafe-memory.md),
   [0008](../decisions/0008-runtime-core-build-shape.md),
   [0009](../decisions/0009-runtime-core-capabilities.md),
@@ -62,11 +61,12 @@ R0 benchmark (`cmake --build <dir> --target runtime-benchmark`, method in
 [tests/perf](../../tests/perf/README.md#comparing-two-builds)). The C runtime is frozen at
 `456b78d9`; compare it with the Joyeer archive using the same harness object on one host.
 
-- macOS ARM64 (`5c21924e`, median of five interleaved runs, seven repetitions each), Joyeer
-  against C in ns/op: array append 6.10 against 3.17, dictionary set 752.67 against 323.08,
-  dictionary find 1248.98 against 624.29. The 16-byte unequal string compare is 2.49 against
-  2.26, near the limit; other rows are within it or faster. The harness measures the legacy
-  collection ABI, not the library `Array` and `Dict` APIs.
+- macOS ARM64: the `513aeed1` runtime already clears the three collection
+  misses recorded at `5c21924e`. Only the short unequal string compare
+  still missed (1.113). With the comparison fix applied, all twelve rows
+  pass in the [same-host R0 recheck](../../tests/perf/README.md#r0-on-macos-arm64),
+  without an exception. The harness measures the collection ABI, not the
+  library `Array` and `Dict` APIs.
 - Windows x64 (`00b245a3`, AMD EPYC 7763, 2026-11-27): the `456b78d9` harness compiled once
   with `cl /O2 /Ob2 /MT` and linked against the `456b78d9` C runtime (built with the same flags,
   without `entry.c`) and against the Release `JoyeerRuntime.lib`. Fifteen interleaved rounds,
@@ -105,17 +105,19 @@ R0 benchmark (`cmake --build <dir> --target runtime-benchmark`, method in
 
 ### Phase 1: Performance gate
 
-- [ ] Profile `joyeer_array_append_owned_abi`, `joyeer_dictionary_set_owned_abi` and
-  `joyeer_dictionary_find_abi` on macOS ARM64, fix the cause, and remeasure against `456b78d9`
-  (§ Current state). Done when each row is within 10% or an exception is accepted.
-  blocked: macOS ARM64 host; no performance exception accepted.
+- [x] Remeasure `joyeer_array_append_owned_abi`, `joyeer_dictionary_set_owned_abi`
+  and `joyeer_dictionary_find_abi` on macOS ARM64 against `456b78d9`. The
+  existing collection and allocator changes already brought these rows under
+  the limit. The final median ratios are 1.009, 0.449 and 0.420, respectively.
 - [x] Run the same-host R0 comparison on Windows x64 and record every row here. Evidence:
   the Windows x64 table under Current state (2026-11-27, `00b245a3`).
 - [x] Explain the 16-byte unequal string compare gap on Windows x64 (6.26 against 5.32 ns/op).
   Evidence: placement sweep under Current state (2026-11-27). Against the C function at offsets
   16, 32 and 48 the ratio is 1.05, within the gate; no code change.
-- [ ] Check the macOS ARM64 16-byte unequal compare (2.49 against 2.26, near the limit) across
-  function placements the same way. blocked: macOS ARM64 host.
+- [x] Check the macOS ARM64 16-byte unequal compare across function placements.
+  At all eight tested offsets, the original code took 2.47 ns/op against C's
+  2.22; normalizing a nonzero `memcmp` result before the length tie-break
+  brought it to 2.22. The final full-run median was 1.004 times C.
 - [ ] Run the same-host R0 comparison on Linux x86-64 and record every row here.
   blocked: an x86-64 Linux host is needed; the available WSL2 host is AArch64.
 - [x] Optimize dictionary set and find on Linux AArch64. At `-O2`, their median ratios against C
@@ -131,16 +133,15 @@ R0 benchmark (`cmake --build <dir> --target runtime-benchmark`, method in
 
 ### Phase 2: macOS `System` without stdio
 
-- [ ] Move the macOS file primitives in [filesystem_posix.joyeer](../../lib/System/filesystem_posix.joyeer)
+- [x] Move the macOS file primitives in [filesystem_posix.joyeer](../../lib/System/filesystem_posix.joyeer)
   from stdio to libSystem file descriptors. Implemented with fixed-signature `openx_np`,
-  `read`, `write`, and `close` for the whole-file, owned, and legacy APIs. The cross-target
-  module-service test failed on the seven stdio imports before the change and passed after.
-  blocked: native macOS ARM64 error and interrupted-transfer checks have not run.
-- [ ] Add a macOS `System` import gate that forbids stdio, like the Linux one, and pass it in
-  Debug and Release. `RuntimeSystemProgramHasNoStdio_*` is registered at `-O0` and `-O2`;
-  synthetic Mach-O checks accepted `write` and rejected both `fopen` and `tmpfile`. blocked: macOS ARM64
-  link/run of the four Joyeer fixtures. At `5c21924e` those fixtures imported stdio at `-O0`,
-  and `filesystem` and `read_file` also did so at `-O2`.
+  `read`, `write`, and `close` for the whole-file, owned, and legacy APIs. The native
+  `SystemMacOS.ErrorCodes*` and `SystemMacOS.Interrupted*` fixtures passed at `-O0`
+  and `-O2` in Debug and Release with the fixes applied to `513aeed1`.
+- [x] Add a macOS `System` import gate that forbids stdio, like the Linux one, and pass it in
+  Debug and Release. All eight `RuntimeSystemProgramHasNoStdio_*` cases passed in both
+  configurations with the fixed Mach-O verifier. See the
+  [macOS validation evidence](../impl/fern.md#macos-arm64-toolchain-validation).
 
 ### Phase 3: Remaining platforms
 
@@ -182,6 +183,16 @@ R0 benchmark (`cmake --build <dir> --target runtime-benchmark`, method in
 
 ## Progress log
 
+- 2026-11-28: Closed the macOS ARM64 R0 gate. The eight-offset placement
+  sweep reproduced the short string compare gap and confirmed the fix.
+  All twelve rows passed the 10% limit by both median and minimum in the
+  [15-round full comparison](../../tests/perf/README.md#r0-on-macos-arm64).
+  At `513aeed1` with the Mach-O and string comparison fixes applied, the
+  unfiltered validator passed 2284 CTests in Debug, 2283 in Release and
+  2281 in Debug without `dsymutil`, with 7/7 `fern test` in each configuration.
+  Linux x86-64 R0 remains open.
+- 2026-11-28: Verified the macOS descriptor path and no-stdio import gates in
+  Debug and Release with the fixes applied to `513aeed1`. No R0 measurements ran.
 - 2026-11-28: Closed the two remaining AArch64 R0 rows with optional Linux
   growth reservation and remapping, and faster small-class indexing.
   Checked finite-address-space fallback, exact-page growth and unmapping,

@@ -36,6 +36,9 @@ configured symbol tool remains an error.
 PATH filtering; `Fern.Installed` checks relocation and standard-module
 resolution without an explicit compiler override. Both passed in the full
 native Debug and Release validators on Windows ARM64 and WSL2 Linux AArch64.
-On macOS, `Fern.SelfBuild` checks
-macOS dSYM presence when configured, absence otherwise, and the explicit
-`-gfull` diagnostic when `dsymutil` is missing; that native gate remains open.
+Both checks also passed on macOS ARM64 in Debug and Release at `513aeed1`.
+`Fern.SelfBuild` passed with and without `dsymutil`. The independent Debug
+build without it also passed the relocated install and confirmed that explicit
+`-gfull` exits 1 with `linker.missing-tool`. See
+[macOS validation evidence](../impl/fern.md#macos-arm64-toolchain-validation)
+for the remaining full-suite failures.

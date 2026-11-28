@@ -2,7 +2,8 @@
 
 - Status: in progress (updated 2026-11-28)
 - Decisions: [0034](../decisions/0034-fern-local-dependency-identity.md),
-  [0035](../decisions/0035-fern-compiler-discovery.md) (both pending macOS acceptance),
+  [0035](../decisions/0035-fern-compiler-discovery.md) (macOS Fern gates passed;
+  committed full validation remains pending),
   [0036](../decisions/0036-fern-remote-package-locking.md) and
   [0037](../decisions/0037-fern-cache-publication.md) (proposed)
 - Spec: [§12](../../specs/12-modules.md), [§18](../../specs/18-host.md)
@@ -54,8 +55,8 @@ and [host operations](../../specs/18-host.md).
 - [x] Compiler discovery: implement executable-location, sibling and `PATH` lookup
   with explicit overrides. `Fern.CompilerDiscovery` and relocated `Fern.Installed`
   passed on Windows ARM64 and Linux AArch64 (WSL2); see [decision 0035](../decisions/0035-fern-compiler-discovery.md).
-- [ ] Run `Fern.CompilerDiscovery` and `Fern.Installed` on macOS ARM64.
-  blocked: native macOS host.
+- [x] Run `Fern.CompilerDiscovery` and `Fern.Installed` on macOS ARM64.
+  Both passed in Debug and Release at `513aeed1`.
 - [ ] Dependency visibility: if strict direct-import allowlists are adopted, add a compiler interface;
   fern must not scan source text.
 
@@ -73,7 +74,8 @@ across the closure, and local paths are mutable rather than locked.
 - [x] Reject cycles and conflicting logical identities. The same fixture covers
   directory aliases, hard-linked manifests with different source bases, and a
   graph exceeding the total module limit.
-- [ ] Run `Fern.LocalDependencies` in macOS ARM64 Debug and Release.
+- [x] Run `Fern.LocalDependencies` in macOS ARM64 Debug and Release.
+  Both passed at `513aeed1`.
 
 ### P6: rebuild avoidance
 
@@ -122,10 +124,15 @@ implementation notes, not here.
 - [x] The local Debug installer stages the bundled standard modules;
   `DebugInstallerRelocatesStandardLibrary` installs into a fresh prefix, moves it,
   and compiles and runs a `System` import. Passed on both ARM64 hosts.
-- [ ] Verify the macOS Debug workflow without `dsymutil`: run the full validator with
-  `--define JOYEER_DSYMUTIL_EXECUTABLE=`, including bootstrap, self-build, relocated
-  install, and `moss.app`. Fern now passes `-gauto`; the self-build fixture also checks
-  that explicit `-gfull` still reports `linker.missing-tool`. blocked: native macOS host.
+- [x] Verify the macOS Debug workflow without `dsymutil`. At `513aeed1`,
+  `Fern.Bootstrap`, `Fern.SelfBuild`, `Fern.Installed`, `Moss.Serve`, and root
+  `fern test` passed with `--define JOYEER_DSYMUTIL_EXECUTABLE=` in an independent
+  checkout. Explicit `-gfull` exited 1 with `linker.missing-tool` naming `dsymutil`.
+- [ ] Pass the full macOS ARM64 validator on a committed revision in Debug and
+  Release and in a separate Debug run without `dsymutil`. blocked: all three
+  passed with the Mach-O fixes applied to `513aeed1`, but that commit does not
+  contain the fixes; see the
+  [macOS validation evidence](../impl/fern.md#macos-arm64-toolchain-validation).
 - [ ] Standalone Homebrew dependency packaging. Blocked: the installed backend still links
   external Homebrew libraries; [local relocation](../building.md#release-staging) does not
   establish a standalone distribution.
@@ -163,6 +170,16 @@ scoped, not prerequisites.
 
 ## Progress log
 
+- 2026-11-28: Accepted native link inputs in [decision 0033](../decisions/0033-native-library-names.md)
+  after the final patched checkout passed Debug, Release, and independent
+  Debug without `dsymutil`. The committed-revision validation item in this
+  plan remains open.
+- 2026-11-28: Reran the full macOS ARM64 validator with the Mach-O fixes applied
+  to `513aeed1`. Debug, Release, and independent Debug without `dsymutil`
+  passed CTest and root `fern test`. Committed acceptance remains pending.
+- 2026-11-28: Verified macOS ARM64 compiler discovery, relocated installs, local
+  dependencies, and the Debug workflow without `dsymutil` at `513aeed1`. The full
+  validator remains blocked by the same nine CTest failures in all three runs.
 - 2026-11-28: Dropped CI runner provisioning as a release prerequisite.
   Repeatable native release staging and platform validation remain required.
 - 2026-11-28: Added the shared SHA-256 primitive for cache and remote content

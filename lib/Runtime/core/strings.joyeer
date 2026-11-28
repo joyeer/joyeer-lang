@@ -29,8 +29,10 @@ public func stringCompare(leftData: Int, leftCount: Int, rightData: Int, rightCo
     if leftCount < rightCount { common = leftCount }
     if common != 0 {
         let order = memoryCompare(left: leftData, right: rightData, count: common)
-        if order < 0 { return -1 }
-        if order > 0 { return 1 }
+        if order != 0 {
+            if order < 0 { return -1 }
+            return 1
+        }
     }
     if leftCount < rightCount { return -1 }
     if leftCount > rightCount { return 1 }

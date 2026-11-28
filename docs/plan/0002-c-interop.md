@@ -14,7 +14,7 @@ user FFI.
 
 Related: [runtime-in-joyeer](0008-runtime-in-joyeer.md),
 [standard modules](../../specs/12-modules.md#125-standard-modules), and
-[native-link-inputs](0004-native-link-inputs.md) (supplying link inputs).
+[decision 0033](../decisions/0033-native-library-names.md) (supplying link inputs).
 
 ## Definition of done
 
@@ -105,7 +105,7 @@ For extensions, prefer an internal scoped region mechanism over exposing pointer
 |---|---|
 | C-specific source aliases? | Decide separately; today use fixed-width types or C shims |
 | Any public native capability? | Separate user-FFI/unsafe proposal |
-| Who supplies link metadata? | CMake for bootstrap; fern design is in [native-link-inputs](0004-native-link-inputs.md) |
+| Who supplies link metadata? | CMake for bootstrap; fern follows [decision 0033](../decisions/0033-native-library-names.md) |
 | Complex ABI features | Separate gates: aggregates by value, unions/bit-fields, callbacks, varargs, `long double` |
 
 ## Out of scope

@@ -55,6 +55,41 @@ be compared against a baseline on the same machine and configuration.
 Record the numbers in the decision or the pull request that changes the runtime, with the machine,
 the operating system and the build configuration.
 
+### R0 on macOS ARM64
+
+On 2026-11-28 on a native Apple M3 Pro (`Mac15,6`, macOS 27.0.1 build 26A434),
+the frozen `456b78d9` C runtime and its benchmark harness were built with
+Apple Clang 21.0.0 at `-O2` against SDK 26.5. The same harness object was
+linked against C and against the `513aeed1` Release Joyeer runtime with the
+Mach-O and string comparison fixes applied (LLVM/LLD 22.1.8, deployment
+target 26.5). The full workload ran for 15 interleaved rounds per comparison,
+reversing A/B order each round. Each round reports the best of seven
+repetitions; every run finished with a balanced allocator.
+
+| Benchmark | C median/min (ns/op) | Joyeer median/min (ns/op) | Median/min ratio |
+|---|---:|---:|---:|
+| String equal, equal, 16 B | 1.81/1.73 | 1.82/1.73 | 1.006/1.000 |
+| String compare, last byte differs, 16 B | 2.38/2.35 | 2.39/2.25 | 1.004/0.957 |
+| String concat + destroy, 16 B | 14.06/13.97 | 11.41/11.18 | 0.812/0.800 |
+| String clone + destroy, 16 B | 11.41/11.31 | 8.76/8.61 | 0.768/0.761 |
+| String equal, equal, 1024 B | 22.35/22.20 | 22.03/21.68 | 0.986/0.977 |
+| String compare, last byte differs, 1024 B | 22.41/22.19 | 22.47/22.35 | 1.003/1.007 |
+| String concat + destroy, 1024 B | 35.66/35.59 | 28.78/28.70 | 0.807/0.806 |
+| String clone + destroy, 1024 B | 30.61/30.36 | 17.12/17.08 | 0.559/0.563 |
+| Array append, grow from empty (`Int`) | 3.34/3.24 | 3.37/3.22 | 1.009/0.994 |
+| Array clone + destroy, 1000 elements with callbacks | 1.53/1.53 | 1.50/1.50 | 0.980/0.980 |
+| Dictionary set, 1000 distinct `Int` keys | 323.62/322.12 | 145.46/143.17 | 0.449/0.444 |
+| Dictionary find, last of 1000 `Int` keys | 622.73/622.56 | 261.69/261.19 | 0.420/0.420 |
+
+Before the string change, 11 rows already met the 10% limit. The 16-byte
+unequal compare was 2.47 against C's 2.22 ns/op (1.113 by median and minimum).
+In a separate quick sweep, relinking at offsets 0 through 112 in 16-byte
+steps within a 128-byte cache line did not change those medians. At every
+offset the updated runtime took 2.22 ns/op: it handles nonzero `memcmp`
+results separately from the length tie-break, with no size-specific
+path. The full run above used the normal Release archive without linker
+padding. All rows passed without a performance exception.
+
 ### R0 on Linux AArch64
 
 On 2026-11-28, on Oryon AArch64 under Ubuntu 26.04.1/WSL2, the `456b78d9` R0

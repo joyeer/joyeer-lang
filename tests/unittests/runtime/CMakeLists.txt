@@ -412,7 +412,7 @@ if(APPLE)
         message(FATAL_ERROR "macOS runtime tests need llvm-nm from the LLVM SDK.")
     endif()
     set(joyeer_macos_runtime_imports
-        __error _exit atexit dyld_stub_binder isatty memcmp memcpy memmove memset mmap munmap
+        __error _exit atexit bzero dyld_stub_binder isatty memcmp memcpy memmove memset mmap munmap
         os_unfair_lock_lock os_unfair_lock_trylock os_unfair_lock_unlock pthread_sigmask sleep)
     set(joyeer_macos_system_imports
         _NSGetEnviron accept access bind clock_gettime close closedir connect fcntl filesec_free fstat
