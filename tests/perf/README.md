@@ -130,6 +130,38 @@ Array clone/destroy now clears the 10% limit; both remaining misses
 also exceed their paired C minima. All seven other rows stayed within
 the limit in this run.
 
+#### Allocator growth and class indexing
+
+On 2026-11-28, on Oryon AArch64 under Ubuntu 26.04.1/WSL2
+(`6.18.58.1-microsoft-standard-WSL2`), the same `456b78d9` harness object
+was linked against frozen C and the before/after Release Joyeer archives.
+The harness and C baseline were built with GCC 15.2 `-O2`; the candidate
+is `de885a9` plus the allocator changes, built with LLVM 22.1.8 at `-O2`.
+Each executable ran the full workload for 15 rounds on CPU 3, reversing
+the order each round. The kernel's transparent huge page mode was
+`madvise`. Every run exited successfully with a balanced allocator.
+
+| Benchmark | C median/min (ns/op) | Before median/min | After median/min | After / C median/min |
+|---|---:|---:|---:|---:|
+| String equal, equal, 16 B | 2.40 / 2.36 | 2.39 / 2.37 | 2.40 / 2.36 | 1.000 / 1.000 |
+| String compare, last byte differs, 16 B | 2.97 / 2.95 | 2.68 / 2.66 | 2.67 / 2.66 | 0.899 / 0.902 |
+| String concat + destroy, 16 B | 20.36 / 19.46 | 18.88 / 18.02 | 18.50 / 17.23 | 0.909 / 0.885 |
+| String clone + destroy, 16 B | 20.38 / 19.12 | 18.55 / 17.10 | 18.58 / 17.00 | 0.912 / 0.889 |
+| String equal, equal, 1024 B | 16.73 / 16.07 | 16.69 / 15.82 | 16.49 / 15.59 | 0.986 / 0.970 |
+| String compare, last byte differs, 1024 B | 17.47 / 16.48 | 17.08 / 16.28 | 17.41 / 16.08 | 0.997 / 0.976 |
+| String concat + destroy, 1024 B | 54.04 / 49.97 | 53.46 / 46.40 | 58.04 / 54.10 | 1.074 / 1.083 |
+| String clone + destroy, 1024 B | 35.46 / 32.69 | 41.18 / 37.34 | 27.70 / 25.60 | 0.781 / 0.783 |
+| Array append, grow from empty (`Int`) | 3.88 / 3.84 | 7.05 / 6.90 | 3.59 / 3.54 | 0.925 / 0.922 |
+| Array clone + destroy, 1000 elements with callbacks | 2.09 / 2.09 | 1.80 / 1.80 | 1.79 / 1.79 | 0.856 / 0.856 |
+| Dictionary set, 1000 distinct `Int` keys | 454.40 / 454.20 | 181.00 / 165.50 | 182.80 / 166.20 | 0.402 / 0.366 |
+| Dictionary find, last of 1000 `Int` keys | 743.50 / 738.85 | 314.25 / 314.05 | 313.85 / 313.55 | 0.422 / 0.424 |
+
+Both previously failing rows pass without an exception. The array code is
+unchanged: opportunistic Linux mapping reservation and remapping avoid growth
+copies. The allocator computes the same small classes with constant shifts
+instead of a variable division; it does not specialize string clone for the
+benchmark size. Neither change removes arithmetic overflow checks.
+
 ## Comparing two builds
 
 To reproduce the comparison for the merged library collection switch, use

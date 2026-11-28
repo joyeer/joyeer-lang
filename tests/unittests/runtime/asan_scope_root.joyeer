@@ -1,0 +1,6 @@
+import asan_scope.dependency
+
+@c_export(symbol: "asan_scope_root_read")
+func read(address: Int): UInt8 {
+    return asan_scope.dependency.readByte(address: address)
+}

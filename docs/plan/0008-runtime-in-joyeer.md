@@ -1,8 +1,8 @@
 # 0008: Runtime in Joyeer
 
 - Status: blocked (updated 2026-11-28). The remaining gates are the R0 performance
-  comparisons and native macOS verification of the `System` descriptor path. The available
-  Windows and WSL hosts are ARM64; two Linux AArch64 R0 rows exceed the limit.
+  comparisons on Linux x86-64 and macOS ARM64, and native macOS verification of the
+  `System` descriptor path. The available Windows and WSL hosts are ARM64.
 - Decisions: [0005](../decisions/0005-runtime-unsafe-memory.md),
   [0008](../decisions/0008-runtime-core-build-shape.md),
   [0009](../decisions/0009-runtime-core-capabilities.md),
@@ -97,10 +97,9 @@ R0 benchmark (`cmake --build <dir> --target runtime-benchmark`, method in
   10 ns can move by about 0.6 ns with placement alone, so compare them across placements before
   calling a gap real.
 - Linux AArch64 (WSL2): [same-host R0 results](../../tests/perf/README.md#r0-on-linux-aarch64)
-  cover the original and updated runtime. Dictionary set and find and array
-  clone/destroy now beat C; array append and 1024-byte string clone/destroy
-  still exceed the limit.
-  This is diagnostic evidence, not the Linux x86-64 gate.
+  cover the original and updated runtime. All rows now meet the 10% limit,
+  including array append and 1024-byte string clone/destroy. This is native
+  AArch64 evidence, not the Linux x86-64 gate.
 
 ## Todo
 
@@ -124,8 +123,11 @@ R0 benchmark (`cmake --build <dir> --target runtime-benchmark`, method in
 - [x] Optimize array clone/destroy on Linux AArch64. The checked callback walks
   preserve ordering and zero-stride behavior; the [15-round comparison](../../tests/perf/README.md#array-callback-walk)
   measured 1.80 ns/op versus 2.09 for C (0.86).
-- [ ] Resolve the two remaining Linux AArch64 R0 regressions or document an accepted exception:
-  array append (1.98) and 1024-byte string clone/destroy (1.15).
+- [x] Resolve the two remaining Linux AArch64 R0 regressions. The
+  [15-round comparison](../../tests/perf/README.md#allocator-growth-and-class-indexing)
+  against frozen C measured median/minimum ratios of 0.925/0.922 for array
+  append and 0.781/0.783 for 1024-byte string clone/destroy. No exception
+  was used, and the array overflow checks remain unchanged.
 
 ### Phase 2: macOS `System` without stdio
 
@@ -180,6 +182,16 @@ R0 benchmark (`cmake --build <dir> --target runtime-benchmark`, method in
 
 ## Progress log
 
+- 2026-11-28: Closed the two remaining AArch64 R0 rows with optional Linux
+  growth reservation and remapping, and faster small-class indexing.
+  Checked finite-address-space fallback, exact-page growth and unmapping,
+  actual `mremap` success and forced failure, and the existing overflow
+  traps. The independent IR/backend review approved the mapping invariants.
+  At `de885a9` plus these changes with LLVM 22.1.8, the native validator
+  passed 2283 Debug and 2282 Release CTests on WSL2 Linux AArch64, and
+  2305 Debug and 2304 Release CTests on Windows ARM64. Each configuration
+  also passed 7/7 `fern test`, without retries. The macOS and Linux x86-64
+  gates remain open.
 - 2026-11-28: Hoisted array callback address checks out of the usual clone and
   destroy loops. Verified the callback order, zero-stride behavior, and
   overflow traps; array clone/destroy now passes the AArch64 R0 gate. Did not

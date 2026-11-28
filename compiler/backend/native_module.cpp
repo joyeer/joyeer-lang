@@ -57,8 +57,8 @@ extern "C" JoyeerBackendStatus joyeer_backend_build_module(
         module->isCoreRuntimeObject = source.isRuntimeObject;
         bool rootDefinition = false;
         for (const auto& function : source.functions) {
-            if (!function.isRootModule || function.blocks.empty()) continue;
-            rootDefinition = true;
+            if (function.blocks.empty()) continue;
+            rootDefinition |= function.isRootModule;
             module->isCoreRuntimeObject &= function.coreContext;
         }
         module->isCoreRuntimeObject &= rootDefinition;

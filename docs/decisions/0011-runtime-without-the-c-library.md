@@ -61,6 +61,17 @@ free list. During 10.1 the allocator was temporarily built with a size header th
 panicked on a mismatch and the whole test suite was run; the callers in the runtime,
 `System`, the native helpers and the C interop fixtures all passed correct sizes.
 
+**Linux growth follow-up.** A growing block that must move can try to reserve
+2 MiB while live, but only if `RLIMIT_AS` is unlimited and allocator scratch
+storage is already available. If the query or reserve fails, it uses an exact
+page-rounded allocation. Ordinary allocation still maps the requested size
+rounded to pages. The reserved kind keeps a 16-byte offset from the base, so the
+size-argument ABI can recover its mapping extent without a size header.
+`madvise(MADV_HUGEPAGE)` is a hint, not a requirement, and
+`mremap(MREMAP_MAYMOVE)` can preserve pages on subsequent growth, with the
+same allocate/copy/free fallback if it fails. No mapping is cached after
+release; the allocation counter is unchanged.
+
 **D10: the system-call intrinsic (10.2).** `joyeer_intrinsic_syscall(number, a1, a2,
 a3, a4, a5, a6): Int` lowers to inline assembly (`syscall` on x86-64, `svc #0` on
 AArch64) and is meaningful only on Linux. It returns the kernel's result

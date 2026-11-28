@@ -18,6 +18,13 @@ joyeer_discover_tests(RuntimeTests
         PROPERTIES LABELS runtime
 )
 
+get_filename_component(joyeer_llvm_bin "${JOYEER_CLANG_EXECUTABLE}" DIRECTORY)
+find_program(JOYEER_RUNTIME_NM_EXECUTABLE NAMES llvm-nm llvm-nm-${LLVM_VERSION_MAJOR}
+    HINTS "${JOYEER_LLVM_ROOT}/bin" "${LLVM_TOOLS_BINARY_DIR}" "${joyeer_llvm_bin}")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT JOYEER_RUNTIME_NM_EXECUTABLE)
+    message(FATAL_ERROR "Linux runtime tests need llvm-nm from the LLVM SDK.")
+endif()
+
 if(JOYEER_SANITIZE_RUNTIME)
     add_executable(RuntimeAsanProbe asan_probe.c)
     target_compile_options(RuntimeAsanProbe PRIVATE -g -fsanitize=address)
@@ -43,6 +50,16 @@ if(JOYEER_SANITIZE_RUNTIME)
     set_tests_properties(RuntimeAddressSanitizer.PlainExecutable PROPERTIES
         LABELS "runtime;sanitizer;native" TIMEOUT 60
         ENVIRONMENT "JOYEER_TEST_ASAN_RUNTIME=1")
+    foreach(mode IN ITEMS O0 O2)
+        add_test(NAME "RuntimeAddressSanitizer.ObjectScope.${mode}"
+            COMMAND "${CMAKE_COMMAND}"
+                "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+                "-DLLVM_NM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
+                "-DTEST_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}" "-DMODE=${mode}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/verifyAsanObjectScope.cmake")
+        set_tests_properties("RuntimeAddressSanitizer.ObjectScope.${mode}" PROPERTIES
+            LABELS "runtime;sanitizer;native" TIMEOUT 60)
+    endforeach()
 endif()
 
 # The whole suite again with one thread sleeping for the run, so every runtime function takes its
@@ -153,12 +170,6 @@ add_custom_target(runtime-benchmark
 # The Joyeer runtime core object may define only the approved exports and call
 # only the approved imports. Update both lists in the same change that adds a
 # function to lib/Runtime/core/ (decision 0009, D3).
-get_filename_component(joyeer_llvm_bin "${JOYEER_CLANG_EXECUTABLE}" DIRECTORY)
-find_program(JOYEER_RUNTIME_NM_EXECUTABLE NAMES llvm-nm llvm-nm-${LLVM_VERSION_MAJOR}
-    HINTS "${JOYEER_LLVM_ROOT}/bin" "${LLVM_TOOLS_BINARY_DIR}" "${joyeer_llvm_bin}")
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT JOYEER_RUNTIME_NM_EXECUTABLE)
-    message(FATAL_ERROR "Linux runtime tests need llvm-nm from the LLVM SDK.")
-endif()
 get_target_property(JOYEER_RUNTIME_CORE_OBJECT JoyeerRuntime JOYEER_CORE_OBJECT)
 if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
     # The calls the core may make: compare, copy and fill (a variable-size

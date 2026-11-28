@@ -13,8 +13,9 @@
 //   to 512 bytes, then four steps per power of two. A freed block goes on its
 //   class's free list, a list is popped first, and otherwise the block is cut from a
 //   1 MiB region mapped on demand. Small blocks are never returned to the system.
-// - A larger block is its own mapping, rounded up to whole pages, and is unmapped
-//   when freed.
+// - A larger block is its own mapping, unmapped when freed. On Linux, moving
+//   a growing block can reserve extra space, and the kernel can extend a
+//   dedicated mapping without copying its existing pages.
 // - Every block is sixteen-byte aligned. A zero-byte request is served as one byte,
 //   so every live block has its own address.
 // - The allocator is thread safe (decision 0017): one lock, taken only once a second thread
@@ -112,6 +113,16 @@ public func unmapPages(address: Int, size: Int): Void {
         fourth: 0, fifth: 0, sixth: 0)
 }
 
+@platform(linux)
+private func tryGrowPages(address: Int, oldBytes: Int, newBytes: Int): Int {
+    // MREMAP_MAYMOVE lets the kernel preserve the pages without copying
+    // their contents. An error leaves the original mapping intact.
+    let resized = systemCall(number: callNumber(x86: 25, arm: 216), first: address, second: oldBytes,
+        third: newBytes, fourth: 1, fifth: 0, sixth: 0)
+    if resized < 0 && resized >= 0 - 4095 { return 0 }
+    return resized
+}
+
 // Runtime plan §5 assigns slots 0 to 15 to the core (the table is in docs/impl/runtime.md).
 private let counterSlot: Int = 0
 private let stateSlot: Int = 1
@@ -119,6 +130,8 @@ private let lockSlot: Int = 12
 
 private let regionBytes: Int = 1048576
 private let pageBytes: Int = 4096
+private let largeReserveBytes: Int = 2097152
+private let growthPrefixBytes: Int = 16
 private let smallLimit: Int = 32768
 private let granule: Int = 16
 private let fineClasses: Int = 32
@@ -127,6 +140,8 @@ private let fineLimit: Int = 512
 // before the first block is cut.
 private let headsOffset: Int = 16
 private let stateBytes: Int = 512
+// The 56 free-list heads end at byte 464, before these two scratch words.
+private let addressLimitOffset: Int = 464
 private let largestRequest: Int = 4611686018427387904
 
 private func outOfMemory(): Never {
@@ -160,15 +175,15 @@ private func state(): Int {
 // The size class of a request of `size` bytes (1 to smallLimit).
 private func classIndex(size: Int): Int {
     if size <= fineLimit { return (size + granule - 1) / granule - 1 }
-    var power = fineLimit
-    var octave = 0
-    while power * 2 < size {
-        power = power * 2
-        octave = octave + 1
-    }
-    let step = power / 4
-    let quarter = (size - power + step - 1) / step
-    return fineClasses + octave * 4 + quarter - 1
+    // The highest bit of the last byte selects an octave. The next two
+    // bits select a quarter within it. last is in 512...32767.
+    let last = size - 1
+    if size <= 1024 { return fineClasses + ((last >> 7) & 3) }
+    if size <= 2048 { return fineClasses + 4 + ((last >> 8) & 3) }
+    if size <= 4096 { return fineClasses + 8 + ((last >> 9) & 3) }
+    if size <= 8192 { return fineClasses + 12 + ((last >> 10) & 3) }
+    if size <= 16384 { return fineClasses + 16 + ((last >> 11) & 3) }
+    return fineClasses + 20 + ((last >> 12) & 3)
 }
 
 // The bytes of a block of class `index`.
@@ -185,10 +200,24 @@ private func classBytes(index: Int): Int {
     return power + quarter * (power / 4)
 }
 
-// A request above smallLimit gets whole pages.
-private func largeBytes(size: Int): Int {
+// Include any prefix and reservation when recovering the mapping's length.
+private func largeBytes(size: Int, prefix: Int): Int {
     if size > largestRequest { outOfMemory() }
-    return (size + pageBytes - 1) / pageBytes * pageBytes
+    let bytes = (size + prefix + pageBytes - 1) / pageBytes * pageBytes
+    if prefix != 0 && bytes < largeReserveBytes { return largeReserveBytes }
+    return bytes
+}
+
+// Only successful reserve allocations have a prefix. Its offset from the
+// page boundary identifies the original mapping without a size header.
+@platform(linux)
+private func mappingPrefix(address: Int): Int {
+    return address & (pageBytes - 1)
+}
+
+@platform(windows, macos)
+private func mappingPrefix(address: Int): Int {
+    return 0
 }
 
 private func takeSmall(size: Int): Int {
@@ -213,7 +242,7 @@ private func takeSmallLocked(size: Int): Int {
     var cursor = load64(address: base) as Int
     var end = load64(address: base + 8) as Int
     if cursor + bytes > end {
-        // The rest of the region (under smallLimit bytes) is abandoned.
+        // The remaining tail cannot fit this block at the required alignment.
         cursor = mapPages(size: regionBytes)
         if cursor == 0 { outOfMemory() }
         end = cursor + regionBytes
@@ -225,14 +254,52 @@ private func takeSmallLocked(size: Int): Int {
 
 private func take(size: Int): Int {
     if size <= smallLimit { return takeSmall(size: size) }
-    let address = mapPages(size: largeBytes(size: size))
+    let address = mapPages(size: largeBytes(size: size, prefix: 0))
     if address == 0 { outOfMemory() }
     return address
 }
 
+@platform(linux)
+private func canReserveGrowthSpace(): Bool {
+    let held = threadsActive()
+    if held { lockBlocking(slot: lockSlot) }
+    let base = load64(address: staticSlot(index: stateSlot)) as Int
+    var unlimited = false
+    if base != 0 {
+        // Do not allocate a pool just for scratch. prlimit64 writes two words.
+        let scratch = base + addressLimitOffset
+        let queried = systemCall(number: callNumber(x86: 302, arm: 261), first: 0, second: 9,
+            third: 0, fourth: scratch, fifth: 0, sixth: 0)
+        unlimited = queried == 0 && load64(address: scratch) == ~0
+    }
+    if held { lockUnblock(slot: lockSlot) }
+    return unlimited
+}
+
+@platform(linux)
+private func takeMoved(size: Int, previous: Int): Int {
+    if size > smallLimit && size > previous && size <= largeReserveBytes - growthPrefixBytes &&
+        canReserveGrowthSpace() {
+        let address = mapPages(size: largeReserveBytes)
+        if address != 0 {
+            // MADV_HUGEPAGE is advisory. Normal pages still serve the mapping.
+            systemCall(number: callNumber(x86: 28, arm: 233), first: address,
+                second: largeReserveBytes, third: 14, fourth: 0, fifth: 0, sixth: 0)
+            return address + growthPrefixBytes
+        }
+    }
+    return take(size: size)
+}
+
+@platform(windows, macos)
+private func takeMoved(size: Int, previous: Int): Int {
+    return take(size: size)
+}
+
 private func give(address: Int, size: Int): Void {
     if size > smallLimit {
-        unmapPages(address: address, size: largeBytes(size: size))
+        let prefix = mappingPrefix(address: address)
+        unmapPages(address: address - prefix, size: largeBytes(size: size, prefix: prefix))
         return
     }
     let held = threadsActive()
@@ -243,15 +310,34 @@ private func give(address: Int, size: Int): Void {
     if held { lockUnblock(slot: lockSlot) }
 }
 
-// Whether two request sizes are served by blocks of the same size.
-private func sameBlock(first: Int, second: Int): Bool {
+// An unchanged class needs no resize. On Linux, try growing a dedicated
+// mapping without copying; zero means to use the normal allocate/copy/free.
+private func resize(address: Int, first: Int, second: Int): Int {
     if first <= smallLimit && second <= smallLimit {
-        return classIndex(size: first) == classIndex(size: second)
+        if classIndex(size: first) == classIndex(size: second) { return address }
     }
     if first > smallLimit && second > smallLimit {
-        return largeBytes(size: first) == largeBytes(size: second)
+        let prefix = mappingPrefix(address: address)
+        return resizeLarge(address: address, prefix: prefix, before: largeBytes(size: first, prefix: prefix),
+            after: largeBytes(size: second, prefix: prefix))
     }
-    return false
+    return 0
+}
+
+@platform(linux)
+private func resizeLarge(address: Int, prefix: Int, before: Int, after: Int): Int {
+    if after == before { return address }
+    if after > before {
+        let resized = tryGrowPages(address: address - prefix, oldBytes: before, newBytes: after)
+        if resized != 0 { return resized + prefix }
+    }
+    return 0
+}
+
+@platform(windows, macos)
+private func resizeLarge(address: Int, prefix: Int, before: Int, after: Int): Int {
+    if before == after { return address }
+    return 0
 }
 
 @c_export(symbol: "joyeer_alloc")
@@ -267,8 +353,9 @@ public func reallocate(address: Int, oldSize: Int, newSize: Int): Int {
     if address == 0 { return allocate(size: newSize) }
     let before = request(size: oldSize)
     let after = request(size: newSize)
-    if sameBlock(first: before, second: after) { return address }
-    let moved = take(size: after)
+    let resized = resize(address: address, first: before, second: after)
+    if resized != 0 { return resized }
+    let moved = takeMoved(size: after, previous: before)
     var kept = before
     if after < kept { kept = after }
     copyBytes(destination: moved, source: address, count: kept)

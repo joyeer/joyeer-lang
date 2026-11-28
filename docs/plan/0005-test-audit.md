@@ -7,7 +7,7 @@
 
 ## Goal
 
-Complement hand-written tests with systematic and adversarial coverage: fuzzing, sanitizers, CI,
+Complement hand-written tests with systematic and adversarial coverage: fuzzing, sanitizers,
 generated ownership programs, and traceability from the spec to the tests.
 
 ## Definition of done
@@ -48,9 +48,13 @@ In priority order.
   read and reported the intended one-byte read beyond an allocation in Joyeer
   code at `-O0` and `-O2`. Ordinary executable emission is unaffected by
   the old environment trigger. See [sanitizer builds](../building.md#full-platform-validation).
-- [ ] Tighten the test-only ASan object check to reject non-core dependency
-  definitions, not just non-core root definitions. Cover a mixed-module input
-  at `-O0` and `-O2` without changing ordinary object emission.
+- [x] Tighten the test-only ASan object check to reject non-core dependency
+  definitions, not just non-core root definitions. On WSL2 Linux AArch64
+  (LLVM 22.1.8), the mixed input emitted an object at `-O0` and `-O2` before
+  the fix. Both `RuntimeAddressSanitizer.ObjectScope` cases now reject it
+  without an output file. At both levels, the ordinary mixed object still
+  contains both definitions without ASan symbols, and the all-core ASan
+  object is instrumented. Independent IR/backend review approved the change.
 - [ ] Broader generated runtime sanitizer coverage: the Linux test archive
   covers the core's instrumented accesses, not logical bounds within its
   custom allocator, other generated programs, or Windows runtime objects.
@@ -64,10 +68,6 @@ In priority order.
 - [x] Spec-to-test traceability: [citation convention](../building.md#full-platform-validation)
   and [`scripts/spec-coverage.py`](../../scripts/spec-coverage.py) list uncited sections and
   reject invalid citations. Verified on Windows and Linux.
-- [ ] CI: run [`scripts/validate.py`](../../scripts/validate.py) per change or on a schedule.
-  The [weekly workflow](../building.md#native-validation-workflow) is checked in.
-  blocked: the repository Actions runner inventory contains no self-hosted runners;
-  there is no hosted execution evidence.
 - [x] Audit negative coverage for the lexer, module resolution, and native entry.
   `LexerTest` covers literal overflow, malformed separators, and reserved words;
   `DiagnosticsCliRendersLexerSourceContext` pins the unterminated-comment diagnostic.
@@ -100,9 +100,18 @@ None.
 ## Out of scope
 
 Running the existing suites; that is the job of `scripts/validate.py` and the platform plans.
+Provisioning CI runners and obtaining scheduled CI results are not acceptance requirements.
 
 ## Progress log
 
+- 2026-11-28: Dropped the scheduled CI acceptance item because runners are
+  not available. The native platform validation requirements still apply
+  and can be verified locally with `scripts/validate.py`.
+- 2026-11-28: Closed the mixed-module ASan object check. Reproduced acceptance
+  and unwanted object output at `-O0` and `-O2`, then verified all five
+  `RuntimeAddressSanitizer` tests in a native Linux AArch64 (WSL2) Debug
+  build from `de885a9` plus these changes. The independent IR/backend
+  review found no blocking issues.
 - 2026-11-28: Added explicitly selected, test-only runtime ASan emission
   and verified a real report from Joyeer code on WSL AArch64. Fixed the
   compiler driver's allocation leaks found when building the probe, and
@@ -110,8 +119,8 @@ Running the existing suites; that is the job of `scripts/validate.py` and the pl
 - 2026-11-28: Pinned the current diagnostics for 24 deferred syntax cases and the
   reserved-word list. Made the stdin optimization comparison reopen the same
   fixture input for every run instead of consuming the test runner's input.
-- 2026-11-28: Added opt-in host ASan/UBSan configuration and the native validation
-  workflow. Generated runtime instrumentation and hosted runner provisioning remain open.
+- 2026-11-28: Added opt-in host ASan/UBSan configuration and the optional
+  native validation workflow. Generated runtime instrumentation was still open.
 - 2026-11-28: Added byte mutation, generated ownership, the spec citation report,
   and stable diagnostics for the deferred annotations. Audited lexer and module negatives,
   Linux AArch64 entry and fern host failures; the separate x86-64 case evidence is still open.

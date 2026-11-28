@@ -45,6 +45,18 @@ load/store intrinsics instead of an out-of-line copy. These paths preserve
 the public C ABI and the existing destruction callbacks. See the
 [AArch64 comparison](../../tests/perf/README.md#collection-hot-path-follow-up).
 
+The allocator computes the same small classes with a fixed shift per octave
+instead of dividing by a variable stride. When Linux must move a growing
+block into a dedicated mapping, it can first try reserving a 2 MiB span if
+`RLIMIT_AS` is unlimited and allocator scratch storage is already available.
+A 16-byte address offset distinguishes a successful reservation from a
+normal mapping; the allocator
+uses the original base and full span to resize or unmap it. If the reserve
+does not fit, a page-rounded allocation is still tried. Linux can use
+`mremap` for further growth, falling back to allocate/copy/free on failure.
+No mapping is retained after destruction, and reallocation does not change
+the live-block count. Other hosts still use page-rounded dedicated mappings.
+
 The [contract functions](../../specs/09-contracts.md#92-standard-checks) are
 ordinary bundled Joyeer functions. They pass a borrowed message to
 `joyeer_panic_bytes` as a pointer and a byte count, so even embedded NUL or

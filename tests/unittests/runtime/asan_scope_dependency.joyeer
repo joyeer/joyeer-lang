@@ -1,0 +1,7 @@
+@c_extern(symbol: "joyeer_intrinsic_load_u8")
+private func loadByte(address: Int): UInt8
+
+@c_export(symbol: "asan_scope_dependency_read")
+public func readByte(address: Int): UInt8 {
+    return loadByte(address: address)
+}

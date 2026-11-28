@@ -131,10 +131,11 @@ ctest --test-dir <sanitizer-build> -R RuntimeAddressSanitizer --output-on-failur
 
 The probe checks both a valid read and AddressSanitizer detection of a
 one-byte overread inside the runtime. Only the test build's explicit
-`--emit-asan-runtime-object` operation enables that instrumentation;
-ordinary objects and executables use the uninstrumented runtime. ASan
-does not automatically track
-the logical bounds of the runtime's custom allocator's internal blocks.
+`--emit-asan-runtime-object` operation enables that instrumentation. The
+object must have a core root definition and may not contain non-core
+definitions from dependencies. Ordinary object and executable emission
+are unchanged. ASan does not automatically track the logical bounds of
+the runtime's custom allocator's internal blocks.
 The host and runtime options are independent and can be enabled together.
 
 ### Fern bootstrap and acceptance
@@ -151,6 +152,22 @@ To verify a macOS configuration without it, pass
 `--define JOYEER_DSYMUTIL_EXECUTABLE=` to `scripts/validate.py` in a separate
 validation checkout. Tests that require a dSYM are not registered there;
 the explicit missing-tool diagnostic and ordinary native workflows still run.
+
+For the native-link and Fern acceptance handoff on a Mac ARM64, run from
+the checkout of the commit being validated:
+
+```bash
+python3 scripts/validate-macos.py --llvm-root "$(brew --prefix llvm)" --sdk macosx26.5
+```
+
+Use your installed LLVM 22.1.8 SDK path if it is not managed by Homebrew;
+`--lld-dir` can select an existing separate LLD CMake package. Use
+`--sdk macosx` if the active SDK is compatible. The script runs the focused
+native-link tests, the full Debug and Release validator, the focused Fern
+tests, and a separate Debug build with dSYM generation disabled. It prints
+the directory with the two isolated checkouts, reports, and provenance.
+It validates committed `HEAD` without changing the source checkout or
+marking plans complete.
 
 The [fern gates](../tests/fern/CMakeLists.txt) cover bootstrap regeneration,
 self-build, workspaces, and relocated installs. They require `BUILD_TESTING`
@@ -179,8 +196,10 @@ These layout gates do not establish standalone distributable packaging.
 
 ### Native validation workflow
 
-The [Native validation workflow](../.github/workflows/validate.yml) runs
-weekly and supports manual dispatch on the default branch. Set the repository
+Local native runs of [`scripts/validate.py`](#full-platform-validation)
+satisfy the validation gates; CI runners are not required. The optional
+[Native validation workflow](../.github/workflows/validate.yml) supports
+weekly and manual runs on the default branch. To opt in, set the repository
 variable `JOYEER_NATIVE_RUNNERS` to `enabled` after provisioning self-hosted
 runners with the `joyeer-native` label, the native toolchains above,
 `LLVM_HOME`, and Python 3.9+. On Windows set `JOYEER_VCVARSALL` to the installed

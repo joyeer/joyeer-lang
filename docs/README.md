@@ -75,7 +75,7 @@ iteration, a progress log, and deletion once every item is done. Start from the
 | [0001](plan/0001-package-manager.md) | Package manager: native and release gates, cache publication and cleanup, remote packages |
 | [0002](plan/0002-c-interop.md) | C interoperation: x86-64 ABI evidence and scoped native-memory contracts |
 | [0004](plan/0004-native-link-inputs.md) | Logical native library linking; native macOS acceptance remains |
-| [0005](plan/0005-test-audit.md) | Test coverage gaps: generated-runtime sanitizers, native CI, remaining diagnostics and platform evidence |
+| [0005](plan/0005-test-audit.md) | Test coverage gaps: generated-runtime sanitizers, remaining diagnostics and platform evidence |
 | [0008](plan/0008-runtime-in-joyeer.md) | The runtime in Joyeer: remaining platform evidence, the R0 performance gate, and macOS `System` without stdio |
 
 ## Decisions

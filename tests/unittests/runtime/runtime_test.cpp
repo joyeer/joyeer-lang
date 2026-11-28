@@ -27,6 +27,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 #endif
+#if defined(__linux__)
+#include <sys/mman.h>
+#include <sys/resource.h>
+#endif
 
 namespace {
 
@@ -1206,6 +1210,71 @@ TEST(RuntimeBlackBoxTest, AllocatorBlocksAreAlignedAndReused) {
     }
     EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
 }
+
+#if defined(__linux__)
+TEST(RuntimeBlackBoxTest, AllocatorGrowsWithinTheDedicatedMappingBeforeRemapping) {
+    const auto baseline = joyeer_runtime_active_allocations();
+    const auto hostPageSize = sysconf(_SC_PAGESIZE);
+    ASSERT_GT(hostPageSize, 0);
+    const auto pageSize = static_cast<uintptr_t>(hostPageSize);
+    constexpr size_t initial = 32768;
+    constexpr size_t promoted = 64 * 1024;
+    constexpr size_t withinMapping = 1024 * 1024;
+    constexpr size_t beyondMapping = 2 * withinMapping;
+    auto* block = static_cast<uint8_t*>(joyeer_alloc(initial));
+    std::memset(block, 0x5a, initial);
+    auto* reserved = static_cast<uint8_t*>(joyeer_realloc(block, initial, promoted));
+    const auto reservedAddress = reinterpret_cast<uintptr_t>(reserved);
+    auto* grown = static_cast<uint8_t*>(joyeer_realloc(reserved, promoted, withinMapping));
+    if (reservedAddress % pageSize != 0) {
+        EXPECT_EQ(reinterpret_cast<uintptr_t>(grown), reservedAddress);
+    }
+    EXPECT_TRUE(std::all_of(grown, grown + initial, [](uint8_t byte) { return byte == 0x5a; }));
+    grown[withinMapping - 1] = 0xa5;
+
+    grown = static_cast<uint8_t*>(joyeer_realloc(grown, withinMapping, beyondMapping));
+    EXPECT_TRUE(std::all_of(grown, grown + initial, [](uint8_t byte) { return byte == 0x5a; }));
+    EXPECT_EQ(grown[withinMapping - 1], 0xa5);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline + 1);
+    grown[beyondMapping - 1] = 0x3c;
+    const auto tail = reinterpret_cast<uintptr_t>(grown + beyondMapping - 1) & ~(pageSize - 1);
+    joyeer_free(grown, beyondMapping);
+    unsigned char resident;
+    EXPECT_EQ(mincore(reinterpret_cast<void*>(tail), pageSize, &resident), -1);
+    EXPECT_EQ(errno, ENOMEM);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
+}
+
+TEST(RuntimeBlackBoxDeathTest, AllocatorCanGrowWhenOnlyTheRequestedMappingFits) {
+    EXPECT_EXIT({
+        constexpr size_t initial = 32768;
+        constexpr size_t grown = 64 * 1024;
+        auto* block = static_cast<uint8_t*>(joyeer_alloc(initial));
+        block[0] = 0x5a;
+        std::ifstream statm("/proc/self/statm");
+        rlim_t pages = 0;
+        statm >> pages;
+        statm.close();
+        const auto pageSize = sysconf(_SC_PAGESIZE);
+        rlimit limit {};
+        if (pages == 0 || pageSize <= 0 || getrlimit(RLIMIT_AS, &limit) != 0) std::exit(2);
+        const auto cap = pages * static_cast<rlim_t>(pageSize) + 5 * 1024 * 1024 / 2;
+        limit.rlim_cur = std::min(limit.rlim_cur, cap);
+        if (setrlimit(RLIMIT_AS, &limit) != 0) std::exit(2);
+        auto* direct = static_cast<uint8_t*>(joyeer_alloc(grown));
+        direct[grown - 1] = 1;
+        joyeer_free(direct, grown);
+        block = static_cast<uint8_t*>(joyeer_realloc(block, initial, grown));
+        if (block[0] != 0x5a) std::exit(3);
+        block[grown - 1] = 0xa5;
+        auto* other = static_cast<uint8_t*>(joyeer_alloc(1024 * 1024));
+        other[0] = 0x66;
+        joyeer_free(other, 1024 * 1024);
+        joyeer_free(block, grown);
+        std::exit(0);
+    }, testing::ExitedWithCode(0), "");
+}
+#endif
 
 TEST(RuntimeBlackBoxTest, AllocatorSurvivesRandomAllocationReallocationAndFree) {
     struct Block {

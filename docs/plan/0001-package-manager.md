@@ -137,8 +137,8 @@ Intel and universal macOS builds are not claimed targets; CMake explicitly rejec
 ### Release gates
 
 Readiness requires the native gates above and [release staging](../building.md#release-staging), not a
-version string. Release scripting uses standard-library Python 3.9+, never required to build or run
-Joyeer.
+version string. Local native runs count; CI runners are not required. Release scripting uses
+standard-library Python 3.9+, never required to build or run Joyeer.
 
 - [x] Stage a production Linux ARM64 Release with product-only components,
   explicit notices, and a hashed inventory. Relocated fern, compiler, Moss and
@@ -150,7 +150,7 @@ Joyeer.
 - [ ] Per-platform audit of SDK and runtime dependencies and product inventory; exclude test SDKs and
   LLVM tools; verify relocation. Local ARM64 component inventories and relocation pass;
   the audit must still cover the complete release product and all target dependencies.
-- [ ] Repeatable native CI and release staging for the supported platforms.
+- [ ] Verify repeatable release staging on native hosts for the supported platforms.
 
 ## Open questions
 
@@ -163,6 +163,8 @@ scoped, not prerequisites.
 
 ## Progress log
 
+- 2026-11-28: Dropped CI runner provisioning as a release prerequisite.
+  Repeatable native release staging and platform validation remain required.
 - 2026-11-28: Added the shared SHA-256 primitive for cache and remote content
   fingerprints and added a same-filesystem file replacement primitive.
   Recorded the P6 publication proposal. Added a Release
