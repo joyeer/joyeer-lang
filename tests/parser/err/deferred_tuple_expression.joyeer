@@ -1,0 +1,4 @@
+// spec: 05-expressions.md §5.10.1
+func makePair() {
+    let pair = (1, 2)
+}

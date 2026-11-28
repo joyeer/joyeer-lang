@@ -120,23 +120,29 @@ It does not instrument the Joyeer-emitted runtime archive, generated
 programs, or dependencies already built into the LLVM SDK. Use the existing
 host toolchain's sanitizer runtime; do not redistribute these builds.
 
-On native Linux, add `-DJOYEER_SANITIZE_RUNTIME=ON` in a separate test build
-with GCC or Clang to instrument the Joyeer-emitted runtime core. It builds a
-test-only archive, not the normal runtime or a shipped program:
+On native Linux or macOS ARM64, add `-DJOYEER_SANITIZE_RUNTIME=ON` in a
+separate build with `BUILD_TESTING` and `JOYEER_BUILD_UNITTESTS` enabled and
+the SDK's `llvm-nm` available. Linux supports GCC and Clang. On macOS, use
+the LLVM SDK's Clang and matching `compiler-rt` for the C probe
+(`-DCMAKE_C_COMPILER=<llvm-root>/bin/clang` in a fresh build tree).
+AppleClang's ASan runtime is not compatible with this instrumentation.
 
 ```text
 cmake --build <sanitizer-build> --target RuntimeAsanProbe
-ctest --test-dir <sanitizer-build> -R RuntimeAddressSanitizer --output-on-failure
+ctest --test-dir <sanitizer-build> -R '^RuntimeAddressSanitizer[.]' --no-tests=error --output-on-failure
 ```
 
-The probe checks both a valid read and AddressSanitizer detection of a
-one-byte overread inside the runtime. Only the test build's explicit
-`--emit-asan-runtime-object` operation enables that instrumentation. The
-object must have a core root definition and may not contain non-core
-definitions from dependencies. Ordinary object and executable emission
-are unchanged. ASan does not automatically track the logical bounds of
-the runtime's custom allocator's internal blocks.
-The host and runtime options are independent and can be enabled together.
+The probe links a test-only archive. It checks valid reads and formatting
+and requires ASan reports for a one-byte overread and a two-byte formatting
+write into a one-byte buffer.
+Only the test build's explicit `--emit-asan-runtime-object` operation
+enables instrumentation. The object must have a core root definition and
+may not contain non-core definitions from dependencies. Ordinary object
+and executable emission are unchanged. The probe uses C heap buffers;
+ASan does not automatically track logical bounds within the runtime's
+custom allocator. Instrumenting arbitrary generated programs and Windows
+runtime objects is outside this test suite. The host and runtime options
+are independent and can be enabled together.
 
 ### Fern bootstrap and acceptance
 

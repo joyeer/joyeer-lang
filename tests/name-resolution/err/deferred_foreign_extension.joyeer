@@ -1,0 +1,6 @@
+// spec: 03-declarations.md §3.5
+import System
+
+extension ProcessStatus {
+    func sample(): Int { return 1 }
+}

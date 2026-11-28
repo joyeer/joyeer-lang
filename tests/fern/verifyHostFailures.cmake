@@ -77,6 +77,9 @@ host_project(unlaunchable-artifact artifact-empty)
 jp_call(1 "${cwd}" run --compiler "${HOST_FIXTURE}"
     --manifest-path "${package}/project.toml")
 jp_contains("${jp_err}" "cannot run")
+if(NOT WIN32)
+    jp_contains("${jp_err}" "process launch failed (platform code 8)")
+endif()
 
 file(CREATE_LINK "${HOST_FIXTURE}" "${work}/symbolic probe" SYMBOLIC RESULT symbolic_result)
 if(symbolic_result STREQUAL "0")
@@ -213,7 +216,7 @@ else()
     host_project(non-executable-artifact artifact-not-executable)
     jp_call(1 "${cwd}" run --compiler "${HOST_FIXTURE}"
         --manifest-path "${package}/project.toml")
-    jp_contains("${jp_err}" "process permission denied")
+    jp_contains("${jp_err}" "process permission denied (platform code 13)")
 
     host_test_suite(signaled-suite artifact-copy)
     jp_call(1 "${cwd}" test --compiler "${HOST_FIXTURE}"

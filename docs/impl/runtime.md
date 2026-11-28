@@ -439,6 +439,7 @@ cover both `main` forms, empty and spaced arguments, Unicode arguments,
 POSIX raw bytes, normal and out-of-range statuses, and missing, duplicate,
 or invalid signatures. Windows-only entry tests reject unpaired high and low
 UTF-16 surrogates and verify supplementary Unicode conversion and cleanup.
+The 15 POSIX `E2EEntry*` cases no longer depend on Clang driver discovery.
 The [native executable test helper](../../scripts/cmake/verifyNativeExecutable.cmake)
 captures Joyeer compiler and program output with explicit UTF-8 encoding.
 On Windows this avoids CMake's policy-dependent `AUTO` decoding through the
@@ -459,15 +460,37 @@ End-to-end fixtures (`tests/e2e/filesystem.joyeer`, `process.joyeer`,
 outputs, unit successes, optimization levels and full debug emission. Compiler
 unit tests check that the host enumerations are prelude types and that no host
 function is.
+On POSIX, `Fern.HostFailures` distinguishes `ENOEXEC` for an executable file
+in an invalid format from `EACCES` for a file without execute permission. It
+also checks that a signaled program or compiler is reported as such, rather
+than as an ordinary nonzero exit.
 Many end-to-end tests are registered only when `JOYEER_CLANG_EXECUTABLE`
 was found during CMake configuration; see
 [backend validation](backend.md#6-validation) before treating a label
 run as the complete acceptance suite.
 
+`GeneratedOwnership` generates programs that exercise moves, loops,
+branches, early returns, and `?` at `-O0` and `-O2`. It checks program output
+and the allocation-balance check on normal exit; this does not replace
+[ASan checks for the generated runtime core](../building.md#full-platform-validation).
+
 `E2EExecutableStdinLinesO0`/`O2` feed standard input to a compiled program.
 Moss's `Moss.Serve` test and the live-pipe check in
 [the serve contract](../../tools/moss/docs/jvm.md#persistent-session-moss-serve)
 depend on `readStdinLine` flushing standard output before it blocks.
+
+On 2026-11-28, `4e2c2cad` plus the test audit changes were validated on a
+native Apple M3 Pro with macOS SDK 26.5 and LLVM/LLD 22.1.8. The unfiltered
+validator passed 2293/2293 CTests in Debug and 2292/2292 in Release, with
+7/7 `fern test` targets in each. A separate Debug build without the optional
+Clang driver passed all 15 entry cases and `Fern.HostFailures`; separate
+sanitizer builds passed all six runtime ASan cases at `-O0` and `-O2`.
+
+The historical [Linux x86-64 results](../decisions/0031-equatable.md#platform-validation)
+record aggregate CTest counts, not whether the formerly conditional entry
+cases ran. The audit did not recover case-level logs or rerun that platform.
+The next native x86-64 validation should record the registered tests and
+per-case results.
 
 ## Channels
 

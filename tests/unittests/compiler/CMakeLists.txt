@@ -764,94 +764,97 @@ if(JOYEER_CLANG_EXECUTABLE)
     set_tests_properties(E2EExecutableTrailingReturn PROPERTIES
             LABELS "e2e;llvm-backend;runtime;semantic-analysis"
     )
+endif()
 
-    function(joyeer_add_entry_case name fixture expected_output expected_exit)
-        add_test(NAME ${name}
-                COMMAND ${CMAKE_COMMAND}
-                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/${fixture}.joyeer
-                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/${name}${CMAKE_EXECUTABLE_SUFFIX}
-                        "-DEXPECTED_OUTPUT=${expected_output}"
-                        -DEXPECTED_EXIT_CODE=${expected_exit}
-                        ${ARGN}
-                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
-        )
-        set_tests_properties(${name} PROPERTIES
-                LABELS "e2e;llvm-backend;runtime;entry"
-                TIMEOUT 60)
-    endfunction()
-
-    joyeer_add_entry_case(E2EEntryNoArguments entry_arguments "0\n" 0)
-    joyeer_add_entry_case(E2EEntryEmptyAndWhitespace entry_arguments
-            "2\n0\n\n5\n a b \n" 73
-            "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=a b"
-            -DPROGRAM_ARGUMENT_2_SURROUND_SPACES=ON)
-    string(ASCII 195 169 entry_accent)
-    joyeer_add_entry_case(E2EEntryUnicodeArgument entry_arguments
-            "2\n0\n\n3\nh${entry_accent}\n" 73
-            "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=h${entry_accent}")
-    joyeer_add_entry_case(E2EEntryUnoptimizedArguments entry_arguments
-            "2\n0\n\n3\na b\n" 73
-            "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=a b"
-            -DCOMPILER_ARGS=-O0)
-    # Quotes and backslashes survive the trip through the command line (the rules of the C
-    # runtime and CommandLineToArgvW, which the Windows entry point implements itself).
-    joyeer_add_entry_case(E2EEntryQuotesAndBackslashes entry_arguments
-            "2\n8\nsay \"hi\"\n7\nC:\\dir\\\n" 73
-            "-DPROGRAM_ARGUMENT_1=say \"hi\"" "-DPROGRAM_ARGUMENT_2=C:\\dir\\")
-    joyeer_add_entry_case(E2EEntryLegacyIgnoresArguments hello
-            "42\nnative\n8\n42\n" 0
-            "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=ignored")
-    if(UNIX)
-        joyeer_add_entry_case(E2EEntryPosixRawBytes entry_argument_bytes
-                "1\n1\n255\n" 0
-                -DPROGRAM_ARGUMENT_1_NON_UTF8=ON)
-    endif()
-    joyeer_add_entry_case(E2EEntryExitZero entry_exit_status "cleanup\n" 0)
-    joyeer_add_entry_case(E2EEntryExitOne entry_exit_status "cleanup\n" 1
-            -DPROGRAM_ARGUMENT_1=one)
-    joyeer_add_entry_case(E2EEntryExitMaximum entry_exit_status "cleanup\n" 255
-            -DPROGRAM_ARGUMENT_1=max)
-    joyeer_add_entry_case(E2EEntryExitNegative entry_exit_status "cleanup\n" 1
-            -DPROGRAM_ARGUMENT_1=negative
-            "-DEXPECTED_ERROR_PATTERN=entry returned exit code -1 outside 0")
-    joyeer_add_entry_case(E2EEntryExitOverflow entry_exit_status "cleanup\n" 1
-            -DPROGRAM_ARGUMENT_1=overflow
-            "-DEXPECTED_ERROR_PATTERN=entry returned exit code 256 outside 0")
-
-    add_test(NAME E2EEntryRejectsInvalidSignature
+# These fixtures use Joyeer's embedded linker, not the optional Clang oracle.
+function(joyeer_add_entry_case name fixture expected_output expected_exit)
+    add_test(NAME ${name}
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/err/invalid_entry_signature.joyeer
-                    "-DEXTRA_ARGS=-o;${CMAKE_CURRENT_BINARY_DIR}/invalid-entry${CMAKE_EXECUTABLE_SUFFIX}"
-                    -DEXPECTED_PATTERN=llvm.invalid-entry-point
-                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/${fixture}.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/${name}${CMAKE_EXECUTABLE_SUFFIX}
+                    "-DEXPECTED_OUTPUT=${expected_output}"
+                    -DEXPECTED_EXIT_CODE=${expected_exit}
+                    ${ARGN}
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(E2EEntryRejectsInvalidSignature PROPERTIES
-            LABELS "e2e;llvm-backend;entry;diagnostics")
+    set_tests_properties(${name} PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;entry"
+            TIMEOUT 60)
+endfunction()
 
-    add_test(NAME E2EEntryRejectsDuplicate
-            COMMAND ${CMAKE_COMMAND}
-                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/err/duplicate_entry.joyeer
-                    "-DEXTRA_ARGS=-o;${CMAKE_CURRENT_BINARY_DIR}/duplicate-entry${CMAKE_EXECUTABLE_SUFFIX}"
-                    -DEXPECTED_PATTERN=name-resolution.duplicate-declaration
-                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
-    )
-    set_tests_properties(E2EEntryRejectsDuplicate PROPERTIES
-            LABELS "e2e;name-resolution;entry;diagnostics")
+joyeer_add_entry_case(E2EEntryNoArguments entry_arguments "0\n" 0)
+joyeer_add_entry_case(E2EEntryEmptyAndWhitespace entry_arguments
+        "2\n0\n\n5\n a b \n" 73
+        "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=a b"
+        -DPROGRAM_ARGUMENT_2_SURROUND_SPACES=ON)
+string(ASCII 195 169 entry_accent)
+joyeer_add_entry_case(E2EEntryUnicodeArgument entry_arguments
+        "2\n0\n\n3\nh${entry_accent}\n" 73
+        "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=h${entry_accent}")
+joyeer_add_entry_case(E2EEntryUnoptimizedArguments entry_arguments
+        "2\n0\n\n3\na b\n" 73
+        "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=a b"
+        -DCOMPILER_ARGS=-O0)
+# Quotes and backslashes survive the trip through the command line (the rules of the C
+# runtime and CommandLineToArgvW, which the Windows entry point implements itself).
+joyeer_add_entry_case(E2EEntryQuotesAndBackslashes entry_arguments
+        "2\n8\nsay \"hi\"\n7\nC:\\dir\\\n" 73
+        "-DPROGRAM_ARGUMENT_1=say \"hi\"" "-DPROGRAM_ARGUMENT_2=C:\\dir\\")
+joyeer_add_entry_case(E2EEntryLegacyIgnoresArguments hello
+        "42\nnative\n8\n42\n" 0
+        "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=ignored")
+if(UNIX)
+    joyeer_add_entry_case(E2EEntryPosixRawBytes entry_argument_bytes
+            "1\n1\n255\n" 0
+            -DPROGRAM_ARGUMENT_1_NON_UTF8=ON)
+endif()
+joyeer_add_entry_case(E2EEntryExitZero entry_exit_status "cleanup\n" 0)
+joyeer_add_entry_case(E2EEntryExitOne entry_exit_status "cleanup\n" 1
+        -DPROGRAM_ARGUMENT_1=one)
+joyeer_add_entry_case(E2EEntryExitMaximum entry_exit_status "cleanup\n" 255
+        -DPROGRAM_ARGUMENT_1=max)
+joyeer_add_entry_case(E2EEntryExitNegative entry_exit_status "cleanup\n" 1
+        -DPROGRAM_ARGUMENT_1=negative
+        "-DEXPECTED_ERROR_PATTERN=entry returned exit code -1 outside 0")
+joyeer_add_entry_case(E2EEntryExitOverflow entry_exit_status "cleanup\n" 1
+        -DPROGRAM_ARGUMENT_1=overflow
+        "-DEXPECTED_ERROR_PATTERN=entry returned exit code 256 outside 0")
 
-    add_test(NAME E2EEntryRejectsMissing
-            COMMAND ${CMAKE_COMMAND}
-                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/err/missing_entry.joyeer
-                    "-DEXTRA_ARGS=-o;${CMAKE_CURRENT_BINARY_DIR}/missing-entry${CMAKE_EXECUTABLE_SUFFIX}"
-                    -DEXPECTED_PATTERN=linker.missing-entry-point
-                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
-    )
-    set_tests_properties(E2EEntryRejectsMissing PROPERTIES
-            LABELS "e2e;llvm-backend;entry;diagnostics")
+add_test(NAME E2EEntryRejectsInvalidSignature
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/err/invalid_entry_signature.joyeer
+                "-DEXTRA_ARGS=-o;${CMAKE_CURRENT_BINARY_DIR}/invalid-entry${CMAKE_EXECUTABLE_SUFFIX}"
+                -DEXPECTED_PATTERN=llvm.invalid-entry-point
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+)
+set_tests_properties(E2EEntryRejectsInvalidSignature PROPERTIES
+        LABELS "e2e;llvm-backend;entry;diagnostics")
 
+add_test(NAME E2EEntryRejectsDuplicate
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/err/duplicate_entry.joyeer
+                "-DEXTRA_ARGS=-o;${CMAKE_CURRENT_BINARY_DIR}/duplicate-entry${CMAKE_EXECUTABLE_SUFFIX}"
+                -DEXPECTED_PATTERN=name-resolution.duplicate-declaration
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+)
+set_tests_properties(E2EEntryRejectsDuplicate PROPERTIES
+        LABELS "e2e;name-resolution;entry;diagnostics")
+
+add_test(NAME E2EEntryRejectsMissing
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/err/missing_entry.joyeer
+                "-DEXTRA_ARGS=-o;${CMAKE_CURRENT_BINARY_DIR}/missing-entry${CMAKE_EXECUTABLE_SUFFIX}"
+                -DEXPECTED_PATTERN=linker.missing-entry-point
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+)
+set_tests_properties(E2EEntryRejectsMissing PROPERTIES
+        LABELS "e2e;llvm-backend;entry;diagnostics")
+
+if(JOYEER_CLANG_EXECUTABLE)
     add_test(NAME E2EExecutableDeferredInitialization
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
@@ -2001,9 +2004,18 @@ add_joyeer_deferred_regression(trailing_closure parser "parser[.]same-line-items
 add_joyeer_deferred_regression(match_guard parser "lexer[.]unsupported-syntax.*'where'")
 add_joyeer_deferred_regression(range_pattern parser "parser[.]expected-token.*after the match pattern")
 add_joyeer_deferred_regression(alternative_pattern parser "parser[.]expected-token.*after the match pattern")
+add_joyeer_deferred_regression(cast_pattern parser "parser[.]expected-token.*after the match pattern, found 'as'")
 add_joyeer_deferred_regression(contract_clauses parser "parser[.]expected-block.*'requires'")
+add_joyeer_deferred_regression(tuple_binding parser "parser[.]expected-token.*expected a binding name")
+add_joyeer_deferred_regression(tuple_expression parser "parser[.]expected-token.*to close the parenthesized expression")
+add_joyeer_deferred_regression(tuple_pattern parser "parser[.]expected-pattern.*expected a match pattern")
+add_joyeer_deferred_regression(existential parser "parser[.]missing-comma.*between function parameters")
+add_joyeer_deferred_regression(top_level_expression parser "parser[.]expected-declaration.*top-level declaration")
+add_joyeer_deferred_regression(extension_field parser "parser[.]unsupported-syntax.*only methods")
 add_joyeer_deferred_regression(implicit_self name-resolution "name-resolution[.]undefined-name.*'count'")
 add_joyeer_deferred_regression(builtin_extension name-resolution "name-resolution[.]invalid-extension-target")
+add_joyeer_deferred_regression(foreign_extension name-resolution "name-resolution[.]invalid-extension-target.*same module")
+add_joyeer_deferred_regression(integer_to_float_cast type-checking "type-checking[.]invalid-operator-operands.*'as'.*'Double'")
 
 foreach(annotation IN ITEMS spec property)
     add_joyeer_rejected_regression(TypeRejectsDeferredAnnotation_${annotation} type-checking

@@ -116,6 +116,8 @@ Coverage includes:
 - integer limits and unsupported numeric forms;
 - malformed strings and bytes;
 - deterministic arbitrary byte buffers with ordered bounded spans;
+- bounded byte insertions, substitutions, deletions, and truncations through
+  lexing and parsing (`ParserTest.MutatedBytesProduceDiagnosticsOrABoundedSyntaxTree`);
 - retokenization reset behavior and exactly one EOF;
 - representative parser and native acceptance sources;
 - CLI rendering of lexer source diagnostics.

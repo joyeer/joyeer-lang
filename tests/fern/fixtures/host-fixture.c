@@ -178,6 +178,10 @@ static int compile(int argc, HostChar** argv) {
         FILE* artifact = hostOpen(output, HOST_TEXT("wb"));
         if (!artifact) return failure("cannot create empty artifact");
         if (fclose(artifact) != 0) return failure("cannot close empty artifact");
+#ifndef _WIN32
+        // Test the executable-format error, not the permission check.
+        if (chmod(output, 0700) != 0) return failure("cannot make empty artifact executable");
+#endif
         return 0;
     }
     if (strcmp(action, "artifact-copy") == 0) return copyArtifact(argv[0], output, 1);

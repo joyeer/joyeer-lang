@@ -66,12 +66,14 @@ option(JOYEER_BACKEND_TEST_HOOKS
 option(JOYEER_SANITIZE_HOST
     "Instrument the C++ compiler, backend and test drivers for local testing" OFF)
 option(JOYEER_SANITIZE_RUNTIME
-    "Build a separate AddressSanitizer runtime archive and test probe (Linux)" OFF)
+    "Build a separate AddressSanitizer runtime archive and test probe (Linux and macOS)" OFF)
 if(JOYEER_SANITIZE_RUNTIME AND
-   (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_CROSSCOMPILING OR
-    NOT CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang)$" OR NOT BUILD_TESTING OR NOT JOYEER_BUILD_UNITTESTS))
+   (CMAKE_CROSSCOMPILING OR NOT BUILD_TESTING OR NOT JOYEER_BUILD_UNITTESTS OR NOT
+    ((CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang)$") OR
+     (CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_C_COMPILER_ID STREQUAL "Clang"))))
     message(FATAL_ERROR
-        "JOYEER_SANITIZE_RUNTIME needs native Linux GCC or Clang, BUILD_TESTING and JOYEER_BUILD_UNITTESTS.")
+        "JOYEER_SANITIZE_RUNTIME needs native Linux GCC/Clang or macOS LLVM Clang (not AppleClang), "
+        "BUILD_TESTING and JOYEER_BUILD_UNITTESTS.")
 endif()
 
 if(JOYEER_BUILD_FERN AND CMAKE_CROSSCOMPILING)
@@ -121,6 +123,10 @@ find_package(LLVM 22.1.8 EXACT CONFIG REQUIRED
         "${JOYEER_LLVM_ROOT}/lib/cmake/llvm"
         "/opt/homebrew/opt/llvm/lib/cmake/llvm"
         "/usr/local/opt/llvm/lib/cmake/llvm")
+if(APPLE AND JOYEER_SANITIZE_RUNTIME AND NOT CMAKE_C_COMPILER_VERSION VERSION_EQUAL LLVM_PACKAGE_VERSION)
+    message(FATAL_ERROR
+        "JOYEER_SANITIZE_RUNTIME on macOS needs the C compiler and compiler-rt from LLVM ${LLVM_PACKAGE_VERSION}.")
+endif()
 if(WIN32 AND NOT LLVM_NATIVE_ARCH STREQUAL _joyeer_llvm_arch)
     message(FATAL_ERROR
         "The LLVM SDK must match the MSVC ${JOYEER_WINDOWS_ARCH} target. "

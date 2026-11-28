@@ -1,0 +1,2 @@
+// spec: 12-modules.md §12.1
+print(value: 1)

@@ -253,6 +253,15 @@ Lexical or specification coverage alone does not make a feature executable.
 New source-visible features must pass through every applicable frontend,
 Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
 
+[`DiagnosticsRejectsDeferred.*`](../../tests/unittests/compiler/CMakeLists.txt)
+pins CLI diagnostics for specified but unimplemented spellings, including
+tuple expressions and patterns, cast patterns, `any P`, and extension
+restrictions. The lexer tests cover reserved words and operators; stage
+unit tests cover cases such as force unwrap, generic methods, and protocol
+default bodies. New fixtures should use an actual spec spelling and
+[cite its section](../building.md#full-platform-validation), not invent
+syntax for unresolved designs such as general native addresses.
+
 ### Common authoring pitfalls
 
 - `result` and the other [reserved words](../../specs/appendix-a-reserved.md) cannot be

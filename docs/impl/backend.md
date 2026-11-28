@@ -628,8 +628,9 @@ they do not assert that native linking is Unicode-complete.
 The Clang executable is an optional test tool, not a product linker. The
 independent textual-IR oracle and many native-executable regression tests are
 registered only when `JOYEER_CLANG_EXECUTABLE` is found at configuration time.
-Check the configure message and discovered tests before treating a label run
-as the full native acceptance suite.
+`E2EEntry*` is an exception: those fixtures use the embedded linker and
+register without the Clang driver. Check the configure message and
+discovered tests before treating a label run as the full native acceptance suite.
 
 When available, those tests use Clang to independently validate textual IR
 and the host's `joyeer-backend` shared library to compile and link native
@@ -653,6 +654,8 @@ Optimization tests verify the default and all accepted CLI levels, then
 compile at `-O2` and prove checked integer overflow and array bounds still
 terminate with their runtime diagnostics. Runtime traps and ownership-heavy
 end-to-end tests are detailed in [runtime validation](runtime.md#limits-and-validation).
+`E2EOptimizationEquivalence_*` also compares stdout, stderr, and exit status
+of self-contained native fixtures at `-O0` through `-O3`.
 
 ---
 

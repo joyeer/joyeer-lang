@@ -1,0 +1,7 @@
+// spec: 07-patterns.md §7.1.1
+func choose(value: Int): Int {
+    return match value {
+        (0, 1) => 1,
+        _ => 0,
+    }
+}

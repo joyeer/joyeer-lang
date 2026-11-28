@@ -26,12 +26,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT JOYEER_RUNTIME_NM_EXECUTABLE)
 endif()
 
 if(JOYEER_SANITIZE_RUNTIME)
+    if(NOT JOYEER_RUNTIME_NM_EXECUTABLE)
+        message(FATAL_ERROR "The generated runtime sanitizer tests need llvm-nm from the LLVM SDK.")
+    endif()
     add_executable(RuntimeAsanProbe asan_probe.c)
     target_compile_options(RuntimeAsanProbe PRIVATE -g -fsanitize=address)
     target_link_options(RuntimeAsanProbe PRIVATE -fsanitize=address)
     target_link_libraries(RuntimeAsanProbe PRIVATE JoyeerAsanRuntime)
     add_dependencies(RuntimeAsanProbe JoyeerToolchain)
-    foreach(mode IN ITEMS valid invalid)
+    foreach(mode IN ITEMS valid invalid invalid-write)
         add_test(NAME "RuntimeAddressSanitizer.${mode}"
             COMMAND "${CMAKE_COMMAND}"
                 "-DPROBE=$<TARGET_FILE:RuntimeAsanProbe>" "-DMODE=${mode}"

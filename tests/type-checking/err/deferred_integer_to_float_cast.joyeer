@@ -1,0 +1,2 @@
+// spec: 05-expressions.md §5.2.1
+func cast(value: Int): Double { return value as Double }

@@ -1,0 +1,5 @@
+// spec: 03-declarations.md §3.5
+struct Item { var number: Int }
+extension Item {
+    var extra: Int = 0
+}

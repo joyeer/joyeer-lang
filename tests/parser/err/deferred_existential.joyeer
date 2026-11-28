@@ -1,0 +1,8 @@
+// spec: 20-protocols.md §20.10
+protocol Worker {
+    func run(): Int
+}
+
+func call(worker: any Worker): Int {
+    return worker.run()
+}
