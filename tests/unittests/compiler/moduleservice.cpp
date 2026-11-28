@@ -663,17 +663,24 @@ TEST_F(ModuleServiceTest, TheSystemLibraryChecksForEveryTargetPlatform) {
          "    }\n"
          "    System.environmentVariable(name: \"PATH\")\n"
          "    System.currentDirectory()\n"
+         "    System.executablePath()\n"
+         "    System.isExecutableFile(path: \"tool\")\n"
          "    System.monotonicMilliseconds()\n"
          "    System.wallClockMilliseconds()\n"
          "    System.tcpPoll(connections: [], listeners: [], timeoutMillis: 0)\n"
          "    System.tcpConnectWithin(address: \"127.0.0.1\", port: 8080, timeoutMillis: 0)\n"
          "    System.tcpOpenReadQueue(connections: consume [])\n"
+         "    System.readFile(path: \"data\")\n"
+         "    System.readFileUtf8(path: \"data\")\n"
+         "    System.writeFileNew(path: \"new\", contents: \"data\")\n"
+         "    System.replaceFile(source: \"new\", destination: \"published\")\n"
          "    System.openFileRead(path: \"data\")\n"
          "    System.openFileNew(path: \"data\")\n"
          "    System.openDirectory(path: \".\")\n"
          "    System.startProcess(executable: \"tool\", arguments: [], workingDirectory: \".\")\n}\n");
     options.modules.push_back({"Foundation",
-            {library / "Foundation" / "text.joyeer", library / "Foundation" / "checksum.joyeer"}});
+            {library / "Foundation" / "text.joyeer", library / "Foundation" / "checksum.joyeer",
+             library / "Foundation" / "sha256.joyeer"}});
     options.modules.push_back({"System", {
             library / "System" / "path.joyeer", library / "System" / "messages.joyeer", library / "System" / "owned_files.joyeer",
             library / "System" / "filesystem.joyeer", library / "System" / "filesystem_windows.joyeer",
@@ -694,8 +701,15 @@ TEST_F(ModuleServiceTest, TheSystemLibraryChecksForEveryTargetPlatform) {
         options.targetPlatform = target;
         CompilerService compiler(&diagnostics, options);
         compiler.compile();
-        EXPECT_FALSE(diagnostics.hasFailure())
+        ASSERT_FALSE(diagnostics.hasFailure())
                 << joyeer::semantic::platformName(target) << ":\n" << errors();
+        if (target == joyeer::semantic::TargetPlatform::macos) {
+            const auto& ir = compiler.getLastCompiledSourceFile()->llvmIR;
+            for (const auto* symbol : {"@fopen(", "@fdopen(", "@fread(", "@fwrite(", "@fclose(",
+                                       "@ferror(", "@clearerr("}) {
+                EXPECT_EQ(ir.find(symbol), std::string::npos) << symbol;
+            }
+        }
     }
 }
 

@@ -12,6 +12,63 @@ func errorCode(error: FileSystemError): Int {
     }
 }
 
+private func matchesCode(code: Int, expected: Int, operation: String): Bool {
+    if code == expected { return true }
+    print(value: operation)
+    print(value: code)
+    return false
+}
+
+@platform(windows)
+private func publicationRejectsUnsupportedPaths(staging: String, destination: String): Bool {
+    let unsupported = "\\\\?\\not-a-filesystem-path\\placeholder"
+    let sourceRejected = match replaceFile(source: unsupported, destination: destination) {
+        .Err(.InvalidPath(code)) => code == 87,
+        _ => false,
+    }
+    let destinationRejected = match replaceFile(source: staging, destination: unsupported) {
+        .Err(.InvalidPath(code)) => code == 87,
+        _ => false,
+    }
+    return sourceRejected && destinationRejected
+}
+
+@platform(posix)
+private func publicationRejectsUnsupportedPaths(staging: String, destination: String): Bool {
+    return true
+}
+
+private func exercisePublication(directory: String): Result<Bool, FileSystemError> {
+    let staging = joinPath(base: directory, path: "staging")?
+    let destination = joinPath(base: directory, path: "published")?
+    let folder = joinPath(base: directory, path: "published directory")?
+    let payload = "new\0bytes"
+    writeFileNew(path: staging, contents: payload)?
+    writeFileNew(path: destination, contents: "old")?
+    createDirectory(path: folder)?
+    let namespaceRejected = publicationRejectsUnsupportedPaths(staging: staging, destination: destination)
+    let directoryRejected = match replaceFile(source: staging, destination: folder) {
+        .Ok(_) => false,
+        .Err(_) => true,
+    }
+    let stagePreserved = readFileUtf8(path: staging)? == payload
+    replaceFile(source: staging, destination: destination)?
+    let oldNameGone = match fileKind(path: staging) {
+        .Err(.NotFound(_)) => true,
+        _ => false,
+    }
+    let published = readFileUtf8(path: destination)? == payload
+    let missingRejected = match replaceFile(source: staging, destination: destination) {
+        .Err(.NotFound(_)) => true,
+        _ => false,
+    }
+    let stillPublished = readFileUtf8(path: destination)? == payload
+    removeFile(path: destination)?
+    removeDirectory(path: folder)?
+    return .Ok(namespaceRejected && directoryRejected && stagePreserved &&
+        oldNameGone && published && missingRejected && stillPublished)
+}
+
 func exercise(base: String): Result<Bool, FileSystemError> {
     let directory = joinPath(base: base, path: "owned-files")?
     createDirectory(path: directory)?
@@ -22,7 +79,8 @@ func exercise(base: String): Result<Bool, FileSystemError> {
     let protected = match writeFileNew(path: path, contents: "replacement") {
         .Ok(_) => false,
         .Err(error) => match error {
-            .AlreadyExists(_) => true,
+            .AlreadyExists(code) => matchesCode(code: code, expected: if System.isWindows() { 80 } else { 17 },
+                operation: "exclusive create returned unexpected platform code"),
             _ => false,
         },
     }
@@ -37,21 +95,33 @@ func exercise(base: String): Result<Bool, FileSystemError> {
     }
     let names = listDirectory(path: directory)?
     let listed = names.count == 1 && names[0] == "file with spaces"
+    let directoryReadRejected = match readFileUtf8(path: directory) {
+        .Err(.IsDirectory(code)) => matchesCode(code: code, expected: if System.isWindows() { 5 } else { 21 },
+            operation: "directory read returned unexpected platform code"),
+        _ => false,
+    }
     let nonemptyRejected = match removeDirectory(path: directory) {
         .Ok(_) => false,
         .Err(_) => true,
     }
     removeFile(path: path)?
-    removeDirectory(path: directory)?
     let absent = match readFileUtf8(path: path) {
         .Ok(_) => false,
         .Err(error) => match error {
-            .NotFound(_) => true,
+            .NotFound(code) => matchesCode(code: code, expected: 2, operation: "missing file returned unexpected platform code"),
             _ => false,
         },
     }
+    let publication = exercisePublication(directory: directory)?
+    removeDirectory(path: directory)?
+    let missingParent = match readFileUtf8(path: path) {
+        .Err(.NotFound(code)) => matchesCode(code: code, expected: if System.isWindows() { 3 } else { 2 },
+            operation: "missing parent returned unexpected platform code"),
+        _ => false,
+    }
     return .Ok(original == contents && preserved == contents &&
-        protected && isFile && isDirectory && listed && nonemptyRejected && absent)
+        protected && isFile && isDirectory && listed && directoryReadRejected && nonemptyRejected &&
+        absent && missingParent && publication)
 }
 
 func main(args: [String]): Int {

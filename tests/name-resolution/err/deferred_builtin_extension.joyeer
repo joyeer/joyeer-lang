@@ -1,0 +1,4 @@
+// spec: 03-declarations.md §3.5
+extension Int {
+    func answer(): Int { return 42 }
+}

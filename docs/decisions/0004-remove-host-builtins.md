@@ -52,9 +52,9 @@ Order, because each step must keep the suite green:
 - Easier: a smaller compiler (the descriptor table, special enum shapes, and
   backend lowering for host calls go away) and one place to read each operation.
 - Harder: every program that touches the filesystem or stdio imports `System`,
-  which resolves only inside a workspace until the installed-library catalog in
-  [toolchain libraries](../plan/0006-toolchain-libraries.md) exists. Removal therefore also depends on that
-  catalog, or on `System` being always available to the compiler.
+  which originally resolved only inside a workspace. The
+  [bundled library index](../building.md#toolchain-library-layout) now makes
+  `System` available to the installed compiler.
 - The shared enum types the built-ins use (`FileSystemError`, `FileKind`,
   `ProcessStatus`, ...) are currently prelude types known to the compiler. They
   need a home in `System` before step 3, or stay in the prelude on purpose.

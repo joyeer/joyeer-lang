@@ -43,7 +43,7 @@ their own manifests and entries, not extra units hidden inside one manifest.
 
 Standard modules that ship with the compiler (`Foundation`, `System`, and
 `Compression` when built) need no workspace member: fern reads
-`<compiler directory>/lib/index.toml`, lets a module list them in
+`<compiler directory>/lib/index.toml` when an external logical name must be resolved, lets a module list them in
 `dependencies`, and the compiler resolves them when imported. A workspace
 member with a standard module's name takes precedence, which is how the library
 modules in this repository's root workspace are developed. fern does not honor a compiler-side
@@ -68,8 +68,29 @@ These files must already exist, including during `check`; they are validated
 by the compiler. Only the selected dependency closure contributes bindings
 and libraries. Unknown/repeated keys and malformed values are errors.
 
-Fern does not compile C, fetch dependencies, discover libraries, choose
-platform-specific filenames, or deploy shared libraries. CMake can stage
+Executable and test modules can add ordered `native-search` and `native-libs`
+arrays within `[module]`, plus optional additive platform tables:
+
+```toml
+[native.windows]
+libs = ["ws2_32"]
+
+[native.linux]
+search = ["native/lib"]
+libs = ["m"]
+```
+
+The only platform table names are `native.windows`, `native.linux`, and
+`native.macos`, with `search` and `libs` as their only keys. Relative search
+paths are based at the owning manifest, reject parent traversal, and can be
+`.`. Names follow the [compiler's logical library syntax](c-interop.md#3-static-and-dynamic-providers).
+`check` validates the manifest but does not pass executable-only options to the
+compiler. A build passes common inputs before the active platform inputs;
+other platform tables are parsed but not used. These fields do not propagate
+through dependencies and are rejected on `source` modules.
+
+Fern does not compile C, fetch dependencies, discover native providers itself,
+or deploy shared libraries. CMake can stage
 platform-specific manifests, as the optional [Compression](compression.md)
 package does. Treat manifests with native privileges and libraries as trusted
 build inputs, not a sandbox.
@@ -104,22 +125,49 @@ Transitive modules in that closure remain available to the compiler; strict
 direct-import allowlists are not implemented. The compiler determines actual
 imports and preserves separate visibility/source-location boundaries.
 
+An optional `path-dependencies = ["../shared"]` array in `[module]` selects
+other local **source** modules by directory. Each path is relative to the
+declaring `project.toml`; `..` is allowed for this field because dependencies
+can be outside the workspace. Each directory must contain an ordinary
+`project.toml`. Source and native-library path rules are unchanged. Path
+dependencies are added to the module graph, not to the list of buildable
+workspace members. Existing logical-name dependencies still resolve exactly.
+
+Physical manifest and directory identities deduplicate aliases. A hard-linked
+manifest used from different directories is rejected because relative source
+paths could denote different files. Different manifests with the same logical
+name and cycles (including those reached through an alias) are errors. The
+explicit root or workspace member spelling takes precedence; otherwise, the
+first spelling discovered in deterministic traversal determines the lexical
+base for outgoing paths. The operating system resolves that spelling. The
+Windows loader uses lexical Win32 full-path normalization between hops so
+repeated `..` components do not inflate an otherwise short path. POSIX keeps
+the spelling rather than folding `..` across symlinks. The
+project limit of 256 modules includes distinct local dependencies after
+deduplication; the loader also bounds physical probes to 4096 path references.
+Repeated decoded entries in an array are errors; different spellings of one
+identity contribute one edge. Path-only modules cannot be selected as check or
+build roots. Exact logical-name lookup uses the entire loaded graph before
+falling back to the compiler's standard module list. These are mutable local
+inputs, not locked snapshots, remote packages, or confined paths.
+
 ## 2. Commands and selection
 
 | Command | Behavior |
 |---|---|
 | `--help`, `--version` | Used alone; no manifest or compiler required |
 | `init <directory> --name <module>` | Create one module in a new/empty directory with an existing parent |
-| `check --compiler <path>` | Check/lower all selected module kinds without native outputs |
-| `build --compiler <path>` | Build selected `bin` modules |
-| `run --compiler <path>` | Build/run exactly one selected `bin` module |
-| `test --compiler <path>` | Build/run selected `test` modules serially |
+| `check` | Check/lower all selected module kinds without native outputs |
+| `build` | Build selected `bin` modules |
+| `run` | Build/run exactly one selected `bin` module |
+| `test` | Build/run selected `test` modules serially |
 
 Project commands accept:
 
-- `--manifest-path <file>`: one module; defaults to current-directory
+- `--manifest-path <file>`: one root module; defaults to current-directory
   `project.toml`.
 - **Or** `--workspace <file>`: an explicit workspace manifest.
+- `--compiler <path>`: override executable discovery.
 - `--module <logical-name>`: select one member by exact name, not output
   basename. This option also works with `check`.
 - `--release`, `--verbose`.
@@ -127,8 +175,9 @@ Project commands accept:
 
 The two manifest-selection options are mutually exclusive, including repeated
 uses. No workspace is inferred from a filename, parent directory, or adjacent
-file. A module with dependencies needs an explicitly loaded workspace;
-a standalone module can resolve only itself.
+file. A standalone module can load explicitly listed path dependencies without
+a workspace; a logical-name dependency must already be in the loaded graph
+or in the selected toolchain's standard module list.
 
 Without `--module`, `check` selects all members, `build` selects bins, and
 `test` selects tests. `run` requires exactly one bin. Unknown modules or
@@ -144,10 +193,30 @@ Initialization uses exclusive writes, refuses nonempty destinations, creates
 no missing ancestors, and retains partial state after failures without
 recursive rollback.
 
-The compiler path is explicit and interpreted in the caller's coordinates;
-no PATH/sibling lookup or shell evaluation is performed. `fern --module`
-is a tool selector, not the compiler's removed directory-based `--module`
-option. Compiler inputs still use `--module-name` and `--module-source`.
+Fern chooses the compiler in this order:
+
+1. `--compiler <path>`, if supplied.
+2. `JOYEER_COMPILER`, if set. An empty value is an error.
+3. `joyeer` (`joyeer.exe` on Windows) beside the running fern executable.
+4. The first matching candidate in the caller's `PATH`, left to right.
+
+Explicit and environment paths are interpreted relative to the caller, not
+the project, and are never replaced when they fail. Automatic discovery
+ignores empty and relative `PATH` entries, scans `:` on POSIX and `;` on
+Windows (respecting enclosing quotes), and accepts only ordinary executable
+candidates (no final links).
+It does not search the current directory implicitly, use `PATHEXT`, invoke
+a shell, or retry with another compiler after a selected one fails.
+`lib/index.toml` is read beside the selected path, following final POSIX
+compiler links for index lookup only. If the manifest graph needs no standard
+module lookup, a compiler is not needed until there is a module to build or
+check. In environments where the
+process's image path cannot be queried (for example Linux without `/proc`),
+use `--compiler` or `JOYEER_COMPILER`.
+
+`fern --module` is a tool selector, not the compiler's removed
+directory-based `--module` option. Compiler inputs still use `--module-name`
+and `--module-source`.
 
 ```powershell
 $compiler = (Resolve-Path '.\out\build\arm64-debug\bin\joyeer.exe').Path
@@ -200,16 +269,18 @@ Physical source aliases within a supplied compilation graph are checked by
 the compiler. The tool does not provide a workspace-wide physical identity
 service for unrelated source units.
 
-All member manifests are loaded and their entire declared dependency DAG
-validated before selection, including unrelated members and cycles.
+All member and path dependency manifests are loaded and their entire declared
+dependency DAG validated before selection, including unrelated members and cycles.
 Unknown dependencies, duplicate logical names, and cycles reject before build
-effects. Traversal is iterative and bounded by the member count.
+effects. Traversal is iterative and bounded by the loaded project limits.
 
-Each document is classified as an ordinary regular file, then acquired with
-`readFilePrefix(..., maximumBytes: 65537)` so its parser can reject oversized
-input without reading the remainder. This includes workspace and member
-manifests. Final symlinks/devices/FIFOs reject. Ancestor resolution and
-classification/read races remain host behavior; this is not confinement.
+Module documents are classified and read with `readIdentifiedFilePrefix`;
+the bytes and file identity come from the same opened ordinary file.
+Workspace documents and the compiler index are not graph vertices and still
+use `readFilePrefix` after classification. Both reads limit input to 65537
+bytes so the parser can reject oversized input. Final symlinks, devices, and
+FIFOs reject. Ancestor resolution and later lookups remain host behavior;
+this is not confinement.
 
 Parse/graph diagnostics identify the offending member manifest and its
 original byte-based line/column. Original member text is retained during
@@ -243,7 +314,10 @@ build can leave a partial file, and the repository build uses it to place `moss`
 beside the compiler. It is valid once and only for `build`; `run` and `test`
 keep their generations.
 
-Debug is `-O0 -gfull`; release is `-O2 -g0`. Native generations are exclusively
+Debug uses `-O0 -gfull` except for macOS native builds, where `-O0 -gauto`
+lets the selected compiler omit debug information when its configured
+`dsymutil` is missing. A compiler override used for macOS native Debug
+must support `-gauto`. Release uses `-O2 -g0`. Native generations are exclusively
 claimed at `target/<profile>/<logical-module>/build-1` through `build-128`.
 The artifact uses the module's output basename and host suffix. Generation
 directories therefore do not collide when two modules both output `app`.
@@ -298,10 +372,9 @@ both direct dependencies.
 Debug PDB/dSYM byproducts, platform fallback, and install components are
 unchanged; see [building](../building.md#fern-bootstrap-and-acceptance).
 
-External local dependencies, registries/version resolution, lockfiles,
-cache/clean, process capture/timeouts, and remote acquisition
-are not implemented. Physical filesystem identity, atomic publication,
-release notices, and general Unicode diagnostic rendering remain separate
+Registries/version resolution, lockfiles, cache/clean, process capture/timeouts,
+and remote acquisition are not implemented. Atomic publication, release
+notices, and general Unicode diagnostic rendering remain separate
 contracts in the [remaining plan](../plan/0001-package-manager.md).
 
 ### Standard-library adoption validation
@@ -313,6 +386,12 @@ bootstrap, self-build, relocated-install, and test-runner gates;
 the generated standard-library stamp restaged the library and rebuilt fern
 and its fixtures in each configuration. Repeating the build without
 invalidating the stamp did not recompile them.
+
+On Windows ARM64 and Linux AArch64 (WSL2), the
+[toolchain layout gates](../building.md#toolchain-library-layout) passed in
+Debug and Release. The local Debug installer separately staged the archive,
+library index, and module packages, and the relocated compiler compiled
+and ran a program that imported `System`.
 
 `ModuleServiceTest.TheSystemLibraryChecksForEveryTargetPlatform` resolved
 and type-checked `System.isWindows()` for Windows, Linux, and macOS targets.
@@ -334,7 +413,8 @@ modules, and their index. The backend still loaded LLD, Z3, and zstd from
 Homebrew, so these checks do not establish standalone
 [release packaging](../building.md#release-staging).
 
-With `JOYEER_DSYMUTIL_EXECUTABLE` empty, `Fern.Bootstrap` regenerated and ran
-fern without a dSYM. `Fern.SelfBuild`, `Fern.Installed`, and the default Debug
-build of `moss.app` still ask for `-gfull` during a subsequent fern build and
-fail with `linker.missing-tool`.
+With `JOYEER_DSYMUTIL_EXECUTABLE` empty, that revision regenerated and ran
+fern without a dSYM, but `Fern.SelfBuild`, `Fern.Installed`, and the default
+Debug build of `moss.app` failed with `linker.missing-tool`. macOS native
+Debug builds now use `-gauto`; the updated native workflow still needs a
+run on macOS with and without `dsymutil`.

@@ -1,0 +1,7 @@
+// Declaration-level clauses are not part of the v0.1 contract style.
+func positive(value: Int): Int
+    requires value > 0
+    ensures value > 0
+{
+    return value
+}

@@ -15,7 +15,7 @@ public struct FileWriter {
     var state: Int
 
     deinit() {
-        if self.handle >= 0 { ownedCloseWriter(handle: self.handle) }
+        if self.handle >= 0 { nativeClose(handle: self.handle) }
     }
 }
 
@@ -31,23 +31,9 @@ public struct DirectoryReader {
     }
 }
 
-@platform(windows, linux)
-func ownedOpenRead(path: [UInt8]): Int { return nativeOpenRead(path: path) }
-
-@platform(windows, linux)
-func ownedOpenNew(path: [UInt8]): Int { return nativeOpenNew(path: path) }
-
-@platform(windows, linux)
-func ownedWrite(handle: Int, buffer: [UInt8], count: Int): Int {
-    return nativeWrite(handle: handle, buffer: buffer, count: count)
-}
-
-@platform(windows, linux)
-func ownedCloseWriter(handle: Int): Int { return nativeClose(handle: handle) }
-
 public func openFileRead(path: String): Result<FileReader, FileSystemError> {
     let bytes = encodePath(path: path)?
-    let handle = ownedOpenRead(path: bytes)
+    let handle = nativeOpenRead(path: bytes)
     if handle < 0 {
         let code = 0 - handle
         if opensAsDirectory(path: bytes, code: code) { return .Err(.IsDirectory(code)) }
@@ -58,7 +44,7 @@ public func openFileRead(path: String): Result<FileReader, FileSystemError> {
 
 public func openFileNew(path: String): Result<FileWriter, FileSystemError> {
     let bytes = encodePath(path: path)?
-    let handle = ownedOpenNew(path: bytes)
+    let handle = nativeOpenNew(path: bytes)
     if handle < 0 { return .Err(failure(code: 0 - handle)) }
     return .Ok(FileWriter(handle: handle, state: 0))
 }
@@ -79,7 +65,7 @@ public func readFileChunk(file: inout FileReader, maximumBytes: Int): Result<Str
 
 public func writeFileChunk(file: inout FileWriter, contents: String): Result<Void, FileSystemError> {
     if file.state != 0 { return .Err(failure(code: file.state)) }
-    let code = writeLoop(handle: file.handle, contents: contents, owned: true)
+    let code = writeLoop(handle: file.handle, contents: contents)
     if code != 0 {
         &file.state = code
         return .Err(failure(code: code))
@@ -96,7 +82,7 @@ public func closeFileReader(file: consuming FileReader): Result<Void, FileSystem
 public func closeFileWriter(file: consuming FileWriter): Result<Void, FileSystemError> {
     let handle = file.handle
     &file.handle = -1
-    return closeResult(status: ownedCloseWriter(handle: handle))
+    return closeResult(status: nativeClose(handle: handle))
 }
 
 private func closeResult(status: Int): Result<Void, FileSystemError> {

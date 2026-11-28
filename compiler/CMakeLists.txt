@@ -136,6 +136,9 @@ target_compile_definitions(JoyeerCompilerCore PRIVATE
 	JOYEER_MACOS_DEPLOYMENT_TARGET="${JOYEER_MACOS_DEPLOYMENT_TARGET}"
 	JOYEER_DSYMUTIL_EXECUTABLE_PATH="${JOYEER_DSYMUTIL_EXECUTABLE}"
 )
+if(JOYEER_SANITIZE_RUNTIME)
+	target_compile_definitions(JoyeerCompilerCore PRIVATE JOYEER_SANITIZE_RUNTIME)
+endif()
 
 add_executable(joyeer main.cpp)
 target_link_libraries(joyeer PRIVATE JoyeerCompilerCore)

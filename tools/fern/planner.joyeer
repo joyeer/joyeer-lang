@@ -9,6 +9,7 @@ struct BuildPlan {
     let moduleName: String
     let outputName: String
     let modules: [PlannedModule]
+    let nativeLinkArguments: [String]
     let profile: String
     let native: Bool
     let workingDirectory: String
@@ -42,7 +43,7 @@ func selectModules(project: borrowing Project, options: borrowing CliOptions): R
     var selected: [Int] = []
     var index = 0
     var found = false
-    while index < project.modules.count {
+    while index < project.rootCount {
         let name = project.modules[index].spec.name
         let kind = project.modules[index].spec.kind
         if options.module.count == 0 || name == options.module {
@@ -136,13 +137,23 @@ func planModule(project: borrowing Project, options: borrowing CliOptions,
     if options.release { profile = "release" }
     let native = options.command != "check"
     var artifactParent = ""
+    var nativeLinkArguments: [String] = []
     if native {
         let targetDirectory = toolJoin(base: project.directory, path: "target")?
         let profileDirectory = toolJoin(base: targetDirectory, path: profile)?
         artifactParent = toolJoin(base: profileDirectory, path: name)?
+        for directory in project.modules[moduleIndex].spec.nativeSearchPaths {
+            let path = toolJoin(base: project.modules[moduleIndex].directory, path: directory)?
+            &nativeLinkArguments.append(element: "--link-path")
+            &nativeLinkArguments.append(element: path)
+        }
+        for library in project.modules[moduleIndex].spec.nativeNames {
+            &nativeLinkArguments.append(element: "--link-lib")
+            &nativeLinkArguments.append(element: library)
+        }
     }
     return .Ok(BuildPlan(moduleName: name, outputName: project.modules[moduleIndex].spec.output,
-        modules: modules, profile: profile, native: native,
+        modules: modules, nativeLinkArguments: nativeLinkArguments, profile: profile, native: native,
         workingDirectory: project.directory, artifactParent: artifactParent))
 }
 
@@ -180,12 +191,15 @@ func compilerInvocation(plan: borrowing BuildPlan, compiler: String, output: Str
     if rootIndex < 0 {
         return .Err(ToolError(message: "internal missing root module '" + plan.moduleName + "'", pos: -1))
     }
+    for argument in plan.nativeLinkArguments {
+        &arguments.append(element: argument)
+    }
     if plan.profile == "release" {
         &arguments.append(element: "-O2")
         &arguments.append(element: "-g0")
     } else {
         &arguments.append(element: "-O0")
-        &arguments.append(element: "-gfull")
+        &arguments.append(element: if plan.native { nativeDebugFlag() } else { "-gfull" })
     }
     if plan.native {
         &arguments.append(element: "-o")

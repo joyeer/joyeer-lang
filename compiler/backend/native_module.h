@@ -21,6 +21,9 @@ struct ModuleStorage {
 struct JoyeerBackendModule {
     joyeer::llvmbackend::native::ModuleStorage storage;
     bool hasEntryPoint = false;
+#if defined(JOYEER_SANITIZE_RUNTIME)
+    bool isCoreRuntimeObject = false;
+#endif
 };
 
 #endif

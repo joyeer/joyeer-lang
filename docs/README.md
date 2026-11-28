@@ -72,11 +72,10 @@ iteration, a progress log, and deletion once every item is done. Start from the
 
 | Plan | Topic |
 |---|---|
-| [0001](plan/0001-package-manager.md) | Package manager: remaining native platform/release gates and future dependency, workspace, cache, and registry contracts |
-| [0002](plan/0002-c-interop.md) | C interoperation: remaining scalar ABI implementation, cross-platform acceptance, and separate memory/alias proposals |
-| [0004](plan/0004-native-link-inputs.md) | Linking native libraries by logical name and search path (proposed) |
-| [0005](plan/0005-test-audit.md) | Test coverage gaps: fuzzing, sanitizers, CI, ownership generators, spec traceability |
-| [0006](plan/0006-toolchain-libraries.md) | Compiler-relative standard modules and runtime packaging; Windows ARM64 and Linux AArch64 validation remain |
+| [0001](plan/0001-package-manager.md) | Package manager: native and release gates, cache publication and cleanup, remote packages |
+| [0002](plan/0002-c-interop.md) | C interoperation: x86-64 ABI evidence and scoped native-memory contracts |
+| [0004](plan/0004-native-link-inputs.md) | Logical native library linking; native macOS acceptance remains |
+| [0005](plan/0005-test-audit.md) | Test coverage gaps: generated-runtime sanitizers, native CI, remaining diagnostics and platform evidence |
 | [0008](plan/0008-runtime-in-joyeer.md) | The runtime in Joyeer: remaining platform evidence, the R0 performance gate, and macOS `System` without stdio |
 
 ## Decisions
@@ -119,6 +118,12 @@ in the spec.
 | [0030](decisions/0030-literal-patterns-are-not-promoted.md) | Literal patterns match only their own type; no implicit Optional promotion (accepted, implemented) |
 | [0031](decisions/0031-equatable.md) | Equality through a compiler-known `Equatable` protocol: opt-in derived conformances and `== nil` presence test (implemented and validated) |
 | [0032](decisions/0032-tcp-read-queue.md) | Fixed-membership TCP read readiness over owned connections (provisional) |
+| [0033](decisions/0033-native-library-names.md) | Logical native library names and platform-specific link inputs (pending macOS acceptance) |
+| [0034](decisions/0034-fern-local-dependency-identity.md) | Physical identity for fern local path dependencies (proposed) |
+| [0035](decisions/0035-fern-compiler-discovery.md) | Fern compiler precedence and macOS native Debug without `dsymutil` (pending macOS acceptance) |
+| [0036](decisions/0036-fern-remote-package-locking.md) | Remote package identity, integrity, locking, and offline/frozen modes (proposed) |
+| [0037](decisions/0037-fern-cache-publication.md) | Cache input identity, generation publication, and anchored cleanup (proposed) |
+| [0038](decisions/0038-scoped-native-memory.md) | Scoped native byte extents, explicit adapters, and resource ownership (proposed) |
 
 ## Conventions
 

@@ -28,6 +28,41 @@ configure_file(platform-scalars.joyeer.in platform-scalars.joyeer @ONLY)
 
 add_library(CInteropNativeStatic STATIC native.c native-scalars.c)
 add_library(CInteropNativeShared SHARED native.c native-scalars.c)
+add_library(CInteropNamedLibrary STATIC named-library.c)
+add_library(CInteropNamedLibraryAlternate STATIC named-library.c)
+target_compile_definitions(CInteropNamedLibraryAlternate PRIVATE JOYEER_NAMED_VALUE=91)
+set_target_properties(CInteropNamedLibrary PROPERTIES
+    OUTPUT_NAME joyeer_named_provider MSVC_RUNTIME_LIBRARY MultiThreaded)
+set_target_properties(CInteropNamedLibraryAlternate PROPERTIES
+    OUTPUT_NAME joyeer_named_alternate MSVC_RUNTIME_LIBRARY MultiThreaded)
+add_test(NAME JoyeerCInterop.NamedLibrary
+    COMMAND "${CMAKE_COMMAND}"
+        "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+        "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/named-library.joyeer"
+        "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/named-library${CMAKE_EXECUTABLE_SUFFIX}"
+        "-DCOMPILER_ARGS=--module-name;test.named_library;--runtime-module;test.named_library;--link-path;$<TARGET_FILE_DIR:CInteropNamedLibrary>;--link-lib;joyeer_named_provider;-O2;-g0"
+        "-DEXPECTED_OUTPUT=42\n"
+        -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+set_tests_properties(JoyeerCInterop.NamedLibrary PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+add_test(NAME JoyeerCInterop.NamedLibraryReservedSpellingAndCollision
+    COMMAND "${CMAKE_COMMAND}"
+        "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+        "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/named-library.joyeer"
+        "-DINPUT_LIBRARY=$<TARGET_FILE:CInteropNamedLibrary>"
+        "-DALTERNATE_LIBRARY=$<TARGET_FILE:CInteropNamedLibraryAlternate>"
+        "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/named-reserved/named${CMAKE_EXECUTABLE_SUFFIX}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/verifyNamedLibrary.cmake")
+set_tests_properties(JoyeerCInterop.NamedLibraryReservedSpellingAndCollision PROPERTIES
+    LABELS "c-interop;native" TIMEOUT 60)
+add_test(NAME JoyeerCInterop.MissingNamedLibrary
+    COMMAND "${CMAKE_COMMAND}"
+        "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+        "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/named-library.joyeer"
+        "-DEXTRA_ARGS=--module-name;test.named_library;--runtime-module;test.named_library;--link-lib;joyeer_missing_test_provider_0004;-o;${CMAKE_CURRENT_BINARY_DIR}/missing-named-library${CMAKE_EXECUTABLE_SUFFIX}"
+        "-DEXPECTED_PATTERN=linker[.]tool-failure.*joyeer_missing_test_provider_0004"
+        -P "${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake")
+set_tests_properties(JoyeerCInterop.MissingNamedLibrary PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+
 add_library(CInteropBuffers STATIC native-buffers.c)
 target_include_directories(CInteropBuffers PRIVATE "${JOYEER_RUNTIME_INCLUDE_DIR}")
 set_target_properties(CInteropBuffers PROPERTIES
@@ -50,7 +85,7 @@ find_program(JOYEER_LLVM_NM_EXECUTABLE NAMES llvm-nm llvm-nm.exe
 
 foreach(profile IN ITEMS Debug Optimized)
     if(profile STREQUAL Debug)
-        set(compile_flags -O0 -gfull)
+        set(compile_flags -O0 ${joyeer_test_native_debug})
     else()
         set(compile_flags -O2 -g0)
     endif()
@@ -193,7 +228,7 @@ set_target_properties(CInteropCallbacks PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON MSVC_RUNTIME_LIBRARY MultiThreaded)
 foreach(profile IN ITEMS Debug Optimized)
     if(profile STREQUAL Debug)
-        set(compile_flags -O0 -gfull)
+        set(compile_flags -O0 ${joyeer_test_native_debug})
     else()
         set(compile_flags -O2 -g0)
     endif()
@@ -223,7 +258,7 @@ add_custom_target(cinterop-indirect-benchmark
 # The address of a string literal's NUL-terminated constant data (spec 19.4.6).
 foreach(profile IN ITEMS Debug Optimized)
     if(profile STREQUAL Debug)
-        set(compile_flags -O0 -gfull)
+        set(compile_flags -O0 ${joyeer_test_native_debug})
     else()
         set(compile_flags -O2 -g0)
     endif()
@@ -241,7 +276,7 @@ endforeach()
 # The address of a named function, stored as a callback (spec 19.4.6).
 foreach(profile IN ITEMS Debug Optimized)
     if(profile STREQUAL Debug)
-        set(compile_flags -O0 -gfull)
+        set(compile_flags -O0 ${joyeer_test_native_debug})
     else()
         set(compile_flags -O2 -g0)
     endif()
@@ -261,7 +296,7 @@ endforeach()
 # program (spec 19.4.6), reached by index with a range check.
 foreach(profile IN ITEMS Debug Optimized)
     if(profile STREQUAL Debug)
-        set(compile_flags -O0 -gfull)
+        set(compile_flags -O0 ${joyeer_test_native_debug})
     else()
         set(compile_flags -O2 -g0)
     endif()
@@ -304,7 +339,7 @@ endforeach()
 # Joyeer export that does not (spec 19.4.6).
 foreach(profile IN ITEMS Debug Optimized)
     if(profile STREQUAL Debug)
-        set(compile_flags -O0 -gfull)
+        set(compile_flags -O0 ${joyeer_test_native_debug})
     else()
         set(compile_flags -O2 -g0)
     endif()
@@ -331,7 +366,7 @@ endforeach()
 # The address of a C data symbol with @c_data (spec 19.4.6).
 foreach(profile IN ITEMS Debug Optimized)
     if(profile STREQUAL Debug)
-        set(compile_flags -O0 -gfull)
+        set(compile_flags -O0 ${joyeer_test_native_debug})
     else()
         set(compile_flags -O2 -g0)
     endif()
@@ -349,7 +384,7 @@ endforeach()
 # Bulk memory intrinsics (spec 19.4.5): copy, overlapping move, fill.
 foreach(profile IN ITEMS Debug Optimized)
     if(profile STREQUAL Debug)
-        set(compile_flags -O0 -gfull)
+        set(compile_flags -O0 ${joyeer_test_native_debug})
     else()
         set(compile_flags -O2 -g0)
     endif()
@@ -374,7 +409,7 @@ else()
 endif()
 foreach(profile IN ITEMS Debug Optimized)
     if(profile STREQUAL Debug)
-        set(compile_flags -O0 -gfull)
+        set(compile_flags -O0 ${joyeer_test_native_debug})
     else()
         set(compile_flags -O2 -g0)
     endif()
@@ -393,7 +428,7 @@ endforeach()
 # Layout intrinsics (spec 20.12.5): size, alignment and moves through raw memory, in a runtime unit.
 foreach(profile IN ITEMS Debug O1 Optimized O3)
     if(profile STREQUAL Debug)
-        set(compile_flags -O0 -gfull)
+        set(compile_flags -O0 ${joyeer_test_native_debug})
     elseif(profile STREQUAL O1)
         set(compile_flags -O1 -g0)
     elseif(profile STREQUAL O3)
@@ -416,7 +451,7 @@ endforeach()
 # destruction of queued noncopyable values (spec 20.12.4, 20.12.5).
 foreach(profile IN ITEMS Debug O1 Optimized O3)
     if(profile STREQUAL Debug)
-        set(compile_flags -O0 -gfull)
+        set(compile_flags -O0 ${joyeer_test_native_debug})
     elseif(profile STREQUAL O1)
         set(compile_flags -O1 -g0)
     elseif(profile STREQUAL O3)
@@ -437,7 +472,7 @@ endforeach()
 
 foreach(profile IN ITEMS Debug Optimized)
     if(profile STREQUAL Debug)
-        set(compile_flags -O0 -gfull)
+        set(compile_flags -O0 ${joyeer_test_native_debug})
     else()
         set(compile_flags -O2 -g0)
     endif()

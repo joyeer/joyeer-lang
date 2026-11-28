@@ -1316,6 +1316,112 @@ TEST(RuntimeBlackBoxTest, GrowsArraysFromFourThenDoubles) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
+TEST(RuntimeBlackBoxDeathTest, CollectionSizeOverflowTrapsBeforeAllocatingOrScanning) {
+    const auto maximum = std::numeric_limits<int64_t>::max();
+    JoyeerArray array {};
+    EXPECT_EXIT(joyeer_array_create_owned_abi(&array, nullptr, maximum, 8, nullptr, nullptr),
+                testing::ExitedWithCode(1), "integer multiplication overflow");
+    const IntEntry first { 17, 42 };
+    auto dictionary = createDictionary(
+            &first, 1, sizeof(int64_t), sizeof(int64_t),
+            sizeof(IntEntry), offsetof(IntEntry, value), JOYEER_DICTIONARY_KEY_INT);
+    EXPECT_EXIT(
+            static_cast<void>(joyeer_dictionary_find_abi(
+                    dictionary.data, maximum, &first.key, sizeof(first.key), JOYEER_DICTIONARY_KEY_INT)),
+            testing::ExitedWithCode(1), "integer multiplication overflow");
+    EXPECT_EXIT(
+            static_cast<void>(joyeer_dictionary_find_abi(
+                    dictionary.data, maximum / static_cast<int64_t>(sizeof(IntEntry)) + 1,
+                    &first.key, sizeof(first.key), JOYEER_DICTIONARY_KEY_INT)),
+            testing::ExitedWithCode(1), "integer addition overflow");
+    joyeer_dictionary_destroy_abi(&dictionary);
+}
+
+TEST(RuntimeBlackBoxDeathTest, ArrayAppendChecksTheWriteOffsetBeforeCopying) {
+    const int64_t value = 7;
+    auto array = createArray(&value, 1, sizeof(value));
+    EXPECT_EXIT({
+        array.count = int64_t{1} << 60;
+        array.capacity = array.count + 1;
+        joyeer_array_append_owned_abi(&array, &value);
+    }, testing::ExitedWithCode(1), "integer multiplication overflow");
+    EXPECT_EXIT({
+        array.count = std::numeric_limits<int64_t>::max() / 8;
+        array.capacity = array.count + 1;
+        joyeer_array_append_owned_abi(&array, &value);
+    }, testing::ExitedWithCode(1), "integer addition overflow");
+    joyeer_array_destroy_abi(&array);
+}
+
+TEST(RuntimeBlackBoxDeathTest, ArrayDestroyChecksTheLastAddressBeforeDispatch) {
+    EXPECT_EXIT({
+        int64_t value = 7;
+        JoyeerArray array {};
+        joyeer_array_create_owned_abi(&array, &value, 1, sizeof(value), nullptr,
+            [](void*) { std::exit(42); });
+        array.count = std::numeric_limits<int64_t>::max() / 8 + 1;
+        joyeer_array_destroy_abi(&array);
+    }, testing::ExitedWithCode(1), "integer addition overflow");
+}
+
+TEST(RuntimeBlackBoxTest, ArrayCallbacksKeepTheirOrderAndZeroStrideBehavior) {
+    static std::vector<int64_t> calls;
+    calls.clear();
+    const auto clone = [](void* to, const void* from) {
+        int64_t value;
+        std::memcpy(&value, from, sizeof(value));
+        calls.push_back(value);
+        std::memcpy(to, from, sizeof(value));
+    };
+    const auto destroy = [](void* element) {
+        int64_t value;
+        std::memcpy(&value, element, sizeof(value));
+        calls.push_back(-value);
+    };
+    const std::array<int64_t, 4> values {1, 2, 3, 4};
+    JoyeerArray source {};
+    JoyeerArray copy {};
+    joyeer_array_create_owned_abi(&source, values.data(), values.size(), sizeof(values[0]), clone, destroy);
+    joyeer_array_clone_abi(&copy, source.data, source.count);
+    joyeer_array_destroy_abi(&copy);
+    joyeer_array_destroy_abi(&source);
+    EXPECT_EQ(calls, (std::vector<int64_t>{1, 2, 3, 4, -4, -3, -2, -1, -4, -3, -2, -1}));
+
+    static std::vector<uintptr_t> zeroStrideAddresses;
+    zeroStrideAddresses.clear();
+    joyeer_array_create_owned_abi(&source, nullptr, 3, 0,
+            [](void*, const void*) { ADD_FAILURE() << "zero-stride clone called its callback"; },
+            [](void* element) { zeroStrideAddresses.push_back(reinterpret_cast<uintptr_t>(element)); });
+    joyeer_array_clone_abi(&copy, source.data, source.count);
+    const auto sourceData = reinterpret_cast<uintptr_t>(source.data);
+    const auto copyData = reinterpret_cast<uintptr_t>(copy.data);
+    ASSERT_NE(sourceData, copyData);
+    joyeer_array_destroy_abi(&copy);
+    joyeer_array_destroy_abi(&source);
+    EXPECT_EQ(zeroStrideAddresses,
+            (std::vector<uintptr_t>{copyData, copyData, copyData, sourceData, sourceData, sourceData}));
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(RuntimeBlackBoxTest, AppendsUnalignedEightByteElementsAcrossGrowth) {
+    JoyeerArray array {};
+    joyeer_array_create_owned_abi(&array, nullptr, 0, 8, nullptr, nullptr);
+    alignas(8) std::array<uint8_t, 9> input {};
+    const auto* unaligned = input.data() + 1;
+    for (uint8_t first = 0; first < 17; ++first) {
+        input[1] = first;
+        input[8] = 255 - first;
+        joyeer_array_append_owned_abi(&array, unaligned);
+    }
+    ASSERT_EQ(array.count, 17);
+    const auto* bytes = static_cast<const uint8_t*>(array.data);
+    for (int index = 0; index < 17; ++index) {
+        EXPECT_EQ(bytes[index * 8], index);
+        EXPECT_EQ(bytes[index * 8 + 7], 255 - index);
+    }
+    joyeer_array_destroy_abi(&array);
+}
+
 TEST(RuntimeBlackBoxTest, ClonesAnEmptyArrayAndKeepsItIndependent) {
     JoyeerArray source {};
     joyeer_array_create_owned_abi(&source, nullptr, 0, sizeof(int64_t), nullptr, nullptr);

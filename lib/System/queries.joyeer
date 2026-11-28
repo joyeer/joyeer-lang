@@ -26,6 +26,12 @@ public func currentDirectory(): Result<String, HostQueryError> {
     return .Ok(path)
 }
 
+public func executablePath(): Result<String, HostQueryError> {
+    let path = nativeExecutablePath()?
+    if !isValidUtf8(text: path) { return .Err(.InvalidEncoding(invalidEncodingCode())) }
+    return .Ok(path)
+}
+
 public func monotonicMilliseconds(): Result<Int, HostQueryError> {
     return nativeClockMillis(monotonic: true)
 }

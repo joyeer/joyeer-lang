@@ -52,6 +52,26 @@ std::filesystem::path runtimePath() {
     return configuredPath;
 }
 
+std::filesystem::path debugSymbolTool() {
+    return std::filesystem::u8path(JOYEER_DSYMUTIL_EXECUTABLE_PATH);
+}
+
+joyeer::DebugInfoOptions effectiveDebugInfo(const CommandLineArguments& arguments) {
+    auto options = arguments.debugInfo;
+#if defined(__APPLE__)
+    if (arguments.automaticDebug && arguments.outputMode == joyeer::OutputMode::executable) {
+        const auto tool = debugSymbolTool();
+        std::error_code error;
+        if (tool.empty() ||
+            std::filesystem::status(tool, error).type() == std::filesystem::file_type::not_found) {
+            options.emitLineTables = false;
+            options.emitVariables = false;
+        }
+    }
+#endif
+    return options;
+}
+
 bool printInstantiationReport(
         const SourceFile& source,
         const std::filesystem::path& workingDirectory,
@@ -137,16 +157,15 @@ bool printInstantiationReport(
 
 } // namespace
 
-Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments):arguments(arguments) {
-    this->diagnostics = diagnostics;
-    compiler = new CompilerService(
-            diagnostics,
+Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments)
+        : arguments(arguments), diagnostics(diagnostics), debugInfo(effectiveDebugInfo(*arguments)),
+          compiler(diagnostics,
             joyeer::CompileOptions {
                 arguments->workingDirectory,
                 arguments->outputFile,
                 arguments->outputMode,
                 arguments->optimizationLevel,
-                arguments->debugInfo,
+                debugInfo,
                 arguments->moduleName,
                 arguments->sourceFiles,
                 arguments->modules,
@@ -155,18 +174,17 @@ Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments):ar
                 arguments->nativeLibraries,
                 joyeer::StandardLibrary::libraryDirectoryFor(arguments->sysroot),
                 arguments->standardLibrary,
-            });
-}
+            }) {}
 
 int Driver::run() {
-    compiler->compile(arguments->inputfile);
+    compiler.compile(arguments->inputfile);
     if(diagnostics->hasFailure()) {
         diagnostics->printErrors();
         return 1;
     }
     if(arguments->outputMode == joyeer::OutputMode::executable ||
        arguments->outputMode == joyeer::OutputMode::runtimeObject) {
-        const auto& source = compiler->getLastCompiledSourceFile();
+        const auto& source = compiler.getLastCompiledSourceFile();
         if (source == nullptr) {
             diagnostics->reportDiagnostic(
                     ErrorLevel::failure,
@@ -175,9 +193,11 @@ int Driver::run() {
         } else {
             // Standard modules that were actually imported bring their native archives.
             auto linkLibraries = arguments->nativeLibraries;
-            for (const auto& library : compiler->implicitNativeLibraries()) {
+            auto linkInputs = arguments->nativeLinkInputs;
+            for (const auto& library : compiler.implicitNativeLibraries()) {
                 if (std::find(linkLibraries.begin(), linkLibraries.end(), library) == linkLibraries.end()) {
                     linkLibraries.push_back(library);
+                    linkInputs.emplace_back(library);
                 }
             }
             const joyeer::native::LinkOptions options {
@@ -185,17 +205,18 @@ int Driver::run() {
                         std::filesystem::u8path(JOYEER_SDK_ROOT_PATH),
                         JOYEER_SDK_VERSION,
                         JOYEER_MACOS_DEPLOYMENT_TARGET,
-                        std::filesystem::u8path(JOYEER_DSYMUTIL_EXECUTABLE_PATH),
+                        debugSymbolTool(),
                         arguments->outputFile,
                         arguments->optimizationLevel,
-                        arguments->debugInfo,
+                        debugInfo,
                         source->getAbstractPath(),
                         source->llvmModule,
-                        linkLibraries,
+                        std::move(linkInputs),
                         source->llvmUsesThreads,
+                        arguments->nativeSearchPaths,
                     };
             const auto linking = arguments->outputMode == joyeer::OutputMode::runtimeObject
-                    ? joyeer::native::Linker().emitObject(source->llvmIR, options)
+                    ? joyeer::native::Linker().emitObject(source->llvmIR, options, arguments->sanitizeRuntimeObject)
                     : joyeer::native::Linker().link(source->llvmIR, source->llvmHasEntryPoint, options);
             for (const auto& diagnostic : linking.diagnostics) {
                         diagnostics->reportDiagnostic(
@@ -210,7 +231,7 @@ int Driver::run() {
         }
     }
     if (arguments->reportInstantiations) {
-        const auto& source = compiler->getLastCompiledSourceFile();
+        const auto& source = compiler.getLastCompiledSourceFile();
         if (source == nullptr ||
             !printInstantiationReport(*source, arguments->workingDirectory, *diagnostics)) {
             if (source == nullptr) {

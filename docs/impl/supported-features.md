@@ -23,7 +23,7 @@ add files to one unit; the exact complete name is its logical identity, not an
 implicit parent/submodule hierarchy. The compiler never discovers source files,
 adds siblings, reads manifests, or fetches dependencies. Build tools choose
 source roots and include/exclude rules and pass explicit paths. All supplied
-sets are validated before reachable dependencies are compiled, with
+sets are validated before rable dependencies are compiled, with
 canonicalized, sorted paths and duplicate physical-file rejection. The removed
 `--module-root` and `--module` flags report migration errors; see the
 [CLI/API input contract](backend.md#2-cli).
@@ -73,14 +73,15 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Strings and bytes | Byte count/indexing, owned `utf8()` byte arrays, the fixed escape set, comparison, concatenation, cloning, and destruction |
 | Built-ins | Primitive/string `print(value:)` and byte conversions |
 | Contracts | Always-on `assert(condition:message:)`, `precondition(condition:message:)`, and `fatalError(message:): Never` are bundled prelude functions; a failure stops without unwinding ([§9](../../specs/09-contracts.md)) |
-| Filesystem (`System`) | UTF-8 paths, binary whole-file `readFileUtf8` and bounded `readFilePrefix`, exclusive `writeFileNew`, directory creation/listing, file classification, file/empty-directory removal, and lexical `joinPath` |
+| Filesystem (`System`) | UTF-8 paths, binary whole-file `readFileUtf8` and bounded `readFilePrefix`, exclusive `writeFileNew`, same-filesystem `replaceFile`, directory creation/listing, file and executable-candidate classification, POSIX link-target reads, file/empty-directory removal, and lexical `joinPath` |
+| Digests (`Foundation`) | One-shot and incremental CRC-32 and SHA-256 over arbitrary bytes. `sha256(bytes:)` returns an optional lowercase hex digest; `sha256Start()`, `sha256Update(state:bytes:)`, and `sha256Digest(state:)` support chunks. Updates past the SHA-256 limit (fewer than 2^64 bits) return `false` without changing the state; reading a digest does not consume it |
 | TCP (`System`, provisional) | IPv4 literal addresses, timeouts, and advisory `tcpPoll` for up to 64 connections and listeners. `TcpReadQueue` owns up to 4096 connected sockets and waits by stable index without scanning the set (IOCP on Windows, one-shot `epoll` on Linux, `kqueue` on macOS). Native loopback validation passed on Windows x64 and ARM64, macOS ARM64, and Linux AArch64 under WSL2. See [spec §18.6](../../specs/18-host.md#186-tcp-networking) and [validation](../decisions/0032-tcp-read-queue.md#evidence). |
 | Processes (`System`) | Synchronous `runProcess`, or `startProcess` with an owned `ChildProcess` and consuming `waitProcess`. Explicit executable, argument array and child directory; no implicit shell or PATH lookup. Dropping the owner blocks until the child finishes |
-| Host queries and clocks (`System`) | Read-only `environmentVariable` and `currentDirectory`, plus `monotonicMilliseconds` and `wallClockMilliseconds` ([§18.7–8](../../specs/18-host.md#187-process-environment-and-current-directory)) |
+| Host queries and clocks (`System`) | Read-only `environmentVariable`, `currentDirectory`, `executablePath`, and the monotonic and wall clocks ([§18.7–8](../../specs/18-host.md#187-process-environment-and-current-directory)) |
 | Owned sequential I/O (`System`) | Noncopyable `FileReader`, `FileWriter` and `DirectoryReader`, with deterministic cleanup and explicit consuming close ([§18.9](../../specs/18-host.md#189-owned-sequential-files-and-directories)) |
 | Compiler output | Frontend validation, textual LLVM IR, native executables, optimization flags, debug information, and native debug artifacts |
-| Internal C bindings | Explicitly authorized scalar imports/exports, restricted borrowed/initializing buffer imports, bare `[UInt8]` data pointers (`pointer:`, borrowed or `inout`), runtime-only memory intrinsics (`joyeer_intrinsic_*`: address-of, loads, stores, atomic add), scalar or `Void` results, runtime-object output, and explicit native-library link inputs |
-| System library (Joyeer) | `import System` provides target-platform detection with `isWindows()` (§18.1), explicit-syntax lexical path helpers, the nine §18.2 filesystem operations, legacy `readFile`, `runProcess` (§18.3), `writeStderr` (§18.4), and `readStdinLine` (§18.5). The platform variants use Win32, Linux system calls, or macOS libSystem. Standard input and error use the runtime's streams; macOS file I/O still uses stdio. See [host-operation validation](#host-operation-validation) |
+| Internal C bindings | Explicitly authorized scalar imports/exports, restricted borrowed/initializing buffer imports, bare `[UInt8]` data pointers (`pointer:`, borrowed or `inout`), runtime-only memory intrinsics, scalar or `Void` results, runtime-object output, and [native link inputs by file or logical name](c-interop.md#3-static-and-dynamic-providers) |
+| System library (Joyeer) | `import System` provides target-platform detection with `isWindows()` (§18.1), explicit-syntax lexical path helpers, §18.2 filesystem operations, legacy `readFile`, `runProcess` (§18.3), `writeStderr` (§18.4), and `readStdinLine` (§18.5). The platform variants use Win32, Linux system calls, or macOS libSystem. Standard input and error use the runtime's streams; macOS file I/O uses descriptors and awaits native acceptance. See [host-operation validation](#host-operation-validation) |
 | Platform selection | `@platform(windows, linux, macos, posix)` (one or more names) on top-level functions ([§11.5](../../specs/11-annotations.md#115-platform)). The selected variant is kept and the others are removed before name resolution; the target is the host. `CompileOptions.targetPlatform` can name another, but only for `validate` output (`driver.unsupported-target-platform` otherwise); there is no command-line option. Dropped variants must parse and keep valid annotations but are not resolved or type-checked; a failed selection reports only `platform.*` diagnostics |
 | Top-level constants | Top-level `let` with an explicit type and a compile-time initializer: `Bool`, numbers, `String`, and nested arrays of those, up to 1 MiB of data per constant; `public` constants work across modules. Overflow and other evaluation errors are compile-time errors (`ir-lowering.invalid-constant`). Structs, enums, dictionaries and function calls are not supported |
 | Optional Compression library | Separately built miniz-backed classic ZIP creation, listing, and bounded in-memory extraction; see [Compression](compression.md) |
@@ -187,11 +188,12 @@ The separate Joyeer-written `fern 0.1.0` implements `init/check/build/run/test`
 under [tools/fern/](../../tools/fern/). Each schema-1 `project.toml`
 defines exactly one source/bin/test module; schema-1 `workspace.toml` lists
 explicit member directories. Per-module source paths and dependencies,
-`--workspace`, and exact `--module` selection are implemented. Legacy project
+including local `path-dependencies`, `--workspace`, and exact `--module`
+selection are implemented. Legacy project
 schemas and `--target` return migration errors. Compiler module semantics
 are unchanged; no library ABI is implied.
 
-CMake bootstraps the default `ALL` tool and registers 15 portable acceptance
+CMake bootstraps the default `ALL` tool and registers portable acceptance
 gates, including bootstrap regeneration, independently of
 `JOYEER_BUILD_UNITTESTS`. Native macOS ARM64 Debug and Release pass all 15,
 including self-build and relocated workflows with the shared `Foundation`
@@ -202,9 +204,10 @@ for packaging limits.
 Every document is
 bounded to 65536 bytes with a sentinel
 read after regular-file classification. Outputs use module-qualified fresh
-generations with 128 claims per module/profile. The tool does not scan
-upward, search PATH, delete/cache outputs, fetch external dependencies, or
-nested workspaces. These are not streaming or confinement guarantees.
+generations with 128 claims per module/profile. The tool supports explicit
+workspace nesting and local dependencies, but does not scan upward, search
+PATH, delete/cache outputs, or fetch remote packages. These are not streaming
+or confinement guarantees.
 Unrecorded native targets and publication remain open.
 See [fern](fern.md) for current contracts and parser limits.
 
@@ -243,9 +246,8 @@ See [fern](fern.md) for current contracts and parser limits.
 - Declaration-level contract syntax, property annotations as executable
   features, incremental compilation, or formal verification.
 - Project-manager commands on the **compiler**, such as `joyeer build`, `run`,
-  `test`, or `init`; use the separate source-implemented `fern`. Toolchain
-  installation, `doctor`, registries, local path packages, and workspaces
-  remain deferred.
+  `test`, or `init`; use the separate source-implemented `fern`. `doctor`,
+  registries, and remote packages remain deferred.
 
 Lexical or specification coverage alone does not make a feature executable.
 New source-visible features must pass through every applicable frontend,
@@ -282,7 +284,7 @@ Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
   Portable filesystem operations use a separate `FileSystemError`;
   process operations use `ProcessError` and `ProcessStatus`. See the
   [exact signatures and boundaries](../../specs/18-host.md). Recursive cleanup,
-  replacement/atomic publication, canonicalization, process output capture,
+  crash-durable publication, canonicalization, process output capture,
   timeouts, cancellation, and detach are not provided.
 - `writeStderr(contents: String): Result<Void, StderrError>` writes exact bytes
   without appending a newline and flushes; `.WriteFailed(Int)` carries CRT

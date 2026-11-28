@@ -3,14 +3,16 @@ import Foundation
 // POSIX primitives for filesystem.joyeer. The names, codes and path rules that Linux and
 // macOS share are here for both; the operations are macOS only, over libSystem, because
 // Linux calls the kernel directly (filesystem_linux.joyeer). Paths are UTF-8 with a NUL
-// terminator. A handle is an Int (a FILE* or DIR*). Results are >= 0 on success and the
+// terminator. A handle is an Int (a file descriptor or DIR*). Results are >= 0 on success and the
 // negated errno on failure.
 //
-// Files use stdio, whose exclusive-create mode "x" (C11) creates a file with the same
-// effect as open(O_CREAT | O_EXCL, 0666) without a variadic call. The struct layouts
-// used below are struct stat and struct dirent on macOS.
+// Files use openx_np instead of variadic open so O_CLOEXEC and the creation mode
+// can be set together. The layouts below are struct stat and struct dirent on macOS.
 
 private let interrupted: Int = 4
+private let closeOnExec: Int32 = 0x01000000
+private let createExclusiveWrite: Int32 = 0x0A01  // O_CREAT | O_EXCL | O_WRONLY
+private let fileSecurityMode: UInt32 = 4
 private let directoryMode: UInt32 = 511
 private let statxBufferSize: Int = 256
 private let direntBufferSize: Int = 2048
@@ -18,10 +20,6 @@ private let kindMask: Int = 61440
 private let kindFile: Int = 32768
 private let kindDirectory: Int = 16384
 private let kindSymlink: Int = 40960
-
-@platform(macos)
-@c_extern(symbol: "fopen", pointer: "path", pointer: "mode")
-private func fopenP(path: [UInt8], mode: [UInt8]): Int
 
 @platform(macos)
 @c_extern(symbol: "openx_np", pointer: "path")
@@ -40,36 +38,16 @@ private func setFileSecurity(security: Int, property: UInt32, value: [UInt8]): I
 private func freeFileSecurity(security: Int): Void
 
 @platform(macos)
-@c_extern(symbol: "fdopen", pointer: "mode")
-private func descriptorStream(descriptor: Int32, mode: [UInt8]): Int
-
-@platform(macos)
 @c_extern(symbol: "close")
 private func closeDescriptorP(descriptor: Int32): Int32
 
 @platform(macos)
+@c_extern(symbol: "read", pointer: "buffer")
+private func readDescriptorP(descriptor: Int32, buffer: inout [UInt8], count: Int): Int
+
+@platform(macos)
 @c_extern(symbol: "write", pointer: "buffer")
 private func writeDescriptorP(descriptor: Int32, buffer: [UInt8], count: Int): Int
-
-@platform(macos)
-@c_extern(symbol: "fread", pointer: "buffer")
-private func freadP(buffer: inout [UInt8], size: Int, count: Int, stream: Int): Int
-
-@platform(macos)
-@c_extern(symbol: "fwrite", pointer: "buffer")
-private func fwriteP(buffer: [UInt8], size: Int, count: Int, stream: Int): Int
-
-@platform(macos)
-@c_extern(symbol: "fclose")
-private func fcloseP(stream: Int): Int32
-
-@platform(macos)
-@c_extern(symbol: "ferror")
-private func ferrorP(stream: Int): Int32
-
-@platform(macos)
-@c_extern(symbol: "clearerr")
-private func clearerrP(stream: Int): Void
 
 @platform(macos)
 @c_extern(symbol: "mkdir", pointer: "path")
@@ -78,6 +56,10 @@ private func mkdirP(path: [UInt8], mode: UInt32): Int32
 @platform(macos)
 @c_extern(symbol: "unlink", pointer: "path")
 private func unlinkP(path: [UInt8]): Int32
+
+@platform(macos)
+@c_extern(symbol: "rename", pointer: "source", pointer: "destination")
+private func renameP(source: [UInt8], destination: [UInt8]): Int32
 
 @platform(macos)
 @c_extern(symbol: "rmdir", pointer: "path")
@@ -98,6 +80,45 @@ private func readdirP(directory: Int, entry: inout [UInt8], found: inout [UInt8]
 @platform(macos)
 @c_extern(symbol: "lstat", pointer: "path", pointer: "buffer")
 private func lstatP(path: [UInt8], buffer: inout [UInt8]): Int32
+
+@platform(macos)
+@c_extern(symbol: "fstat", pointer: "buffer")
+private func fstatP(descriptor: Int32, buffer: inout [UInt8]): Int32
+
+@platform(macos)
+@c_extern(symbol: "access", pointer: "path")
+private func accessP(path: [UInt8], mode: Int32): Int32
+
+@platform(macos)
+@c_extern(symbol: "readlink", pointer: "path", pointer: "buffer")
+private func readlinkP(path: [UInt8], buffer: inout [UInt8], capacity: Int): Int
+
+@platform(macos)
+func nativeReadLink(path: [UInt8], buffer: inout [UInt8]): Int {
+    let capacity = buffer.count
+    let length = readlinkP(path: path, buffer: &buffer, capacity: capacity)
+    if length < 0 { return lastFailure() }
+    return length
+}
+
+@platform(posix)
+public func readSymbolicLink(path: String): Result<String, FileSystemError> {
+    let bytes = encodePath(path: path)?
+    let capacity = 4096
+    var buffer = zeroBuffer(count: capacity)
+    let length = nativeReadLink(path: bytes, buffer: &buffer)
+    if length < 0 { return .Err(failure(code: 0 - length)) }
+    if length >= capacity { return .Err(.InvalidPath(nameTooLongErrno())) }
+    let target = stringFromBytes(bytes: buffer, count: length)
+    if !isValidUtf8(text: target) { return .Err(.InvalidPath(invalidEncodingCode())) }
+    return .Ok(target)
+}
+
+@platform(macos)
+func nativeExecutableAccess(path: [UInt8]): Int {
+    if accessP(path: path, mode: 1) != 0 { return lastFailure() }
+    return 0
+}
 
 // errno values that differ between Linux and macOS.
 @platform(linux)
@@ -167,74 +188,70 @@ private func lastFailure(): Int {
 }
 
 @platform(macos)
-private func readMode(): [UInt8] {
-    let mode: [UInt8] = [b'r', b'b', 0]
-    return mode
-}
-
-@platform(macos)
-private func createMode(): [UInt8] {
-    let mode: [UInt8] = [b'w', b'b', b'x', 0]
-    return mode
+private func openDescriptor(path: [UInt8], flags: Int32, security: Int): Int {
+    var status = 0 - interrupted
+    while status == 0 - interrupted {
+        let descriptor = openWithSecurity(path: path, flags: flags, security: security)
+        status = if descriptor < 0 { lastFailure() } else { descriptor as Int }
+    }
+    return status
 }
 
 @platform(macos)
 func nativeOpenRead(path: [UInt8]): Int {
-    // Bound first: a temporary would be freed before errno is read below.
-    let mode = readMode()
-    let stream = fopenP(path: path, mode: mode)
-    if stream == 0 { return lastFailure() }
-    return stream
+    return openDescriptor(path: path, flags: closeOnExec, security: 0)
+}
+
+@platform(macos)
+func nativeOpenIdentity(path: [UInt8], directory: Bool): Int {
+    // O_SEARCH is O_EXEC | O_DIRECTORY on Darwin; it does not request listing access.
+    if directory { return openDescriptor(path: path, flags: closeOnExec | 0x40100000, security: 0) }
+    // O_NOFOLLOW | O_NONBLOCK.
+    return openDescriptor(path: path, flags: closeOnExec | 0x0104, security: 0)
+}
+
+@platform(macos)
+func nativeFileIdentity(handle: Int, directory: Bool): Result<FileIdentity, FileSystemError> {
+    var info = zeroBuffer(count: statxBufferSize)
+    if fstatP(descriptor: handle as Int32, buffer: &info) != 0 {
+        return .Err(failure(code: 0 - lastFailure()))
+    }
+
+    if modeKind(mode: halfWord(bytes: info, offset: 4)) != (if directory { 1 } else { 0 }) {
+        return .Err(.Other(invalidInputCode()))
+    }
+    return .Ok(FileIdentity(volume: hostWord(bytes: info, offset: 0) & 0xFFFFFFFF,
+        low: hostWord(bytes: info, offset: 8), high: 0))
 }
 
 @platform(macos)
 func nativeOpenNew(path: [UInt8]): Int {
-    let mode = createMode()
-    let stream = fopenP(path: path, mode: mode)
-    if stream == 0 { return lastFailure() }
-    return stream
-}
-
-// Unlike fopen, acquire the descriptor with O_CLOEXEC already set.
-@platform(macos)
-private func takeStream(descriptor: Int32, mode: [UInt8]): Int {
-    let stream = descriptorStream(descriptor: descriptor, mode: mode)
-    if stream != 0 { return stream }
-    let error = lastFailure()
-    closeDescriptorP(descriptor: descriptor)
-    return error
-}
-
-@platform(macos)
-func ownedOpenRead(path: [UInt8]): Int {
-    let descriptor = openWithSecurity(path: path, flags: 0x01000000, security: 0)
-    if descriptor < 0 { return lastFailure() }
-    return takeStream(descriptor: descriptor, mode: readMode())
-}
-
-@platform(macos)
-func ownedOpenNew(path: [UInt8]): Int {
     let security = fileSecurity()
     if security == 0 { return lastFailure() }
     let permissions: [UInt8] = [0xB6, 0x01]  // mode_t 0666; the kernel applies the umask.
-    let changed = setFileSecurity(security: security, property: 4, value: permissions)
+    let changed = setFileSecurity(security: security, property: fileSecurityMode, value: permissions)
     if changed != 0 {
         let error = lastFailure()
         freeFileSecurity(security: security)
         return error
     }
-    // O_CLOEXEC | O_CREAT | O_EXCL | O_WRONLY
-    let descriptor = openWithSecurity(path: path, flags: 0x01000A01, security: security)
-    let error = if descriptor < 0 { lastFailure() } else { 0 }
+    let descriptor = openDescriptor(path: path, flags: closeOnExec | createExclusiveWrite, security: security)
     freeFileSecurity(security: security)
-    if descriptor < 0 { return error }
-    return descriptor as Int
+    return descriptor
 }
 
-// Use the descriptor directly: buffered fwrite can report EINTR after
-// accepting some of a chunk, which makes retrying that chunk unsafe.
 @platform(macos)
-func ownedWrite(handle: Int, buffer: [UInt8], count: Int): Int {
+func nativeRead(handle: Int, buffer: inout [UInt8], count: Int): Int {
+    var status = 0 - interrupted
+    while status == 0 - interrupted {
+        status = readDescriptorP(descriptor: handle as Int32, buffer: &buffer, count: count)
+        if status < 0 { status = lastFailure() }
+    }
+    return status
+}
+
+@platform(macos)
+func nativeWrite(handle: Int, buffer: [UInt8], count: Int): Int {
     var status = 0 - interrupted
     while status == 0 - interrupted {
         status = writeDescriptorP(descriptor: handle as Int32, buffer: buffer, count: count)
@@ -244,49 +261,14 @@ func ownedWrite(handle: Int, buffer: [UInt8], count: Int): Int {
 }
 
 @platform(macos)
-func ownedCloseWriter(handle: Int): Int {
+func nativeClose(handle: Int): Int {
     if closeDescriptorP(descriptor: handle as Int32) != 0 { return lastFailure() }
     return 0
 }
 
-// Check the stream error even after a partial transfer. Clear EINTR before
-// returning progress so the next call does not inherit the sticky error.
 @platform(macos)
-private func transferError(handle: Int): Int {
-    if ferrorP(stream: handle) == 0 { return 0 }
-    let code = cErrno() as Int
-    if code == interrupted { clearerrP(stream: handle) }
-    if code == 0 { return writeFaultCode() }
-    return code
-}
-
-@platform(macos)
-func nativeRead(handle: Int, buffer: inout [UInt8], count: Int): Int {
-    var got = 0
-    var code = interrupted
-    while got == 0 && code == interrupted {
-        got = freadP(buffer: &buffer, size: 1, count: count, stream: handle)
-        code = transferError(handle: handle)
-    }
-    if code != 0 && code != interrupted { return 0 - code }
-    return got
-}
-
-@platform(macos)
-func nativeWrite(handle: Int, buffer: [UInt8], count: Int): Int {
-    var written = 0
-    var code = interrupted
-    while written == 0 && code == interrupted {
-        written = fwriteP(buffer: buffer, size: 1, count: count, stream: handle)
-        code = transferError(handle: handle)
-    }
-    if code != 0 && code != interrupted { return 0 - code }
-    return written
-}
-
-@platform(macos)
-func nativeClose(handle: Int): Int {
-    if fcloseP(stream: handle) != 0 { return lastFailure() }
+func nativeReplaceFile(source: [UInt8], destination: [UInt8]): Int {
+    if renameP(source: source, destination: destination) != 0 { return lastFailure() }
     return 0
 }
 

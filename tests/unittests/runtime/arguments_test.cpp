@@ -323,6 +323,30 @@ TEST(CommandLineArgumentsTest, LineTableOptionDowngradesFullDebugInOrder) {
     EXPECT_FALSE(arguments->debugInfo.emitVariables);
 }
 
+TEST(CommandLineArgumentsTest, AutomaticDebugStartsFullAndAllowsExplicitOverrides) {
+    struct Case {
+        std::vector<std::string> flags;
+        bool lineTables;
+        bool variables;
+        bool automatic;
+    };
+    const Case cases[] = {
+        { { "-g0", "-gauto" }, true, true, true },
+        { { "-gauto", "-g" }, true, false, false },
+        { { "-gauto", "-g0" }, false, false, false },
+        { { "-gauto", "-gfull" }, true, true, false },
+        { { "-gauto", "-gdwarf" }, true, true, false },
+    };
+    for (const auto& test : cases) {
+        Diagnostics diagnostics;
+        const auto arguments = parseArguments(diagnostics, nativeArguments(test.flags));
+        EXPECT_TRUE(arguments->accepted);
+        EXPECT_EQ(arguments->debugInfo.emitLineTables, test.lineTables);
+        EXPECT_EQ(arguments->debugInfo.emitVariables, test.variables);
+        EXPECT_EQ(arguments->automaticDebug, test.automatic);
+    }
+}
+
 TEST(CommandLineArgumentsTest, AppliesDebugLevelAndFormatOptionsInOrder) {
     {
         Diagnostics diagnostics;

@@ -78,6 +78,30 @@ func main(args: [String]): Int {
     failures = failures + check(name: "crc32 empty chunk keeps checksum",
         ok: crc32Update(checksum: partial, bytes: "".utf8()) == partial)
 
+    failures = failures + check(name: "sha256 empty",
+        ok: sha256(bytes: []) == .Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"))
+    failures = failures + check(name: "sha256 abc",
+        ok: sha256(bytes: "abc".utf8()) == .Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"))
+    failures = failures + check(name: "sha256 55-byte padding",
+        ok: sha256(bytes: zeroBytes(count: 55)) == .Some("02779466cdec163811d078815c633f21901413081449002f24aa3e80f0b88ef7"))
+    failures = failures + check(name: "sha256 56-byte padding",
+        ok: sha256(bytes: zeroBytes(count: 56)) == .Some("d4817aa5497628e7c77e6b606107042bbba3130888c5f47a375e6179be789fbb"))
+    let binaryDigest = "40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880"
+    failures = failures + check(name: "sha256 binary blocks", ok: sha256(bytes: everyByte) == .Some(binaryDigest))
+    var hash = sha256Start()
+    var first: [UInt8] = []
+    var second: [UInt8] = []
+    for index in 0..<everyByte.count {
+        if index < 63 { &first.append(element: everyByte[index]) }
+        else { &second.append(element: everyByte[index]) }
+    }
+    let updated = sha256Update(state: &hash, bytes: first) &&
+        sha256Update(state: &hash, bytes: []) && sha256Update(state: &hash, bytes: second)
+    failures = failures + check(name: "sha256 irregular chunks and empty update",
+        ok: updated && sha256Digest(state: hash) == binaryDigest)
+    failures = failures + check(name: "sha256 digest does not consume state",
+        ok: sha256Digest(state: hash) == binaryDigest)
+
     if failures == 0 { print(value: "Foundation tests passed") }
     return failures
 }

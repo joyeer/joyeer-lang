@@ -1,9 +1,21 @@
+set(joyeer_test_native_debug -gfull)
+if(APPLE AND NOT JOYEER_DSYMUTIL_EXECUTABLE)
+    # These native smoke tests exercise debug-bearing code where possible, but
+    # do not require inspecting a dSYM. Debug IR tests still request -gfull.
+    set(joyeer_test_native_debug -gauto)
+endif()
+
 if(BUILD_TESTING)
     find_package(Python3 3.9 QUIET COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
         add_test(NAME ValidationScriptTests
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_validate.py")
-        set_tests_properties(ValidationScriptTests PROPERTIES LABELS "tooling" TIMEOUT 30)
+        add_test(NAME SpecCoverageScriptTests
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_spec_coverage.py")
+        add_test(NAME StageReleaseScriptTests
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_stage_release.py")
+        set_tests_properties(ValidationScriptTests SpecCoverageScriptTests StageReleaseScriptTests
+            PROPERTIES LABELS "tooling" TIMEOUT 30)
     endif()
 
     set(joyeer_skill_examples "${JOYEER_SOURCE_DIR}/skills/joyeer/examples")
@@ -38,12 +50,29 @@ if(BUILD_TESTING)
         "read failed\n" "${joyeer_skill_output}/missing-input")
 endif()
 
-if(BUILD_TESTING AND JOYEER_BUILD_FERN)
-    add_subdirectory(fern)
-endif()
-
 if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     add_subdirectory(c-interop)
+    if(JOYEER_BUILD_FERN)
+        add_subdirectory(fern)
+    endif()
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME GeneratedOwnership
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_generated_ownership.py"
+                "$<TARGET_FILE:joyeer>")
+        set_tests_properties(GeneratedOwnership PROPERTIES LABELS "e2e;ownership;runtime" TIMEOUT 120)
+        if(CMAKE_CONFIGURATION_TYPES OR CMAKE_BUILD_TYPE STREQUAL "Debug")
+            set(debug_configs)
+            if(CMAKE_CONFIGURATION_TYPES)
+                set(debug_configs CONFIGURATIONS Debug)
+            endif()
+            add_test(NAME DebugInstallerRelocatesStandardLibrary
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_debug_install.py"
+                    "${CMAKE_BINARY_DIR}"
+                ${debug_configs})
+            set_tests_properties(DebugInstallerRelocatesStandardLibrary PROPERTIES
+                LABELS "native;packaging" TIMEOUT 120)
+        endif()
+    endif()
     if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
         set(web_server_head "${JOYEER_SOURCE_DIR}/example/web-server/src/http.joyeer")
         set(web_server_markdown "${JOYEER_SOURCE_DIR}/example/web-server/src/markdown.joyeer")

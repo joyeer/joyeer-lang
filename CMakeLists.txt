@@ -63,6 +63,16 @@ option(JOYEER_BUILD_COMPRESSION "Build the miniz-backed Compression standard mod
 option(JOYEER_BUILD_MOSS "Build the Joyeer-written moss JVM inspection tool (needs fern and Compression)" ON)
 option(JOYEER_BACKEND_TEST_HOOKS
     "Re-verify optimized IR in the backend and accept test fault injection (test builds only, never packages)" OFF)
+option(JOYEER_SANITIZE_HOST
+    "Instrument the C++ compiler, backend and test drivers for local testing" OFF)
+option(JOYEER_SANITIZE_RUNTIME
+    "Build a separate AddressSanitizer runtime archive and test probe (Linux)" OFF)
+if(JOYEER_SANITIZE_RUNTIME AND
+   (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_CROSSCOMPILING OR
+    NOT CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang)$" OR NOT BUILD_TESTING OR NOT JOYEER_BUILD_UNITTESTS))
+    message(FATAL_ERROR
+        "JOYEER_SANITIZE_RUNTIME needs native Linux GCC or Clang, BUILD_TESTING and JOYEER_BUILD_UNITTESTS.")
+endif()
 
 if(JOYEER_BUILD_FERN AND CMAKE_CROSSCOMPILING)
     message(FATAL_ERROR
@@ -254,6 +264,26 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Standard C++ (-std=c++20), not gnu++20: GNU mode predefines `linux` as a macro, which
 # breaks the TargetPlatform enumerator of that name.
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+if(JOYEER_SANITIZE_HOST)
+    if(MSVC)
+        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/fsanitize=address>)
+        # Match the prebuilt LLVM SDK's STL annotations without disabling
+        # AddressSanitizer's ordinary memory-access instrumentation.
+        add_compile_definitions(
+            $<$<COMPILE_LANGUAGE:CXX>:_DISABLE_VECTOR_ANNOTATION>
+            $<$<COMPILE_LANGUAGE:CXX>:_DISABLE_STRING_ANNOTATION>)
+        add_link_options(/INCREMENTAL:NO)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+        add_compile_options(
+            $<$<COMPILE_LANGUAGE:CXX>:-fsanitize=address,undefined>
+            $<$<COMPILE_LANGUAGE:CXX>:-fno-omit-frame-pointer>
+            $<$<COMPILE_LANGUAGE:CXX>:-fno-sanitize-recover=all>)
+        add_link_options($<$<LINK_LANGUAGE:CXX>:-fsanitize=address,undefined>)
+    else()
+        message(FATAL_ERROR "JOYEER_SANITIZE_HOST requires MSVC, GCC or Clang")
+    endif()
+endif()
 
 get_filename_component(JOYEER_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR} REALPATH)
 

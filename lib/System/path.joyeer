@@ -55,10 +55,20 @@ public func trimDirectoryPath(path: String, windows: Bool): String {
     if hasDrivePrefix(path: path, windows: windows) && path.count >= 3 {
         if isPathSeparator(byte: path[2], windows: windows) { minimum = 3 }
     }
+
     var end = path.count
     while end > minimum {
         if !isPathSeparator(byte: path[end - 1], windows: windows) { break }
         end = end - 1
     }
     return substring(text: path, start: 0, end: end)
+}
+
+@platform(windows)
+public func normalizedAbsolutePath(path: String): Result<String, FileSystemError> {
+    let bytes = encodePath(path: path)?
+    return match windowsFullPath(path: bytes) {
+        .Ok(value) => .Ok(value),
+        .Err(code) => .Err(failure(code: code)),
+    }
 }

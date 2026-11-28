@@ -32,7 +32,15 @@ func main(args: [String]): Int {
     }
     if !waited { return 3 }
     if !match writeOwned() { .Ok(_) => true, .Err(_) => false, } { return 4 }
-    if retriesObserved() != 1 { return 4 }
+    if !match System.writeFileNew(path: "close-interrupted", contents: "") {
+        .Err(.Other(code)) => code == 4,
+        _ => false,
+    } { return 8 }
+    if !match System.writeFileNew(path: "write-and-close-fail", contents: "x") {
+        .Err(.Other(code)) => code == 28,
+        _ => false,
+    } { return 9 }
+    if retriesObserved() != 1 { return 10 }
     clockSample(sample: 1)
     if !match wallClockMilliseconds() { .Ok(value) => value == -1, _ => false, } { return 5 }
     clockSample(sample: 2)

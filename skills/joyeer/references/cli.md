@@ -199,8 +199,10 @@ one `bin` module, not tests. `--kind source|test` chooses another kind;
 `--output` overrides the default final-name-component artifact basename.
 Without test modules, `test` prints `0 tests`.
 
-Project commands require `--compiler <explicit path>`, with no PATH or sibling
-search. `--manifest-path <file>` defaults to `project.toml` in the invocation
+Project commands select the compiler from `--compiler <path>`, `JOYEER_COMPILER`,
+beside fern, then absolute `PATH` entries, in that order. An explicit override
+is used as given, with no fallback if it fails.
+`--manifest-path <file>` defaults to `project.toml` in the invocation
 directory, never an upward search. Alternatively, `--workspace <file>` loads
 explicit members; it is mutually exclusive with `--manifest-path`.
 `--module <logical-name>` selects a member for check/build/run/test.
@@ -209,10 +211,12 @@ explicit members; it is mutually exclusive with `--manifest-path`.
 Only `run/test` forward argv after `--`.
 Unknown/duplicate/incompatible flags and missing values are errors.
 
-Debug is `-O0 -gfull`; release is `-O2 -g0`. Modules rebuild serially into
+Debug is `-O0 -gfull` (`-gauto` for native output on macOS, where debug
+symbols require `dsymutil`); release is `-O2 -g0`. Modules rebuild serially into
 `target/<profile>/<logical-module>/build-1` through `build-128`, claimed
 exclusively. Previous generations are never reused after failure or deleted.
-No cache, registry, external local dependency, or nested workspace exists.
+Local source dependencies can use `path-dependencies`. There is no cache
+or registry.
 Compiler cwd is caller `.`; sources are owning-manifest-prefixed.
 Program/test cwd is the workspace directory or standalone module directory.
 There is no shell or output capture.

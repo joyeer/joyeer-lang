@@ -1,0 +1,3 @@
+// spec: 05-expressions.md §5.4.1
+struct Record { let value: Int }
+func project(record: Record?): Int? { return record?.value }

@@ -193,6 +193,15 @@ int hostMain(int argc, HostChar** argv) {
     if (argc == 4 && hostCompare(argv[1], HOST_TEXT("claim-run")) == 0)
         return claimRun(argv[2], argv[3]);
     if (argc != 3) return failure("action requires a path");
+    if (hostCompare(argv[1], HOST_TEXT("binary")) == 0) {
+        const unsigned char bytes[] = {'a', 0, 'b', 'c'};
+        FILE* file = hostOpen(argv[2], HOST_TEXT("wb"));
+        if (file == NULL) return failure("cannot open binary fixture");
+        const size_t written = fwrite(bytes, 1, sizeof(bytes), file);
+        const int closed = fclose(file);
+        if (written != sizeof(bytes) || closed != 0) return failure("cannot write binary fixture");
+        return 0;
+    }
 #ifdef _WIN32
     if (hostCompare(argv[1], HOST_TEXT("block-subdirectories")) == 0)
         return allowSubdirectories(argv[2], 0);

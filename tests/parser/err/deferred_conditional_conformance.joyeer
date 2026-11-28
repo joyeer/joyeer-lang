@@ -1,0 +1,4 @@
+// spec: 20-protocols.md §20.10
+protocol P {}
+struct Box<T> { let value: T }
+extension Box<T>: P where T: P {}

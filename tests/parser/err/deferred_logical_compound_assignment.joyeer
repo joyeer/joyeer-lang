@@ -1,0 +1,4 @@
+// spec: 05-expressions.md §5.3
+func update(flag: inout Bool) {
+    &flag &&= true
+}

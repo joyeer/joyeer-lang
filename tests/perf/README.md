@@ -55,6 +55,81 @@ be compared against a baseline on the same machine and configuration.
 Record the numbers in the decision or the pull request that changes the runtime, with the machine,
 the operating system and the build configuration.
 
+### R0 on Linux AArch64
+
+On 2026-11-28, on Oryon AArch64 under Ubuntu 26.04.1/WSL2, the `456b78d9` R0
+harness was compiled once with GCC 15.2 `-O2`, then linked against its C
+runtime (`runtime.c`, also `-O2`) and the `a362c88` Release Joyeer archive.
+Fifteen interleaved rounds pinned to CPU 3 reversed A/B order each round.
+Values are ns/op; medians and minima summarize the harness's best of seven
+repetitions per round. Every run exited successfully with a balanced allocator.
+
+| Benchmark | C median | Joyeer median | Ratio | C min | Joyeer min |
+|---|---:|---:|---:|---:|---:|
+| String equal, equal, 16 B | 2.04 | 2.02 | 0.99 | 2.01 | 2.01 |
+| String compare, last byte differs, 16 B | 2.51 | 2.26 | 0.90 | 2.51 | 2.25 |
+| String concat + destroy, 16 B | 16.15 | 14.87 | 0.92 | 16.12 | 14.81 |
+| String clone + destroy, 16 B | 16.19 | 14.63 | 0.90 | 16.12 | 14.42 |
+| String equal, equal, 1024 B | 13.49 | 13.21 | 0.98 | 13.36 | 13.10 |
+| String compare, last byte differs, 1024 B | 13.99 | 13.72 | 0.98 | 13.86 | 13.61 |
+| String concat + destroy, 1024 B | 41.96 | 41.00 | 0.98 | 41.80 | 40.64 |
+| String clone + destroy, 1024 B | 27.66 | 39.07 | 1.41 | 26.78 | 31.75 |
+| Array append, grow from empty (`Int`) | 3.28 | 7.10 | 2.16 | 3.27 | 7.03 |
+| Array clone + destroy, 1000 elements with callbacks | 1.78 | 2.03 | 1.14 | 1.78 | 2.03 |
+| Dictionary set, 1000 distinct `Int` keys | 386.90 | 758.60 | 1.96 | 386.80 | 758.50 |
+| Dictionary find, last of 1000 `Int` keys | 629.35 | 1506.45 | 2.39 | 629.25 | 1501.65 |
+
+This does not satisfy the 10% gate. AArch64 disassembly shows the candidate
+append includes a division for the explicit overflow precheck in `byteCount`,
+which the C baseline checks with multiply-high. It is a profiling lead, not
+proof that the precheck accounts for all the gaps. The Linux x86-64 and macOS
+ARM64 performance gates are separate.
+
+#### Collection hot-path follow-up
+
+A second run used the same `456b78d9` harness object for the C baseline,
+unchanged Joyeer runtime, and updated Joyeer runtime. All three ran for
+15 interleaved rounds pinned to CPU 3, reversing the run order every round.
+The dictionary scan checks the last entry address once and increments by
+stride; the integer-key path does not reload the search key on each iteration.
+Array append uses Joyeer's checked multiplication instead of a redundant
+division and copies eight-byte elements directly. No allocator changes or
+performance exceptions were used.
+
+| Benchmark | C median (ns/op) | Before | After | After / C |
+|---|---:|---:|---:|---:|
+| String clone + destroy, 1024 B | 34.17 | 48.85 | 38.93 | 1.14 |
+| Array append, grow from empty (`Int`) | 3.87 | 8.92 | 7.17 | 1.85 |
+| Array clone + destroy, 1000 elements with callbacks | 2.09 | 2.38 | 2.38 | 1.14 |
+| Dictionary set, 1000 distinct `Int` keys | 454.40 | 891.00 | 174.30 | 0.38 |
+| Dictionary find, last of 1000 `Int` keys | 743.20 | 1779.40 | 314.90 | 0.42 |
+
+Both dictionary rows now pass the gate. The other seven R0 rows remained
+within the gate, but the three slower rows above still fail it. Their minima
+also exceed the corresponding C minima by more than 10%.
+An exploratory Linux `mremap` fast path reduced the append cost further in
+quick runs, but it still exceeded the limit and did not improve either clone
+row. The shipped allocator was left unchanged.
+
+#### Array callback walk
+
+The same frozen harness was run again for 15 interleaved rounds pinned to
+CPU 3. The clone and reverse destroy loops now check address bounds once on
+their normal path. No append, allocator, or ABI changes from this experiment
+were retained.
+
+| Benchmark | C median (ns/op) | Before | After | After / C |
+|---|---:|---:|---:|---:|
+| String clone + destroy, 1024 B | 33.56 | 40.89 | 38.71 | 1.15 |
+| Array append, grow from empty (`Int`) | 3.87 | 7.55 | 7.67 | 1.98 |
+| Array clone + destroy, 1000 elements with callbacks | 2.09 | 2.38 | 1.80 | 0.86 |
+| Dictionary set, 1000 distinct `Int` keys | 454.30 | 174.80 | 177.10 | 0.39 |
+| Dictionary find, last of 1000 `Int` keys | 744.35 | 314.90 | 314.25 | 0.42 |
+
+Array clone/destroy now clears the 10% limit; both remaining misses
+also exceed their paired C minima. All seven other rows stayed within
+the limit in this run.
+
 ## Comparing two builds
 
 To reproduce the comparison for the merged library collection switch, use

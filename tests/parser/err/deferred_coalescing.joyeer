@@ -1,0 +1,2 @@
+// spec: 08-error-handling.md §8.5
+func orZero(value: Int?): Int { return value ?? 0 }

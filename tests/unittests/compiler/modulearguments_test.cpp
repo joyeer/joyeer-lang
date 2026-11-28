@@ -146,6 +146,46 @@ TEST(ModuleArgumentsTest, PreservesLegacySingleFileInput) {
     EXPECT_TRUE(arguments->sourceFiles.empty());
 }
 
+TEST(ModuleArgumentsTest, AcceptsRepeatedLogicalLibrariesAndSearchPathsForExecutables) {
+    Diagnostics diagnostics;
+    const auto arguments = parseArguments(diagnostics, {
+        "joyeer", source().string(), "--link-path", source().parent_path().string(),
+        "--link-lib", "first", "--link-lib", "second-v2.1",
+        "--link-path", source().parent_path().parent_path().string(), "-o", "native-test",
+    });
+    EXPECT_TRUE(arguments->accepted);
+    EXPECT_FALSE(diagnostics.hasFailure());
+    EXPECT_EQ(arguments->nativeSearchPaths, (std::vector{source().parent_path(),
+            source().parent_path().parent_path()}));
+    EXPECT_EQ(arguments->nativeLinkInputs, (std::vector<joyeer::NativeLinkInput>{
+            std::string("first"), std::string("second-v2.1")}));
+}
+
+TEST(ModuleArgumentsTest, RejectsInvalidLogicalLibrariesOrOutputMode) {
+    const auto directory = source().parent_path().string();
+    for (const auto& flags : std::vector<std::vector<std::string>> {
+            {"-o", "native-test", "--link-lib", "-lfoo"},
+            {"-o", "native-test", "--link-lib", "sub/file"},
+            {"-o", "native-test", "--link-lib", "name;other"},
+            {"-o", "native-test", "--link-path", source().string()},
+            {"--link-lib", "foo"},
+            {"--link-path", directory},
+            {"--emit-llvm", "native-test.ll", "--link-lib", "foo"},
+            {"--module-name", "native.test", "--runtime-module", "native.test",
+             "--emit-runtime-object", "native.o", "--link-lib", "foo"},
+        }) {
+        SCOPED_TRACE(testing::PrintToString(flags));
+        auto values = std::vector<std::string>{"joyeer", source().string()};
+        values.insert(values.end(), flags.begin(), flags.end());
+        Diagnostics diagnostics;
+        const auto arguments = parseArguments(diagnostics, values);
+        EXPECT_FALSE(arguments->accepted);
+        EXPECT_TRUE(std::any_of(diagnostics.errors.begin(), diagnostics.errors.end(), [](const auto& error) {
+            return error.code == "driver.native-library-error";
+        }));
+    }
+}
+
 TEST(ModuleArgumentsTest, CollectsExplicitNativeLibrariesAndProtectsTheirPaths) {
     Diagnostics diagnostics;
     const auto arguments = parseArguments(diagnostics, {

@@ -1,0 +1,3 @@
+func small(value: Int): Bool {
+    return match value { 0...9 => true, _ => false }
+}

@@ -27,6 +27,9 @@ if(JOYEER_BACKEND_TEST_HOOKS)
                 JOYEER_VERIFY_OPTIMIZED_IR
         )
 endif()
+if(JOYEER_SANITIZE_RUNTIME)
+        target_compile_definitions(JoyeerBackend PRIVATE JOYEER_SANITIZE_RUNTIME)
+endif()
 target_compile_options(JoyeerBackend PRIVATE
         ${JOYEER_LLVM_DEFINITIONS}
 )

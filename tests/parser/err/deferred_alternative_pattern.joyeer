@@ -1,0 +1,4 @@
+// spec: 07-patterns.md §7.2
+func small(value: Int): Bool {
+    return match value { 0, 1 => true, _ => false }
+}

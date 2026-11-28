@@ -1,0 +1,2 @@
+// spec: 05-expressions.md §5.2
+func advance(value: UInt8): UInt8 { return value &+ 1 }

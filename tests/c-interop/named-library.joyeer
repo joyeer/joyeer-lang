@@ -1,0 +1,6 @@
+@c_extern(symbol: "joyeer_named_library_value")
+private func namedValue(): Int32
+
+func main() {
+    print(value: namedValue())
+}

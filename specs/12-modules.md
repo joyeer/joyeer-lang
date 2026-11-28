@@ -171,11 +171,11 @@ required. The toolchain finds standard modules relative to the compiler itself,
 never through a search path, and a module supplied explicitly with the same
 name takes precedence (which is how the library itself is developed). The
 resolution mechanism is an implementation contract, described in
-[toolchain libraries](../docs/plan/0006-toolchain-libraries.md).
+[toolchain libraries](../docs/building.md#toolchain-library-layout).
 
 | Module | Provides |
 |---|---|
-| `Foundation` | Text helpers, UTF-8 validation, decimal formatting, checksums. No host access |
+| `Foundation` | Text helpers, UTF-8 validation, decimal formatting, CRC-32 and SHA-256. No host access |
 | `System` | The host operations of §18, target-platform detection, lexical path helpers, and message formatting for the host error types |
 | `Compression` | ZIP and JAR reading; optional, and backed by a native library |
 

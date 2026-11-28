@@ -38,9 +38,10 @@ struct LinkOptions {
     // Native compilation consumes objects directly; text remains a fallback
     // for standalone linker tests and explicit LLVM inspection workflows.
     std::shared_ptr<JoyeerBackendModule> module;
-    std::vector<std::filesystem::path> nativeLibraries;
+    std::vector<NativeLinkInput> nativeLinkInputs;
     // The program starts tasks: Linux links the thread library after the runtime archive group.
     bool usesThreads = false;
+    std::vector<std::filesystem::path> nativeSearchPaths;
 };
 
 struct LinkResult {
@@ -56,7 +57,8 @@ class Linker {
 public:
     [[nodiscard]] LinkResult emitObject(
             const std::string& llvmIR,
-            const LinkOptions& options) const;
+            const LinkOptions& options,
+            bool sanitizeRuntime = false) const;
     [[nodiscard]] LinkResult link(
             const std::string& llvmIR,
             bool hasEntryPoint,

@@ -1150,6 +1150,53 @@ TEST_F(ParserTest, ConsumesLexerErrorTokenWithoutParserCascade) {
     EXPECT_EQ(result.root->items[1]->kind, Kind::bindingDecl);
 }
 
+TEST_F(ParserTest, MutatedBytesProduceDiagnosticsOrABoundedSyntaxTree) {
+    const std::string seed =
+            "/* outer /* nested */ */\r\n"
+            "func parse(x: Int?): Int {\n"
+            "    let v = [0x12_34, b'\\n']\n"
+            "    let text = \"escaped\\\" quote\"\n"
+            "    return match x { .Some(n) => n, _ => v[0] }\n"
+            "}\n";
+    const auto check = [this](const std::string& text) {
+        parse(text, false);
+        ASSERT_FALSE(source->tokens.empty());
+        ASSERT_EQ(source->tokens.back()->kind, endOfFile);
+        EXPECT_EQ(source->tokens.back()->span.offset, text.size());
+        if (lexerDiagnostics.errors.empty() && result.diagnostics.empty()) {
+            ASSERT_NE(result.root, nullptr);
+            EXPECT_LE(static_cast<uint64_t>(result.root->span.offset) + result.root->span.length,
+                      text.size());
+            EXPECT_FALSE(joyeer::syntax::dump(result.root).empty());
+        }
+    };
+    check(seed);
+    ASSERT_TRUE(lexerDiagnostics.errors.empty());
+    ASSERT_TRUE(result.succeeded());
+
+    constexpr char bytes[] {'\0', '\x80', '\xff', '\n', '\r', '\\', '"', '\'', '/', '*', '<', '>'};
+    for (size_t offset = 0; offset <= seed.size(); ++offset) {
+        SCOPED_TRACE(offset);
+        check(seed.substr(0, offset));
+        if (offset < seed.size()) {
+            auto text = seed;
+            text.erase(offset, 1);
+            check(text);
+        }
+        for (const char byte : bytes) {
+            SCOPED_TRACE(static_cast<unsigned char>(byte));
+            auto text = seed;
+            text.insert(offset, 1, byte);
+            check(text);
+            if (offset < seed.size()) {
+                text = seed;
+                text[offset] = byte;
+                check(text);
+            }
+        }
+    }
+}
+
 TEST_F(ParserTest, TokenDeletionMutationsAlwaysTerminateWithinSourceBounds) {
     const std::string text = R"JOYEER(func f(x: Int): Int {
 let y = [x, 2]

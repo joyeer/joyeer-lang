@@ -1,0 +1,5 @@
+// spec: 03-declarations.md §3.7.1
+enum Mode {
+    On
+    deinit() {}
+}

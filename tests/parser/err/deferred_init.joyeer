@@ -1,0 +1,5 @@
+// spec: 03-declarations.md §3.7
+struct Counter {
+    let value: Int
+    init(value: Int) { self.value = value }
+}

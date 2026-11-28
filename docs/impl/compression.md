@@ -34,7 +34,7 @@ The repository-root workspace includes moss, which needs the staged module.
 
 The build stages the module into the compiler's standard library,
 `<compiler directory>/lib/Compression` (see
-[toolchain library resolution](../plan/0006-toolchain-libraries.md)), and lists it in
+[toolchain library layout](../building.md#toolchain-library-layout)), and lists it in
 `lib/index.toml`. `import Compression` then resolves with no flags, and the
 module's `native/` archive is linked only for programs that import it. In a
 fern workspace, declare `dependencies = ["Compression"]` without a member.

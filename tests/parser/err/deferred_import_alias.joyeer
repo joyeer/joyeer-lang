@@ -1,0 +1,4 @@
+// spec: 12-modules.md §12.3
+import System as OS
+
+func main() {}

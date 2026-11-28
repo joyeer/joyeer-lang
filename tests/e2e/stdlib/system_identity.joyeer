@@ -1,0 +1,48 @@
+// spec: 18-host.md §18.2
+import System
+
+func main(args: [String]): Int {
+    if args.count != 4 { return 1 }
+    let invalidArgument = if System.isWindows() { 87 } else { 22 }
+    let negative = match readIdentifiedFilePrefix(path: "", maximumBytes: -1) {
+        .Err(.Other(code)) => code == invalidArgument,
+        _ => false,
+    }
+    if !negative { return 2 }
+    let prefix = match readIdentifiedFilePrefix(path: args[0], maximumBytes: 3) {
+        .Ok(value) => value,
+        .Err(_) => { return 3 },
+    }
+    if prefix.contents != "a\0b" { return 4 }
+    let empty = match readIdentifiedFilePrefix(path: args[0], maximumBytes: 0) {
+        .Ok(value) => value,
+        .Err(_) => { return 5 },
+    }
+    if empty.contents != "" || empty.identity != prefix.identity { return 6 }
+    let other = match readIdentifiedFilePrefix(path: args[1], maximumBytes: 3) {
+        .Ok(value) => value,
+        .Err(_) => { return 7 },
+    }
+    if other.contents != prefix.contents || other.identity == prefix.identity { return 8 }
+    let rejected = match readIdentifiedFilePrefix(path: args[2], maximumBytes: 0) {
+        .Err(_) => true,
+        .Ok(_) => false,
+    }
+    if !rejected { return 9 }
+    let directory = match directoryIdentity(path: args[2]) {
+        .Ok(value) => value,
+        .Err(_) => { return 10 },
+    }
+    let alias = match directoryIdentity(path: args[2] + "/.") {
+        .Ok(value) => value,
+        .Err(_) => { return 11 },
+    }
+    if directory != alias || directory == prefix.identity { return 12 }
+    let special = match readIdentifiedFilePrefix(path: args[3], maximumBytes: 0) {
+        .Err(_) => true,
+        .Ok(_) => false,
+    }
+    if !special { return 13 }
+    print(value: "file identity passed")
+    return 0
+}

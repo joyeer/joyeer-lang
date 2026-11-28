@@ -1,0 +1,12 @@
+import System
+
+func main(args: [String]): Int {
+    if args.count != 2 { return 64 }
+    return match replaceFile(source: args[0], destination: args[1]) {
+        .Ok(_) => 0,
+        .Err(error) => {
+            print(value: fileSystemMessage(error: error))
+            return 65
+        },
+    }
+}

@@ -22,6 +22,22 @@ private let closeOnExec: Int = 524288
 private let createExclusive: Int = 193
 private let writeOnly: Int = 1
 
+@platform(linux)
+func nativeExecutableAccess(path: [UInt8]): Int {
+    var bytes = path
+    // faccessat(AT_FDCWD, path, X_OK), using real IDs like access(2).
+    return linuxCall(x86: 269, arm: 48, first: currentDirectory, second: addressOfBytes(bytes: &bytes),
+        third: 1, fourth: 0, fifth: 0, sixth: 0)
+}
+
+@platform(linux)
+func nativeReadLink(path: [UInt8], buffer: inout [UInt8]): Int {
+    var bytes = path
+    let capacity = buffer.count
+    return linuxCall(x86: 267, arm: 78, first: currentDirectory, second: addressOfBytes(bytes: &bytes),
+        third: addressOfBytes(bytes: &buffer), fourth: capacity, fifth: 0, sixth: 0)
+}
+
 // The kernel's O_DIRECTORY differs between architectures.
 @platform(linux)
 private func directoryFlag(): Int {
@@ -45,6 +61,31 @@ private func openPath(path: [UInt8], flags: Int, mode: Int): Int {
 @platform(linux)
 func nativeOpenRead(path: [UInt8]): Int {
     return openPath(path: path, flags: closeOnExec, mode: 0)
+}
+
+@platform(linux)
+func nativeOpenIdentity(path: [UInt8], directory: Bool): Int {
+    // O_PATH acquires a metadata handle without requiring directory listing access.
+    if directory { return openPath(path: path, flags: closeOnExec | directoryFlag() | 0x200000, mode: 0) }
+    let noFollow = if onArm() { 32768 } else { 131072 }
+    return openPath(path: path, flags: closeOnExec | noFollow | 2048, mode: 0)
+}
+
+@platform(linux)
+func nativeFileIdentity(handle: Int, directory: Bool): Result<FileIdentity, FileSystemError> {
+    var path: [UInt8] = [0]
+    var info = zeroBuffer(count: statxBufferSize)
+    // AT_EMPTY_PATH asks statx to inspect the open descriptor, not the path.
+    let status = linuxCall(x86: 332, arm: 291, first: handle, second: addressOfBytes(bytes: &path),
+        third: 4096, fourth: 257, fifth: addressOfBytes(bytes: &info), sixth: 0)
+    if kernelFailed(outcome: status) { return .Err(failure(code: 0 - status)) }
+    let isExpected = modeKind(mode: halfWord(bytes: info, offset: 28)) == (if directory { 1 } else { 0 })
+    if !isExpected || (hostWord(bytes: info, offset: 0) & 257) != 257 {
+        return .Err(.Other(invalidInputCode()))
+    }
+
+    return .Ok(FileIdentity(volume: hostWord(bytes: info, offset: 136),
+        low: hostWord(bytes: info, offset: 32), high: 0))
 }
 
 @platform(linux)
@@ -82,6 +123,15 @@ func nativeClose(handle: Int): Int {
         sixth: 0)
     if kernelFailed(outcome: outcome) { return outcome }
     return 0
+}
+
+@platform(linux)
+func nativeReplaceFile(source: [UInt8], destination: [UInt8]): Int {
+    var from = source
+    var to = destination
+    // renameat: do not fall back to copying across filesystems.
+    return linuxCall(x86: 264, arm: 38, first: currentDirectory, second: addressOfBytes(bytes: &from),
+        third: currentDirectory, fourth: addressOfBytes(bytes: &to), fifth: 0, sixth: 0)
 }
 
 // mkdirat(AT_FDCWD, path, 0777)

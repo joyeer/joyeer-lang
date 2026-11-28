@@ -1,7 +1,8 @@
 # 0008: Runtime in Joyeer
 
-- Status: in progress (updated 2026-11-27). The runtime is Joyeer; what is open is platform
-  evidence, the R0 performance gate and the macOS `System` stdio imports.
+- Status: blocked (updated 2026-11-28). The remaining gates are the R0 performance
+  comparisons and native macOS verification of the `System` descriptor path. The available
+  Windows and WSL hosts are ARM64; two Linux AArch64 R0 rows exceed the limit.
 - Decisions: [0005](../decisions/0005-runtime-unsafe-memory.md),
   [0008](../decisions/0008-runtime-core-build-shape.md),
   [0009](../decisions/0009-runtime-core-capabilities.md),
@@ -52,10 +53,10 @@ Platform results so far:
 - macOS ARM64: at `5c21924e` (LLVM 22.1.8, SDK 26.5), Debug and Release each passed CTest
   2230/2230 and `fern test` 7/7 without reruns, and
   [relocated installs](../impl/fern.md#macos-arm64-toolchain-validation) ran `hello`. The
-  runtime archive imports only libSystem. Linked `System` programs still import stdio (below).
-- Windows ARM64 and Linux AArch64: not run. The code paths exist
-  (`memory_windows_arm64.joyeer`, AArch64 system-call numbers, the AArch64 startup imports in
-  `tests/unittests/runtime/CMakeLists.txt`).
+  runtime archive imports only libSystem. The linked `System` stdio imports found then are the
+  baseline for Phase 2 below.
+- Windows ARM64 and Linux AArch64 (WSL2): [Debug and Release passed at `a362c88`](../building.md#toolchain-library-layout),
+  with the runtime archive, own-entry, and system import checks enabled.
 
 R0 benchmark (`cmake --build <dir> --target runtime-benchmark`, method in
 [tests/perf](../../tests/perf/README.md#comparing-two-builds)). The C runtime is frozen at
@@ -95,7 +96,11 @@ R0 benchmark (`cmake --build <dir> --target runtime-benchmark`, method in
   takes 6.26 ns/op, while Joyeer's equality, at a luckier address, takes 5.63. Rows under about
   10 ns can move by about 0.6 ns with placement alone, so compare them across placements before
   calling a gap real.
-- Linux: no same-host Joyeer against C comparison recorded.
+- Linux AArch64 (WSL2): [same-host R0 results](../../tests/perf/README.md#r0-on-linux-aarch64)
+  cover the original and updated runtime. Dictionary set and find and array
+  clone/destroy now beat C; array append and 1024-byte string clone/destroy
+  still exceed the limit.
+  This is diagnostic evidence, not the Linux x86-64 gate.
 
 ## Todo
 
@@ -104,6 +109,7 @@ R0 benchmark (`cmake --build <dir> --target runtime-benchmark`, method in
 - [ ] Profile `joyeer_array_append_owned_abi`, `joyeer_dictionary_set_owned_abi` and
   `joyeer_dictionary_find_abi` on macOS ARM64, fix the cause, and remeasure against `456b78d9`
   (§ Current state). Done when each row is within 10% or an exception is accepted.
+  blocked: macOS ARM64 host; no performance exception accepted.
 - [x] Run the same-host R0 comparison on Windows x64 and record every row here. Evidence:
   the Windows x64 table under Current state (2026-11-27, `00b245a3`).
 - [x] Explain the 16-byte unequal string compare gap on Windows x64 (6.26 against 5.32 ns/op).
@@ -112,37 +118,57 @@ R0 benchmark (`cmake --build <dir> --target runtime-benchmark`, method in
 - [ ] Check the macOS ARM64 16-byte unequal compare (2.49 against 2.26, near the limit) across
   function placements the same way. blocked: macOS ARM64 host.
 - [ ] Run the same-host R0 comparison on Linux x86-64 and record every row here.
+  blocked: an x86-64 Linux host is needed; the available WSL2 host is AArch64.
+- [x] Optimize dictionary set and find on Linux AArch64. At `-O2`, their median ratios against C
+  are 0.38 and 0.42, respectively, in the [same-host follow-up](../../tests/perf/README.md#collection-hot-path-follow-up).
+- [x] Optimize array clone/destroy on Linux AArch64. The checked callback walks
+  preserve ordering and zero-stride behavior; the [15-round comparison](../../tests/perf/README.md#array-callback-walk)
+  measured 1.80 ns/op versus 2.09 for C (0.86).
+- [ ] Resolve the two remaining Linux AArch64 R0 regressions or document an accepted exception:
+  array append (1.98) and 1024-byte string clone/destroy (1.15).
 
 ### Phase 2: macOS `System` without stdio
 
 - [ ] Move the macOS file primitives in [filesystem_posix.joyeer](../../lib/System/filesystem_posix.joyeer)
-  from stdio streams to libSystem `open`/`read`/`write`/`close` file descriptors
-  (`legacy_file.joyeer` reaches stdio only through them). blocked: needs a macOS ARM64 host to verify. At
-  `5c21924e` stdio appeared at `-O0` in the `filesystem`, `process`, `read_file` and
-  `stdin_lines` import fixtures, and at `-O2` in `filesystem` and `read_file`.
+  from stdio to libSystem file descriptors. Implemented with fixed-signature `openx_np`,
+  `read`, `write`, and `close` for the whole-file, owned, and legacy APIs. The cross-target
+  module-service test failed on the seven stdio imports before the change and passed after.
+  blocked: native macOS ARM64 error and interrupted-transfer checks have not run.
 - [ ] Add a macOS `System` import gate that forbids stdio, like the Linux one, and pass it in
-  Debug and Release. blocked: macOS ARM64 host.
+  Debug and Release. `RuntimeSystemProgramHasNoStdio_*` is registered at `-O0` and `-O2`;
+  synthetic Mach-O checks accepted `write` and rejected both `fopen` and `tmpfile`. blocked: macOS ARM64
+  link/run of the four Joyeer fixtures. At `5c21924e` those fixtures imported stdio at `-O0`,
+  and `filesystem` and `read_file` also did so at `-O2`.
 
 ### Phase 3: Remaining platforms
 
-- [ ] Windows ARM64: full validation in Debug and Release, and the Tier 2 import gates
-  (own-entry link through the kernel32 memory wrappers). blocked: no Windows ARM64 host.
-- [ ] Linux AArch64: full validation in Debug and Release, and
-  `RuntimeSystemProgramNeedsOnlyTheCStartup_*` with the AArch64 startup imports. blocked: no
-  Linux AArch64 host.
-- [ ] Linux: record checks of the `statx` and `getdents64` layouts against the kernel headers,
-  on x86-64 and AArch64.
-- [ ] Linux and Windows: record child-environment and exact error-code evidence for `System`
-  process and file operations, as the macOS run did.
-- [ ] Record the minimum Linux kernel and glibc versions the system-call and startup paths
-  need, in [building](../building.md).
+- [x] Windows ARM64: full Debug and Release validation at `a362c88`, including
+  `RuntimeWindowsMemoryObjectSymbols`, `RuntimeOwnEntryImportsOnlySystemFunctions`, and
+  `RuntimeSystemProgramHasNoCRuntime_*`. After this iteration's changes, 2266 Debug and
+  2265 Release CTests and both 7/7 `fern test` runs passed. An earlier concurrent Debug run
+  timed out in three cases; all three passed in isolation and the three-worker full run
+  completed without retries.
+- [x] Linux AArch64 (WSL2): full Debug and Release validation at `a362c88`, including
+  `RuntimeSystemProgramNeedsOnlyTheCStartup_*` and the four AArch64 startup rejection cases;
+  after this iteration's changes the full suites passed again (2241 Debug, 2240 Release,
+  and 7/7 `fern test` in each, without reruns).
+- [x] Linux: checked `statx` and `getdents64` layouts against the kernel headers for x86-64 and
+  AArch64; see the [layout evidence](../impl/runtime.md#linux-filesystem-layout).
+- [x] Linux and Windows: record child-environment and exact error-code evidence for `System`
+  process and file operations. `E2ESynchronousProcess*` and `E2EPortableFilesystem*` passed
+  with exact assertions on native Windows ARM64 and Linux AArch64 (WSL2) in both build
+  configurations; see [host operations](../impl/runtime.md#host-operations).
+- [x] Document the [Linux 4.11 syscall floor and glibc startup requirements](../building.md#configure-build-and-test),
+  distinguishing the glibc used at link time from the compiler host's requirements.
 
 ## Open questions
 
-- Whether WSL2 counts as native Linux x86-64 evidence. The recorded Linux runs all used it.
-- Whether to accept a performance exception for the legacy collection ABI instead of tuning it,
-  since generated code now reaches collections through the library `Array` and `Dict`
-  ([decision 0026](../decisions/0026-library-array.md)). Record the answer in decision 0011.
+- WSL2 evidence is recorded for the host CPU architecture; it does not prove behavior
+  on a bare-metal Linux kernel or another architecture.
+- Whether to accept a performance exception for any collection row rather than tuning it.
+  The library `Array` and `Dict` still call these ABI functions, so the move to library
+  declarations alone does not justify an exception. Record any accepted exception in
+  decision 0011.
 
 ## Out of scope
 
@@ -154,6 +180,18 @@ R0 benchmark (`cmake --build <dir> --target runtime-benchmark`, method in
 
 ## Progress log
 
+- 2026-11-28: Hoisted array callback address checks out of the usual clone and
+  destroy loops. Verified the callback order, zero-stride behavior, and
+  overflow traps; array clone/destroy now passes the AArch64 R0 gate. Did not
+  retain the experimental append or allocator changes.
+- 2026-11-28: Hoisted the dictionary scan bounds and removed a redundant
+  division from array offsets. The 15-round AArch64 comparison closed the two
+  dictionary rows; three rows are still above the gate. Windows and WSL ARM64
+  full Debug/Release suites and the collection bounds regressions passed.
+- 2026-11-28: Closed the Windows ARM64 and Linux AArch64 functional gates, checked the
+  Linux kernel layouts and exact host errors, and documented kernel/CRT requirements.
+  Moved macOS file I/O to descriptors and added the native import gate; actual macOS
+  execution remains open. The AArch64 R0 run found performance gaps, not x86-64 evidence.
 - 2026-11-27: Ran the Windows x64 R0 comparison. Strings, arrays and dictionaries are within
   the gate or faster, except the 16-byte unequal string compare (1.18). A placement sweep showed
   that gap is the C function's lucky 64-byte alignment (1.05 otherwise); split the macOS check

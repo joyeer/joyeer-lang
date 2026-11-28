@@ -199,24 +199,29 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
                     "unsupported optimization level '%s'; expected -O0, -O1, -O2, or -O3",
                     iterator->c_str());
         } else if (parseOptions && *iterator == "-g0") {
+            automaticDebug = false;
             debugInfo.emitLineTables = false;
             debugInfo.emitVariables = false;
         } else if (parseOptions && (*iterator == "-g" || *iterator == "-gline-tables-only")) {
+            automaticDebug = false;
             debugInfo.emitLineTables = true;
             debugInfo.emitVariables = false;
-        } else if (parseOptions && *iterator == "-gfull") {
+        } else if (parseOptions && (*iterator == "-gfull" || *iterator == "-gauto")) {
+            automaticDebug = *iterator == "-gauto";
             debugInfo.emitLineTables = true;
             debugInfo.emitVariables = true;
         } else if (parseOptions && *iterator == "-gdwarf") {
+            automaticDebug = false;
             debugInfo.emitLineTables = true;
             debugInfo.format = joyeer::DebugInfoFormat::dwarf;
         } else if (parseOptions && *iterator == "-gcodeview") {
+            automaticDebug = false;
             debugInfo.emitLineTables = true;
             debugInfo.format = joyeer::DebugInfoFormat::codeView;
         } else if (parseOptions && iterator->starts_with("-g")) {
             diagnostics->reportError(
                     ErrorLevel::failure,
-                    "unsupported debug option '%s'; expected -g0, -g, -gline-tables-only, -gfull, -gdwarf, or -gcodeview",
+                    "unsupported debug option '%s'; expected -g0, -g, -gline-tables-only, -gfull, -gauto, -gdwarf, or -gcodeview",
                     iterator->c_str());
         } else if (parseOptions && (*iterator == "--module-root" || *iterator == "--module")) {
             diagnostics->reportError(
@@ -283,7 +288,31 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
             }
             std::filesystem::path path;
             if (parseUtf8Path(diagnostics, *iterator, path, "driver.native-library-error")) {
-                nativeLibraries.push_back(absoluteNormalized(path));
+                path = absoluteNormalized(path);
+                nativeLibraries.push_back(path);
+                nativeLinkInputs.emplace_back(std::move(path));
+            }
+        } else if (parseOptions && (*iterator == "--link-lib" || *iterator == "--link-path")) {
+            const auto option = *iterator++;
+            if (iterator == arguments.end() || iterator->empty() || iterator->starts_with('-')) {
+                diagnostics->reportDiagnostic(ErrorLevel::failure, "driver.native-library-error",
+                        option + " requires a nonempty value, not an option");
+                if (iterator == arguments.end()) break;
+                if (!iterator->empty()) --iterator;
+                continue;
+            }
+            if (option == "--link-lib") {
+                if (!joyeer::isNativeLibraryName(*iterator)) {
+                    diagnostics->reportDiagnostic(ErrorLevel::failure, "driver.native-library-error",
+                            "--link-lib requires a logical name starting with an ASCII letter or digit");
+                } else {
+                    nativeLinkInputs.emplace_back(*iterator);
+                }
+            } else {
+                std::filesystem::path path;
+                if (parseUtf8Path(diagnostics, *iterator, path, "driver.native-library-error")) {
+                    nativeSearchPaths.push_back(absoluteNormalized(path));
+                }
             }
         } else if (parseOptions && *iterator == "--print-sysroot") {
             printSysroot = true;
@@ -337,7 +366,8 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
                 }
             }
         } else if (parseOptions && (*iterator == "--emit-llvm" || *iterator == "-o" ||
-                                   *iterator == "--emit-runtime-object")) {
+                                   *iterator == "--emit-runtime-object" ||
+                                   *iterator == "--emit-asan-runtime-object")) {
             const auto option = *iterator;
             ++iterator;
             if (iterator == arguments.end()) {
@@ -356,9 +386,16 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
                 --iterator;
                 continue;
             }
+            sanitizeRuntimeObject = option == "--emit-asan-runtime-object";
+#if !defined(JOYEER_SANITIZE_RUNTIME)
+            if (sanitizeRuntimeObject) {
+                diagnostics->reportDiagnostic(ErrorLevel::failure, "driver.runtime-sanitizer-unavailable",
+                        "--emit-asan-runtime-object requires a JOYEER_SANITIZE_RUNTIME test build");
+            }
+#endif
             outputMode = option == "--emit-llvm"
                     ? OutputMode::llvmIR
-                    : option == "--emit-runtime-object"
+                    : option == "--emit-runtime-object" || sanitizeRuntimeObject
                             ? OutputMode::runtimeObject
                             : OutputMode::executable;
             if (iterator->empty()) {
@@ -429,13 +466,31 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
         (moduleName.empty() || std::find(runtimeModules.begin(), runtimeModules.end(), moduleName) ==
                                       runtimeModules.end())) {
         diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-runtime-context",
-                "--emit-runtime-object requires the named root in --runtime-module");
+                "runtime object output requires the named root in --runtime-module");
+    }
+    if (sanitizeRuntimeObject &&
+        std::find(coreModules.begin(), coreModules.end(), moduleName) == coreModules.end()) {
+        diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-runtime-context",
+                "--emit-asan-runtime-object requires the named root in --runtime-core-module");
     }
     for (const auto& library : nativeLibraries) {
         std::error_code error;
         if (!std::filesystem::is_regular_file(library, error) || error) {
             diagnostics->reportDiagnostic(ErrorLevel::failure, "driver.native-library-error",
                     "native library must be a regular file: '" + pathUtf8(library) + "'");
+        }
+    }
+    if (outputMode != OutputMode::executable &&
+        (!nativeSearchPaths.empty() || std::any_of(nativeLinkInputs.begin(), nativeLinkInputs.end(),
+                [](const auto& input) { return std::holds_alternative<std::string>(input); }))) {
+        diagnostics->reportDiagnostic(ErrorLevel::failure, "driver.native-library-error",
+                "--link-lib and --link-path require executable output (-o)");
+    }
+    for (const auto& directory : nativeSearchPaths) {
+        std::error_code error;
+        if (!std::filesystem::is_directory(directory, error) || error) {
+            diagnostics->reportDiagnostic(ErrorLevel::failure, "driver.native-library-error",
+                    "native search path must be a directory: '" + pathUtf8(directory) + "'");
         }
     }
     for (size_t index = 0; index < inputs.size(); ++index) {
@@ -499,22 +554,28 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
 
 void CommandLineArguments::printUsage() {
     std::cout << "Module usage: joyeer --module-name <name> <source>... [--module-source <name=file>]... [output options]" << std::endl;
-    std::cout << "Usage: joyeer [-O0|-O1|-O2|-O3] [-g0|-g|-gline-tables-only|-gfull|-gdwarf|-gcodeview] [--emit-llvm <file>|-o <file>] <inputfile>" << std::endl;
+    std::cout << "Usage: joyeer [-O0|-O1|-O2|-O3] [-g0|-g|-gline-tables-only|-gfull|-gauto|-gdwarf|-gcodeview] [--emit-llvm <file>|-o <file>] <inputfile>" << std::endl;
     std::cout << "  --emit-llvm <file>  write textual LLVM IR" << std::endl;
     std::cout << "  -o <file>           write a native executable" << std::endl;
     std::cout << "  --module-name <name> name the root compilation unit of explicit source files" << std::endl;
     std::cout << "  --module-source <name=file> add a file to a dependency module (repeatable)" << std::endl;
     std::cout << "  --runtime-module <name> authorize one explicit unit for internal runtime bindings (repeatable)" << std::endl;
     std::cout << "  --link-library <file> link an explicit native library in supplied order (repeatable)" << std::endl;
+    std::cout << "  --link-lib <name> link a native library by logical name (repeatable, requires -o)" << std::endl;
+    std::cout << "  --link-path <dir> search a native library directory (repeatable, requires -o)" << std::endl;
     std::cout << "  --sysroot <dir>      toolchain root whose lib/ holds the standard modules (default: the compiler's directory)" << std::endl;
     std::cout << "  --print-sysroot      print the toolchain root and exit" << std::endl;
     std::cout << "  --no-stdlib          do not resolve imports from the toolchain's standard modules" << std::endl;
     std::cout << "  --report-instantiations print generic instances, their requiring calls and unoptimized IR sizes" << std::endl;
     std::cout << "  --emit-runtime-object <file> write an internal runtime object without startup or linking" << std::endl;
+#if defined(JOYEER_SANITIZE_RUNTIME)
+    std::cout << "  --emit-asan-runtime-object <file> write an AddressSanitizer runtime core object for a test harness" << std::endl;
+#endif
     std::cout << "  -O0|-O1|-O2|-O3    native optimization level (default: -O2)" << std::endl;
     std::cout << "  -g0                  disable debug line tables (default)" << std::endl;
     std::cout << "  -g|-gline-tables-only emit source line tables using the platform format" << std::endl;
     std::cout << "  -gfull               emit line tables plus source variables and physical types" << std::endl;
+    std::cout << "  -gauto               like -gfull, but permit macOS native output without dsymutil" << std::endl;
     std::cout << "  -gdwarf              emit DWARF 4 line tables" << std::endl;
     std::cout << "  -gcodeview           emit Windows CodeView line tables" << std::endl;
 }

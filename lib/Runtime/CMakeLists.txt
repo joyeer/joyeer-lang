@@ -112,3 +112,21 @@ set_target_properties(JoyeerRuntime PROPERTIES
         JOYEER_THREADS_OBJECT "${JOYEER_RUNTIME_THREADS_OBJECT}"
         JOYEER_CHANNELS_OBJECT "${JOYEER_RUNTIME_CHANNELS_OBJECT}")
 set_target_properties(JoyeerRuntime PROPERTIES LINKER_LANGUAGE C)
+
+if(JOYEER_SANITIZE_RUNTIME)
+    set(sanitized_core "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/runtime-core-asan${CMAKE_C_OUTPUT_EXTENSION}")
+    add_custom_command(
+        OUTPUT "${sanitized_core}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+        COMMAND "$<TARGET_FILE:joyeer>"
+            --module-name runtime.core --runtime-core-module runtime.core
+            "$<IF:$<CONFIG:Debug>,-O0,-O2>" -gfull
+            --emit-asan-runtime-object "${sanitized_core}" -- ${JOYEER_RUNTIME_CORE_SOURCES}
+        DEPENDS joyeer JoyeerBackend ${JOYEER_RUNTIME_CORE_SOURCES}
+        COMMENT "Compiling the Joyeer runtime core with AddressSanitizer"
+        VERBATIM)
+    set_source_files_properties("${sanitized_core}" PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
+    add_library(JoyeerAsanRuntime STATIC "${sanitized_core}")
+    set_target_properties(JoyeerAsanRuntime PROPERTIES LINKER_LANGUAGE C)
+    target_include_directories(JoyeerAsanRuntime PUBLIC ${JOYEER_RUNTIME_INCLUDE_DIR})
+endif()

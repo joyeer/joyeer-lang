@@ -58,6 +58,25 @@ add_custom_target(FernAcceptanceTools ALL
         ${fern_input_writer_sources})
 add_dependencies(FernAcceptanceTools fern)
 add_dependencies(FernAcceptanceTools FernHostFixture)
+add_dependencies(FernAcceptanceTools CInteropNamedLibrary)
+
+if(Python3_Interpreter_FOUND AND NOT WIN32)
+    set(publication_fixture "${fern_test_bin}/file-publication${CMAKE_EXECUTABLE_SUFFIX}")
+    add_custom_command(
+        OUTPUT "${publication_fixture}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${fern_test_bin}"
+        COMMAND "$<TARGET_FILE:joyeer>" -O2 -g0 -o "${publication_fixture}"
+            -- "${fern_fixture_dir}/file-publication.joyeer"
+        DEPENDS joyeer JoyeerBackend JoyeerRuntime "${JOYEER_STDLIB_STAMP}"
+            "${fern_fixture_dir}/file-publication.joyeer"
+        VERBATIM)
+    add_custom_target(FernPublicationFixture ALL DEPENDS "${publication_fixture}")
+    add_dependencies(FernAcceptanceTools FernPublicationFixture)
+    add_test(NAME System.ConcurrentFilePublication
+        COMMAND "${Python3_EXECUTABLE}" "${JOYEER_TESTS_DIR}/scripts/verify_file_publication.py"
+            "${publication_fixture}")
+    set_tests_properties(System.ConcurrentFilePublication PROPERTIES LABELS "system;native" TIMEOUT 30)
+endif()
 
 function(fern_add_acceptance name script labels timeout)
     add_test(NAME "Fern.${name}"
@@ -78,6 +97,10 @@ function(fern_add_acceptance name script labels timeout)
             "-DRUNTIME_ROOT_FILE_NAMES=$<TARGET_FILE_NAME:joyeer>;$<TARGET_FILE_NAME:JoyeerBackend>"
             "-DRUNTIME_ARCHIVE_NAME=$<TARGET_FILE_NAME:JoyeerRuntime>"
             "-DJOYEER_BUILD_COMPRESSION=${JOYEER_BUILD_COMPRESSION}"
+            "-DJOYEER_BUILD_MOSS=${JOYEER_BUILD_MOSS}"
+            "-DJOYEER_SOURCE_DIR=${JOYEER_SOURCE_DIR}"
+            "-DNAMED_NATIVE_PROVIDER=$<TARGET_FILE:CInteropNamedLibrary>"
+            "-DNAMED_NATIVE_FIXTURE=${JOYEER_SOURCE_DIR}/tests/c-interop/named-library.joyeer"
             "-DLICENSE_SOURCE=${JOYEER_SOURCE_DIR}/LICENSE"
             "-DFIXTURE_DIR=${fern_fixture_dir}"
             "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/runs/${name}"
@@ -89,11 +112,13 @@ function(fern_add_acceptance name script labels timeout)
 endfunction()
 
 fern_add_acceptance(Cli verifyCli.cmake "cli" 90)
+fern_add_acceptance(CompilerDiscovery verifyCompilerDiscovery.cmake "cli;filesystem;compiler" 120)
 fern_add_acceptance(Init verifyInit.cmake "cli;filesystem" 120)
 fern_add_acceptance(Manifest verifyManifest.cmake "manifest" 180)
 fern_add_acceptance(ManifestLimits verifyManifestLimits.cmake "manifest;logic;limits" 240)
 fern_add_acceptance(Plans verifyPlans.cmake "planner" 180)
 fern_add_acceptance(Workspace verifyWorkspace.cmake "workspace;manifest;planner" 240)
+fern_add_acceptance(LocalDependencies verifyLocalDependencies.cmake "workspace;manifest;filesystem" 240)
 fern_add_acceptance(Workflow verifyFern.cmake "compiler;filesystem;process" 300)
 fern_add_acceptance(TestRunner verifyTestRunner.cmake "compiler;process" 300)
 fern_add_acceptance(Unicode verifyUnicode.cmake "compiler;process;unicode" 180)

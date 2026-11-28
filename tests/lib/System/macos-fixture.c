@@ -1,10 +1,10 @@
 #include <dirent.h>
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <spawn.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
@@ -14,6 +14,8 @@
 
 // The Joyeer bindings use these offsets and buffers instead of C struct types.
 _Static_assert(offsetof(struct stat, st_mode) == 4 && sizeof(mode_t) == 2, "lstat mode layout");
+_Static_assert(offsetof(struct stat, st_dev) == 0 && sizeof(dev_t) == 4 &&
+               offsetof(struct stat, st_ino) == 8 && sizeof(ino_t) == 8, "fstat identity layout");
 _Static_assert(sizeof(struct stat) <= 256 && _Alignof(struct stat) <= 8, "lstat buffer");
 _Static_assert(offsetof(struct dirent, d_name) == 21, "readdir_r name layout");
 _Static_assert(sizeof(struct dirent) <= 2048 && _Alignof(struct dirent) <= 8, "readdir_r buffer");
@@ -26,64 +28,120 @@ _Static_assert(sizeof(struct timespec) == 16 && offsetof(struct timespec, tv_nse
 
 static const char payload[] = "retry-data";
 enum { payload_size = sizeof(payload) - 1 };
-static int read_calls, read_offset, write_calls, write_offset, wait_calls;
-static FILE *reader, *writer;
-static int owned_descriptor = -1;
-static int descriptor_calls, descriptor_offset;
+struct transfer {
+    int calls;
+    size_t offset;
+};
+static struct transfer reader, writer, owned_writer;
+static struct transfer *active;
+static int test_descriptor = -1;
+static int read_open_calls, wait_calls;
 
-static int read_stream(void *cookie, char *bytes, int count) {
-    (void)cookie;
-    ++read_calls;
-    if (read_calls == 1 || read_calls == 3) {
-        errno = EINTR;
-        return -1;
-    }
-    if (ferror(reader)) {
-        errno = EIO;
-        return -1;
-    }
-    if (read_calls == 2 && count > 3) count = 3;
-    if (count > payload_size - read_offset) count = payload_size - read_offset;
-    memcpy(bytes, payload + read_offset, (size_t)count);
-    read_offset += count;
-    return count;
-}
+// Make a real close release the descriptor and report EINTR. Retrying or not
+// closing at all must be distinguishable from closing exactly once.
+static int close_calls, failed_close_calls;
+static int closing_descriptor = -1;
 
-static int write_stream(void *cookie, const char *bytes, int count) {
-    (void)cookie;
-    ++write_calls;
-    if (write_calls == 1 || write_calls == 3) {
-        errno = EINTR;
-        return -1;
-    }
-    if (write_calls == 2 && count > 3) count = 3;
-    if (ferror(writer) || count > payload_size - write_offset ||
-            memcmp(bytes, payload + write_offset, (size_t)count) != 0) {
-        errno = EIO;
-        return -1;
-    }
-    write_offset += count;
-    return count;
-}
-
-// Only this test executable substitutes fopen and waitpid. The FILE operations
-// themselves are libSystem, so ferror and clearerr see a real stream.
-FILE *fopen(const char *restrict path, const char *restrict mode) {
-    if (strcmp(path, "interrupted-read") == 0 && strcmp(mode, "rb") == 0) {
-        reader = funopen(NULL, read_stream, NULL, NULL, NULL);
-        return reader;
-    }
-    if (strcmp(path, "interrupted-write") == 0 && strcmp(mode, "wbx") == 0) {
-        writer = funopen(NULL, NULL, write_stream, NULL, NULL);
-        if (writer != NULL && setvbuf(writer, NULL, _IONBF, 0) != 0) {
-            fclose(writer);
-            errno = EIO;
-            return NULL;
+int openx_np(const char *path, int flags, filesec_t security) {
+    if (strcmp(path, "interrupted-read") == 0) {
+        if (flags != (O_CLOEXEC | O_RDONLY) || security != NULL) {
+            errno = EINVAL;
+            return -1;
         }
-        return writer;
+        if (read_open_calls++ == 0) {
+            errno = EINTR;
+            return -1;
+        }
+        active = &reader;
+        test_descriptor = open("/dev/null", O_CLOEXEC | O_RDONLY);
+        return test_descriptor;
     }
-    errno = ENOENT;
-    return NULL;
+
+    mode_t mode = 0;
+    if (flags != (O_CLOEXEC | O_CREAT | O_EXCL | O_WRONLY) ||
+        security == NULL || filesec_get_property(security, FILESEC_MODE, &mode) != 0 || mode != 0666) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (strcmp(path, "close-interrupted") == 0 || strcmp(path, "write-and-close-fail") == 0) {
+        active = NULL;
+        test_descriptor = open("/dev/null", O_CLOEXEC | O_WRONLY);
+        closing_descriptor = test_descriptor;
+        return test_descriptor;
+    } else if (strcmp(path, "interrupted-write") == 0) {
+        active = &writer;
+    } else if (strcmp(path, "owned-interrupted-write") == 0) {
+        active = &owned_writer;
+    } else {
+        errno = ENOENT;
+        return -1;
+    }
+    test_descriptor = open("/dev/null", O_CLOEXEC | O_WRONLY);
+    return test_descriptor;
+}
+
+// An interrupted call makes no progress; a short successful call does.
+static ssize_t transfer_count(struct transfer *state, size_t count) {
+    ++state->calls;
+    if (state->calls == 1 || state->calls == 3) {
+        errno = EINTR;
+        return -1;
+    }
+    if (state->calls == 2 && count > 3) count = 3;
+    return (ssize_t)count;
+}
+
+ssize_t read(int descriptor, void *bytes, size_t count) {
+    if (descriptor != test_descriptor || active != &reader) {
+        struct iovec part = { .iov_base = bytes, .iov_len = count };
+        return readv(descriptor, &part, 1);
+    }
+    const size_t remaining = payload_size - reader.offset;
+    const ssize_t taken = transfer_count(&reader, count < remaining ? count : remaining);
+    if (taken >= 0) {
+        memcpy(bytes, payload + reader.offset, (size_t)taken);
+        reader.offset += (size_t)taken;
+    }
+    return taken;
+}
+
+ssize_t write(int descriptor, const void *bytes, size_t count) {
+    if (descriptor == closing_descriptor && descriptor >= 0) {
+        errno = ENOSPC;
+        return -1;
+    }
+    if (descriptor != test_descriptor || (active != &writer && active != &owned_writer)) {
+        struct iovec part = { .iov_base = (void *)bytes, .iov_len = count };
+        return writev(descriptor, &part, 1);
+    }
+    const ssize_t taken = transfer_count(active, count);
+    if (taken < 0) return taken;
+    if ((size_t)taken > payload_size - active->offset ||
+        memcmp(bytes, payload + active->offset, (size_t)taken) != 0) {
+        errno = EIO;
+        return -1;
+    }
+    active->offset += (size_t)taken;
+    return taken;
+}
+
+int close(int descriptor) {
+    int (*system_close)(int) = (int (*)(int))dlsym(RTLD_NEXT, "close");
+    if (system_close == NULL) {
+        errno = ENOSYS;
+        return -1;
+    }
+    if (descriptor == closing_descriptor && descriptor >= 0) {
+        ++failed_close_calls;
+        if (system_close(descriptor) != 0) return -1;
+        errno = EINTR;
+        return -1;
+    }
+    if (descriptor == test_descriptor && descriptor >= 0) {
+        ++close_calls;
+        test_descriptor = -1;
+    }
+    return system_close(descriptor);
 }
 
 pid_t waitpid(pid_t pid, int *status, int options) {
@@ -95,42 +153,10 @@ pid_t waitpid(pid_t pid, int *status, int options) {
 }
 
 int32_t system_macos_retries_observed(void) {
-    return read_calls >= 4 && read_offset == payload_size &&
-            write_calls >= 4 && write_offset == payload_size &&
-            descriptor_calls == 4 && descriptor_offset == payload_size && wait_calls == 2;
-}
-
-// Exercise the owned writer's descriptor path with EINTR before any progress
-// and a short write before a second interruption.
-int openx_np(const char *path, int flags, filesec_t security) {
-    (void)security;
-    if (strcmp(path, "owned-interrupted-write") != 0 ||
-        flags != (O_CLOEXEC | O_CREAT | O_EXCL | O_WRONLY)) {
-        errno = EINVAL;
-        return -1;
-    }
-    owned_descriptor = open("/dev/null", O_CLOEXEC | O_WRONLY);
-    return owned_descriptor;
-}
-
-ssize_t write(int descriptor, const void *bytes, size_t count) {
-    if (descriptor != owned_descriptor) {
-        struct iovec part = { .iov_base = (void *)bytes, .iov_len = count };
-        return writev(descriptor, &part, 1);
-    }
-    ++descriptor_calls;
-    if (descriptor_calls == 1 || descriptor_calls == 3) {
-        errno = EINTR;
-        return -1;
-    }
-    if (descriptor_calls == 2 && count > 3) count = 3;
-    if (count > (size_t)(payload_size - descriptor_offset) ||
-        memcmp(bytes, payload + descriptor_offset, count) != 0) {
-        errno = EIO;
-        return -1;
-    }
-    descriptor_offset += (int)count;
-    return (ssize_t)count;
+    return read_open_calls == 2 && reader.calls == 5 && reader.offset == payload_size &&
+            writer.calls == 4 && writer.offset == payload_size &&
+            owned_writer.calls == 4 && owned_writer.offset == payload_size && wait_calls == 2 &&
+            close_calls == 3 && failed_close_calls == 2;
 }
 
 static int32_t clock_sample;

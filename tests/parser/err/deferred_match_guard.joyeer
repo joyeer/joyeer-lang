@@ -1,0 +1,4 @@
+// spec: 07-patterns.md §7.6
+func positive(value: Int): Bool {
+    return match value { n where n > 0 => true, _ => false }
+}

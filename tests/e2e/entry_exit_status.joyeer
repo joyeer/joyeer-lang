@@ -1,3 +1,4 @@
+// spec: 03-declarations.md §3.2.6
 func main(args: [String]): Int {
     let text = "clean" + "up"
     print(value: text)

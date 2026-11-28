@@ -56,8 +56,8 @@ func requirePort(parsed: Int?): Int {
 }
 ```
 
-Use `x!` only when a prior check or control-flow proof guarantees non-`nil`.
-If `x!` fails at runtime, execution traps.
+Postfix force unwrap (`x!`) remains deferred. Use an explicit `match`, or `?`
+in a function that can propagate the absence.
 
 ### 9.4 Writing postconditions in code
 

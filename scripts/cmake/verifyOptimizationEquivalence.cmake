@@ -5,7 +5,8 @@ cmake_minimum_required(VERSION 3.20)
 # A trapping program is acceptable as long as every level traps the same way.
 #
 # Required: JOYEER_EXECUTABLE, INPUT_FILE, OUTPUT_PREFIX
-# Optional: LEVELS (default 0;1;2;3), PROGRAM_TIMEOUT (seconds, default 30)
+# Optional: LEVELS (default 0;1;2;3), PROGRAM_TIMEOUT (seconds, default 30),
+# PROGRAM_STDIN_FILE (reopened from the beginning for every run)
 
 if(NOT DEFINED JOYEER_EXECUTABLE OR NOT DEFINED INPUT_FILE OR NOT DEFINED OUTPUT_PREFIX)
     message(FATAL_ERROR "JOYEER_EXECUTABLE, INPUT_FILE, and OUTPUT_PREFIX are required")
@@ -15,6 +16,10 @@ if(NOT DEFINED LEVELS)
 endif()
 if(NOT DEFINED PROGRAM_TIMEOUT)
     set(PROGRAM_TIMEOUT 30)
+endif()
+set(stdin_args)
+if(DEFINED PROGRAM_STDIN_FILE)
+    list(APPEND stdin_args INPUT_FILE "${PROGRAM_STDIN_FILE}")
 endif()
 
 set(baseline_level "")
@@ -36,6 +41,7 @@ foreach(level IN LISTS LEVELS)
 
     execute_process(
             COMMAND "${output_file}"
+            ${stdin_args}
             RESULT_VARIABLE program_result
             OUTPUT_VARIABLE program_output
             ERROR_VARIABLE program_error

@@ -50,20 +50,41 @@ private func write(address: Int, value: Int) {
     store64(address: address, value: value as UInt64)
 }
 
-// `count * stride` bytes, panicking rather than wrapping.
-private func byteCount(count: Int, stride: Int): Int {
+// `count * stride` bytes, with Joyeer's checked signed multiplication.
+func collectionByteCount(count: Int, stride: Int): Int {
     if count < 0 || stride < 0 { panic(message: literalAddress(text: "negative allocation size")) }
-    if count != 0 && stride > intMax / count {
-        panic(message: literalAddress(text: "allocation size overflow"))
-    }
     return count * stride
 }
 
 // Bytes in the block of an array with room for `capacity` elements.
 private func storageBytes(capacity: Int, elementSize: Int): Int {
-    let bytes = byteCount(count: capacity, stride: elementSize)
+    let bytes = collectionByteCount(count: capacity, stride: elementSize)
     if bytes > intMax - headerSize { panic(message: literalAddress(text: "array allocation size overflow")) }
     return headerSize + bytes
+}
+
+private func cloneElements(data: Int, values: Int, bytes: Int, size: Int, callback: Int) {
+    let tail = bytes - size
+    // Both positive bases and the checked byte count bound every address in
+    // the forward walk. Keep the checked path for an out-of-range C input.
+    if data > 0 && values > 0 && data <= intMax - tail && values <= intMax - tail {
+        let stride = size as UInt64
+        let last = (data + tail) as UInt64
+        var target = data as UInt64
+        var source = values as UInt64
+        while true {
+            callVoid2(target: callback, first: target &as Int, second: source &as Int)
+            if target == last { break }
+            target = target + stride
+            source = source + stride
+        }
+    } else {
+        var offset = 0
+        while offset < bytes {
+            callVoid2(target: callback, first: data + offset, second: values + offset)
+            offset = offset + size
+        }
+    }
 }
 
 // Allocates an array of `count` elements and fills it from `values`: copied
@@ -71,7 +92,7 @@ private func storageBytes(capacity: Int, elementSize: Int): Int {
 // has a clone callback. Returns the address of element 0.
 private func makeArray(values: Int, count: Int, elementSize: Int, cloneElement: Int,
         destroyElement: Int, cloneValues: Bool): Int {
-    let bytes = byteCount(count: count, stride: elementSize)
+    let bytes = collectionByteCount(count: count, stride: elementSize)
     let storage = allocate(size: storageBytes(capacity: count, elementSize: elementSize))
     write(address: storage, value: elementSize)
     write(address: storage + 8, value: cloneElement)
@@ -80,11 +101,7 @@ private func makeArray(values: Int, count: Int, elementSize: Int, cloneElement: 
     if bytes != 0 {
         if values == 0 { panic(message: literalAddress(text: "array initializer is null")) }
         if cloneValues && cloneElement != 0 {
-            var offset = 0
-            while offset < bytes {
-                callVoid2(target: cloneElement, first: data + offset, second: values + offset)
-                offset = offset + elementSize
-            }
+            cloneElements(data: data, values: values, bytes: bytes, size: elementSize, callback: cloneElement)
         } else {
             copyBytes(destination: data, source: values, count: bytes)
         }
@@ -98,6 +115,28 @@ private func store(handle: Int, data: Int, count: Int) {
     write(address: handle + 16, value: count)
 }
 
+private func destroyElements(data: Int, count: Int, size: Int, callback: Int) {
+    if count <= 0 { return }
+    if size > 0 {
+        // The last element is checked before the first callback. Every
+        // subsequent address lies in the same interval down to data.
+        var address = (data + (count - 1) * size) &as UInt64
+        let first = data &as UInt64
+        let stride = size as UInt64
+        while true {
+            callVoid1(target: callback, first: address &as Int)
+            if address == first { break }
+            address = address - stride
+        }
+    } else {
+        var index = count
+        while index > 0 {
+            callVoid1(target: callback, first: data + (index - 1) * size)
+            index = index - 1
+        }
+    }
+}
+
 private func destroy(handle: Int) {
     if handle == 0 { return }
     let data = read(address: handle)
@@ -106,11 +145,8 @@ private func destroy(handle: Int) {
     let elementSize = read(address: header)
     let destroyElement = read(address: header + 16)
     if destroyElement != 0 {
-        var index = read(address: handle + 8)
-        while index > 0 {
-            callVoid1(target: destroyElement, first: data + (index - 1) * elementSize)
-            index = index - 1
-        }
+        destroyElements(data: data, count: read(address: handle + 8), size: elementSize,
+            callback: destroyElement)
     }
     let capacity = read(address: handle + 16)
     release(address: header, size: storageBytes(capacity: capacity, elementSize: elementSize))
@@ -140,13 +176,13 @@ public func arrayClone(output: Int, data: Int, count: Int): Void {
 
 @c_export(symbol: "joyeer_array_append_owned_abi")
 public func arrayAppendOwned(array: Int, element: Int): Void {
-    if array == 0 || read(address: array) == 0 || read(address: array + 8) < 0 ||
-        read(address: array + 16) < read(address: array + 8) {
-        panic(message: literalAddress(text: "invalid array append"))
-    }
+    if array == 0 { panic(message: literalAddress(text: "invalid array append")) }
     var data = read(address: array)
     let count = read(address: array + 8)
     let capacity = read(address: array + 16)
+    if data == 0 || count < 0 || capacity < count {
+        panic(message: literalAddress(text: "invalid array append"))
+    }
     let elementSize = read(address: data - headerSize)
     if elementSize < 0 || (elementSize != 0 && element == 0) || count == intMax {
         panic(message: literalAddress(text: "invalid array append"))
@@ -164,8 +200,10 @@ public func arrayAppendOwned(array: Int, element: Int): Void {
         write(address: array, value: data)
         write(address: array + 16, value: grown)
     }
-    if elementSize != 0 {
-        copyBytes(destination: data + byteCount(count: count, stride: elementSize),
+    if elementSize == 8 {
+        store64(address: data + count * 8, value: load64(address: element))
+    } else if elementSize != 0 {
+        copyBytes(destination: data + collectionByteCount(count: count, stride: elementSize),
             source: element, count: elementSize)
     }
     write(address: array + 8, value: count + 1)
@@ -188,7 +226,7 @@ public func arrayRemoveLast(array: Int, element: Int): Int {
     }
     if elementSize != 0 {
         copyBytes(destination: element,
-            source: data + byteCount(count: count - 1, stride: elementSize), count: elementSize)
+            source: data + collectionByteCount(count: count - 1, stride: elementSize), count: elementSize)
     }
     write(address: array + 8, value: count - 1)
     return 1

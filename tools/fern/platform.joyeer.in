@@ -1,1 +1,7 @@
 func executableSuffix(): String { return "@CMAKE_EXECUTABLE_SUFFIX@" }
+
+@platform(macos)
+func nativeDebugFlag(): String { return "-gauto" }
+
+@platform(windows, linux)
+func nativeDebugFlag(): String { return "-gfull" }

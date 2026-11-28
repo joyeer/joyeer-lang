@@ -1,13 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 
-# Compiles a Joyeer program and checks what the executable imports
-# (decision 0011): a program that never calls the C library starts at its own entry
-# point and imports only the operating system's functions, so the exact list is known;
-# one that does keeps the C startup and imports far more.
+# Compiles a Joyeer program and checks what the executable imports (decision 0011).
 #
-# Inputs: JOYEER_EXECUTABLE, INPUT_FILE, OUTPUT_FILE, READOBJ (Windows) or NM (Linux),
+# Inputs: JOYEER_EXECUTABLE, INPUT_FILE, OUTPUT_FILE, READOBJ (Windows) or NM (Linux/macOS),
 # COMPILER_ARGS (list), and any of EXPECTED_IMPORTS (the exact list),
 # ALLOWED_IMPORTS (a superset), REQUIRED_IMPORTS, or FORBIDDEN_IMPORTS.
+# MACHO selects Mach-O rather than ELF for NM.
 # STARTUP_OBJDUMP restricts AArch64's abort import to a direct call in _start.
 foreach(variable IN ITEMS JOYEER_EXECUTABLE INPUT_FILE OUTPUT_FILE)
     if(NOT DEFINED ${variable})
@@ -15,7 +13,10 @@ foreach(variable IN ITEMS JOYEER_EXECUTABLE INPUT_FILE OUTPUT_FILE)
     endif()
 endforeach()
 if(NOT DEFINED READOBJ AND NOT DEFINED NM)
-    message(FATAL_ERROR "READOBJ (Windows) or NM (Linux) is required")
+    message(FATAL_ERROR "READOBJ (Windows) or NM (Linux/macOS) is required")
+endif()
+if(MACHO AND NOT DEFINED NM)
+    message(FATAL_ERROR "NM is required for MACHO")
 endif()
 file(REMOVE "${OUTPUT_FILE}")
 execute_process(COMMAND "${JOYEER_EXECUTABLE}" ${COMPILER_ARGS} -o "${OUTPUT_FILE}" -- "${INPUT_FILE}"
@@ -24,8 +25,12 @@ if(NOT status EQUAL 0 OR NOT EXISTS "${OUTPUT_FILE}")
     message(FATAL_ERROR "Compiling ${INPUT_FILE} failed (${status}):\n${output}${error}")
 endif()
 if(DEFINED NM)
-    # Linux: the dynamic symbols the executable needs, without their version suffix.
-    execute_process(COMMAND "${NM}" -D --undefined-only "${OUTPUT_FILE}"
+    if(MACHO)
+        set(nm_args --format=just-symbols --undefined-only)
+    else()
+        set(nm_args -D --undefined-only)
+    endif()
+    execute_process(COMMAND "${NM}" ${nm_args} "${OUTPUT_FILE}"
         RESULT_VARIABLE status OUTPUT_VARIABLE text ERROR_VARIABLE error)
     set(tool "${NM}")
 else()
@@ -40,7 +45,12 @@ string(REPLACE "\r" "" text "${text}")
 string(REPLACE "\n" ";" lines "${text}")
 set(imports)
 foreach(line IN LISTS lines)
-    if(DEFINED NM AND line MATCHES "^ *[Uuvw]? *([A-Za-z0-9_.]+)")
+    if(MACHO)
+        if(NOT line STREQUAL "")
+            string(REGEX REPLACE "^_" "" name "${line}")
+            list(APPEND imports "${name}")
+        endif()
+    elseif(DEFINED NM AND line MATCHES "^ *[Uuvw]? *([A-Za-z0-9_.]+)")
         list(APPEND imports "${CMAKE_MATCH_1}")
     elseif(NOT DEFINED NM AND line MATCHES "^ *Symbol: ([A-Za-z0-9_@?$.]+)")
         list(APPEND imports "${CMAKE_MATCH_1}")

@@ -57,6 +57,10 @@ private func createDirectoryW(path: [UInt8], security: Int): Int32
 private func deleteFileW(path: [UInt8]): Int32
 
 @platform(windows)
+@c_extern(symbol: "MoveFileExW", pointer: "source", pointer: "destination")
+private func moveFileW(source: [UInt8], destination: [UInt8], flags: UInt32): Int32
+
+@platform(windows)
 @c_extern(symbol: "RemoveDirectoryW", pointer: "path")
 private func removeDirectoryW(path: [UInt8]): Int32
 
@@ -81,6 +85,10 @@ private func fileTypeW(handle: Int): UInt32
 private func fileInformationW(handle: Int, information: inout [UInt8]): Int32
 
 @platform(windows)
+@c_extern(symbol: "GetFileInformationByHandleEx", pointer: "information")
+private func fileIdentityW(handle: Int, kind: Int32, information: inout [UInt8], count: UInt32): Int32
+
+@platform(windows)
 func invalidInputCode(): Int { return 87 }
 
 @platform(windows)
@@ -98,7 +106,7 @@ func separator(): String { return "\\" }
 @platform(windows)
 func classifyError(code: Int): FileSystemError {
     if code == 123 || code == 161 || code == 87 || code == 1113 || code == 206 { return .InvalidPath(code) }
-    if code == 2 || code == 3 || code == 53 { return .NotFound(code) }
+    if code == 2 || code == 3 || code == 53 || code == 67 { return .NotFound(code) }
     if code == 5 || code == 32 || code == 19 { return .PermissionDenied(code) }
     if code == 80 || code == 183 { return .AlreadyExists(code) }
     if code == 267 { return .NotDirectory(code) }
@@ -215,6 +223,86 @@ func nativeOpenRead(path: [UInt8]): Int {
 }
 
 @platform(windows)
+func nativeExecutableCandidate(path: String, bytes: [UInt8]): Result<Bool, FileSystemError> {
+    if path.count < 4 { return .Ok(false) }
+    let start = path.count - 4
+    return .Ok(path[start] == b'.' &&
+        (path[start + 1] == b'e' || path[start + 1] == b'E') &&
+        (path[start + 2] == b'x' || path[start + 2] == b'X') &&
+        (path[start + 3] == b'e' || path[start + 3] == b'E'))
+}
+
+@platform(windows)
+func nativeIdentityPathAllowed(path: String): Bool {
+    let namespaced = path.count >= 4 &&
+        isPathSeparator(byte: path[0], windows: true) && isPathSeparator(byte: path[1], windows: true) &&
+        (path[2] == b'.' || path[2] == b'?') && isPathSeparator(byte: path[3], windows: true)
+    var driveColon = 1
+    if namespaced {
+        // Only extended drive and UNC paths name supported filesystem roots.
+        if path[0] != b'\\' || path[1] != b'\\' || path[2] != b'?' || path[3] != b'\\' {
+            return false
+        }
+        if path.count >= 7 && isDriveLetter(byte: path[4]) && path[5] == b':' && path[6] == b'\\' {
+            driveColon = 5
+        } else if path.count > 8 && (path[4] | 32) == b'u' && (path[5] | 32) == b'n' &&
+            (path[6] | 32) == b'c' && path[7] == b'\\' {
+            driveColon = -1
+        } else {
+            return false
+        }
+    }
+    var index = 0
+    while index < path.count {
+        if path[index] == b':' {
+            if index != driveColon || !isDriveLetter(byte: path[index - 1]) { return false }
+        }
+        index = index + 1
+    }
+    return true
+}
+
+@platform(windows)
+func nativeOpenIdentity(path: [UInt8], directory: Bool): Int {
+    let flags: UInt32 = if directory { 0x02000000 } else { flagsForKind }
+    let access: UInt32 = if directory { 0x80 } else { genericRead }
+    let handle = createFileW(path: path, access: access, share: shareAll, security: 0,
+        disposition: openExisting, flags: flags, template: 0)
+    if handle == -1 { return lastFailure() }
+    return handle
+}
+
+@platform(windows)
+func nativeFileIdentity(handle: Int, directory: Bool): Result<FileIdentity, FileSystemError> {
+    setLastErrorW(code: 0)
+    let kind = fileTypeW(handle: handle)
+    if kind != 1 {
+        let code = if kind == 0 { 0 - lastFailure() } else { 0 }
+        if code != 0 { return .Err(failure(code: code)) }
+        return .Err(.Other(invalidInputCode()))
+    }
+
+    // FILE_BASIC_INFO has its four timestamps before FileAttributes at byte 32.
+    var basic = zeroBuffer(count: 40)
+    if fileIdentityW(handle: handle, kind: 0, information: &basic, count: 40) == 0 {
+        return .Err(failure(code: 0 - lastFailure()))
+    }
+    let attributes = hostWord(bytes: basic, offset: 32) & 0xFFFFFFFF
+    if (attributes & 16 != 0) != directory || attributes & 64 != 0 || (!directory && attributes & 1024 != 0) {
+        return .Err(.Other(invalidInputCode()))
+    }
+    // FileIdInfo: the volume serial number, then the 128-bit file ID.
+    var info = zeroBuffer(count: 24)
+    if fileIdentityW(handle: handle, kind: 18, information: &info, count: 24) == 0 {
+        return .Err(failure(code: 0 - lastFailure()))
+    }
+    let low = hostWord(bytes: info, offset: 8)
+    let high = hostWord(bytes: info, offset: 16)
+    if low == 0 && high == 0 { return .Err(.Other(invalidInputCode())) }
+    return .Ok(FileIdentity(volume: hostWord(bytes: info, offset: 0), low: low, high: high))
+}
+
+@platform(windows)
 func nativeOpenNew(path: [UInt8]): Int {
     let handle = createFileW(path: path, access: genericWrite, share: 0, security: 0,
         disposition: createNew, flags: normalAttributes, template: 0)
@@ -250,6 +338,13 @@ func nativeWrite(handle: Int, buffer: [UInt8], count: Int): Int {
 @platform(windows)
 func nativeClose(handle: Int): Int {
     if closeHandleW(handle: handle) == 0 { return lastFailure() }
+    return 0
+}
+
+@platform(windows)
+func nativeReplaceFile(source: [UInt8], destination: [UInt8]): Int {
+    // MOVEFILE_REPLACE_EXISTING, without MOVEFILE_COPY_ALLOWED.
+    if moveFileW(source: source, destination: destination, flags: 1) == 0 { return lastFailure() }
     return 0
 }
 

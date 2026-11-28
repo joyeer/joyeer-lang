@@ -1,18 +1,26 @@
-private func projectCommand(options: borrowing CliOptions): Int {
-    let project = match loadProject(options: options) {
+private func projectCommand(options: CliOptions): Int {
+    var resolved = options
+    let project = match loadProject(options: &resolved) {
         .Ok(loaded) => loaded,
         .Err(error) => {
             return failureStatus(error: error.error, manifestPath: error.path,
                 contents: error.contents, status: 1)
         },
     }
-    let selected = match selectModules(project: project, options: options) {
+    let selected = match selectModules(project: project, options: resolved) {
         .Ok(modules) => modules,
         .Err(error) => {
             return failureStatus(error: error, manifestPath: "", contents: "", status: 2)
         },
     }
-    return match executeProject(project: project, options: options, selected: selected) {
+    if selected.count != 0 && resolved.compiler.count == 0 {
+        let compiler = match discoverCompiler(explicit: "") {
+            .Ok(path) => path,
+            .Err(error) => { return failureStatus(error: error, manifestPath: "", contents: "", status: 1) },
+        }
+        resolved.compiler = compiler
+    }
+    return match executeProject(project: project, options: resolved, selected: selected) {
         .Ok(status) => status,
         .Err(error) => failureStatus(error: error, manifestPath: "", contents: "", status: 1),
     }

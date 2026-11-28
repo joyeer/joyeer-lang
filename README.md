@@ -92,21 +92,19 @@ PowerShell example, using a new `hello-project` directory:
 ```powershell
 fern init hello-project --name hello.app
 Set-Location hello-project
-$compiler = (Get-Command joyeer -CommandType Application -ErrorAction Stop).Source
-fern check --compiler $compiler
-fern run --compiler $compiler
+fern check
+fern run
 ```
 
-`fern` takes an explicit compiler path. The example resolves the installed
-`joyeer` from PATH once, so no machine-specific path is needed. In Bash or
-Zsh, use `--compiler "$(command -v joyeer)"`.
+Fern finds `joyeer` beside itself or on `PATH`. Use `--compiler <path>` or
+set `JOYEER_COMPILER` to select a different compiler.
 
 From the module directory:
 
 | Command | Purpose |
 |---|---|
-| `fern build --compiler $compiler --release` | Build an optimized executable |
-| `fern test --compiler $compiler` | Build and run test modules |
+| `fern build --release` | Build an optimized executable |
+| `fern test` | Build and run test modules |
 
 For multiple modules, list their directories in `workspace.toml` and pass
 `--workspace workspace.toml`. Add `--module <name>` to select one member.

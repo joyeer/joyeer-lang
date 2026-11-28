@@ -115,9 +115,63 @@ public func readFilePrefix(path: String, maximumBytes: Int): Result<String, File
     return readFileWithLimit(path: path, maximum: maximumBytes, bounded: true)
 }
 
+public struct FileIdentity {
+    let volume: UInt64
+    let low: UInt64
+    let high: UInt64
+}
+
+extension FileIdentity: Equatable {}
+
+public struct IdentifiedFilePrefix {
+    public let contents: String
+    public let identity: FileIdentity
+}
+
+public func readIdentifiedFilePrefix(path: String, maximumBytes: Int): Result<IdentifiedFilePrefix, FileSystemError> {
+    if maximumBytes < 0 { return .Err(.Other(invalidInputCode())) }
+    let bytes = encodePath(path: path)?
+    if !nativeIdentityPathAllowed(path: path) { return .Err(.InvalidPath(invalidInputCode())) }
+    let handle = nativeOpenIdentity(path: bytes, directory: false)
+    if handle < 0 { return .Err(failure(code: 0 - handle)) }
+    let identity = nativeFileIdentity(handle: handle, directory: false)
+    var data: [UInt8] = []
+    let code = match identity {
+        .Ok(_) => readLoop(handle: handle, data: &data, maximum: maximumBytes, bounded: true),
+        .Err(_) => 0,
+    }
+    let closed = nativeClose(handle: handle)
+    return match identity {
+        .Err(error) => .Err(error),
+        .Ok(value) => {
+            let first = firstFailure(work: code, closed: closed)
+            if first != 0 { return .Err(failure(code: first)) }
+            return .Ok(IdentifiedFilePrefix(contents: stringFromBytes(bytes: data, count: data.count), identity: value))
+        },
+    }
+}
+
+public func directoryIdentity(path: String): Result<FileIdentity, FileSystemError> {
+    let bytes = encodePath(path: path)?
+    let handle = nativeOpenIdentity(path: bytes, directory: true)
+    if handle < 0 { return .Err(failure(code: 0 - handle)) }
+    let identity = nativeFileIdentity(handle: handle, directory: true)
+    let closed = nativeClose(handle: handle)
+    return match identity {
+        .Err(error) => .Err(error),
+        .Ok(value) => {
+            if closed < 0 { return .Err(failure(code: 0 - closed)) }
+            return .Ok(value)
+        },
+    }
+}
+
+@platform(posix)
+func nativeIdentityPathAllowed(path: String): Bool { return true }
+
 // Writes `contents` from the start. A short write is retried from where it
 // stopped; no progress is a write fault. Returns 0, or the native error code.
-func writeLoop(handle: Int, contents: String, owned: Bool): Int {
+func writeLoop(handle: Int, contents: String): Int {
     var chunk: [UInt8] = []
     var offset = 0
     var code = 0
@@ -130,8 +184,7 @@ func writeLoop(handle: Int, contents: String, owned: Bool): Int {
             &chunk.append(element: contents[offset + index])
             index = index + 1
         }
-        let written = if owned { ownedWrite(handle: handle, buffer: chunk, count: length) }
-            else { nativeWrite(handle: handle, buffer: chunk, count: length) }
+        let written = nativeWrite(handle: handle, buffer: chunk, count: length)
         if written < 0 {
             code = 0 - written
         } else if written == 0 {
@@ -147,9 +200,23 @@ public func writeFileNew(path: String, contents: String): Result<Void, FileSyste
     let native = encodePath(path: path)?
     let handle = nativeOpenNew(path: native)
     if handle < 0 { return .Err(failure(code: 0 - handle)) }
-    let work = writeLoop(handle: handle, contents: contents, owned: false)
+    let work = writeLoop(handle: handle, contents: contents)
     let code = firstFailure(work: work, closed: nativeClose(handle: handle))
     if code != 0 { return .Err(failure(code: code)) }
+    return .Ok(())
+}
+
+public func replaceFile(source: String, destination: String): Result<Void, FileSystemError> {
+    let from = encodePath(path: source)?
+    let to = encodePath(path: destination)?
+    if !nativeIdentityPathAllowed(path: source) || !nativeIdentityPathAllowed(path: destination) {
+        return .Err(.InvalidPath(invalidInputCode()))
+    }
+    let kind = nativeKind(path: from)
+    if kind < 0 { return .Err(failure(code: 0 - kind)) }
+    if kind != 0 { return .Err(.Other(invalidInputCode())) }
+    let status = nativeReplaceFile(source: from, destination: to)
+    if status < 0 { return .Err(failure(code: 0 - status)) }
     return .Ok(())
 }
 
@@ -190,6 +257,30 @@ public func fileKind(path: String): Result<FileKind, FileSystemError> {
     if tag == 1 { return .Ok(.Directory) }
     if tag == 2 { return .Ok(.Symlink) }
     return .Ok(.Other)
+}
+
+private func executableCandidateError(error: FileSystemError): Result<Bool, FileSystemError> {
+    return match error {
+        .NotFound(_) => .Ok(false),
+        .NotDirectory(_) => .Ok(false),
+        .PermissionDenied(_) => .Ok(false),
+        other => .Err(other),
+    }
+}
+
+public func isExecutableFile(path: String): Result<Bool, FileSystemError> {
+    let native = encodePath(path: path)?
+    let tag = nativeKind(path: native)
+    if tag < 0 { return executableCandidateError(error: failure(code: 0 - tag)) }
+    if tag != 0 { return .Ok(false) }
+    return nativeExecutableCandidate(path: path, bytes: native)
+}
+
+@platform(posix)
+func nativeExecutableCandidate(path: String, bytes: [UInt8]): Result<Bool, FileSystemError> {
+    let status = nativeExecutableAccess(path: bytes)
+    if status >= 0 { return .Ok(true) }
+    return executableCandidateError(error: failure(code: 0 - status))
 }
 
 // A real directory is reported as such where the host's remove fails with a

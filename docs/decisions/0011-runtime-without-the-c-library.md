@@ -2,11 +2,10 @@
 
 - Status: accepted and implemented in stage 10 of the
   [runtime plan](../plan/0008-runtime-in-joyeer.md) (decided and built 2026-11-08). Verified on
-  Windows x64 and Linux x86-64 (Ubuntu under WSL2, the full suite). See
-  [final platform validation](0023-library-concurrency.md#final-platform-validation)
-  for subsequent native platform acceptance.
-- Spec: [§19.4.6](../../specs/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)
-  gains the syscall and target-architecture intrinsics when 10.2 lands.
+  Windows x64 and Linux x86-64 (Ubuntu under WSL2, the full suite), and on
+  [Windows ARM64 and Linux AArch64 (WSL2)](../building.md#toolchain-library-layout).
+- Spec: [§19.4.5](../../specs/19-c-interop.md#1945-compiler-intrinsics)
+  defines the syscall and target-architecture intrinsics.
 
 ## Context
 
@@ -121,8 +120,9 @@ errno of the step, as `posix_spawn` did, and the child leaves with `exit_group`.
 environment for `execve` is the block after `argv`, whose address the entry keeps in static
 slot 16. A file descriptor opened by `System` is no longer inherited by a child (the C
 streams were), which is the safer behaviour. macOS keeps its libSystem calls (there is no
-stable system-call ABI to use), so the POSIX files hold the code the platforms share and the
-macOS operations. The tests check with `llvm-nm` that a Linux program using each part of
+stable system-call ABI to use). File I/O uses `openx_np` with `O_CLOEXEC`,
+`read`, `write`, and `close`; it does not need a `FILE *`. The tests check with
+`llvm-nm` that a Linux program using each part of
 `System` needs only `__libc_start_main` and its startup companions and `memcpy`, `memset`,
 `memmove` and `memcmp`.
 `joyeer_stdin_discard` drops buffered input for a program, or a test, that redirects its own.
@@ -141,5 +141,7 @@ macOS operations. The tests check with `llvm-nm` that a Linux program using each
 
 ## Evidence
 
-The plan's own table (§2) and the platform facts it rests on: Apple does not support
-raw system calls; the Windows CRT startup is needed only by code that uses the CRT.
+The [platform gates and performance status](../plan/0008-runtime-in-joyeer.md) distinguish
+native execution from cross-target inspection. The [Linux AArch64 R0 comparison](../../tests/perf/README.md#r0-on-linux-aarch64)
+exceeds the performance limit on several rows. The library `Array` and `Dict` still call
+the measured ABI, so those rows are not exempt merely because the types are now library code.

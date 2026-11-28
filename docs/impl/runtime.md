@@ -37,6 +37,14 @@ functions of the collections prelude ([0028](../decisions/0028-ir-opcode-set.md)
 check and load, and the others call `joyeer_string_concat_abi`, `joyeer_string_equal_abi`,
 `joyeer_string_compare_abi` and the owned-array creation API by their Int signatures.
 
+Dictionary lookup and replacement share a linear scan. It checks the signed
+last-entry address before reading any key, then advances by the nonnegative
+stride; the Int-key path loads the search key once. Array byte offsets use
+the compiler's checked signed multiply, and eight-byte appends use unaligned
+load/store intrinsics instead of an out-of-line copy. These paths preserve
+the public C ABI and the existing destruction callbacks. See the
+[AArch64 comparison](../../tests/perf/README.md#collection-hot-path-follow-up).
+
 The [contract functions](../../specs/09-contracts.md#92-standard-checks) are
 ordinary bundled Joyeer functions. They pass a borrowed message to
 `joyeer_panic_bytes` as a pointer and a byte count, so even embedded NUL or
@@ -188,6 +196,10 @@ the runtime grows geometrically and retains element clone/destroy callbacks.
 Borrowed heap-backed elements are cloned before transfer; owned temporaries
 move directly into the array.
 
+The legacy C array callbacks clone in forward order and destroy in reverse.
+Their normal walks check bounds before walking the stride; zero-sized elements
+still skip cloning and call the destroy callback once per live element.
+
 The library `deinit` destroys the live range last to first, preserving the linear range guard before any
 zero-address return. A live handle then clears its count and invokes `joyeer_array_destroy_abi` to free
 exactly the original block. Literal and clone output use typed raw stack slots, moved out without creating
@@ -283,20 +295,23 @@ Windows and UTF-8 on POSIX. Contents are never validated and remain arbitrary
 bytes.
 
 Owned file and directory APIs use `deinit` to release their native tokens.
-Windows uses non-inheritable handles; Linux uses close-on-exec descriptors.
-On macOS, `openx_np` acquires file descriptors with `O_CLOEXEC`. Readers use
-`fdopen`; writers use descriptor I/O so an interrupted buffered write cannot
-duplicate bytes on retry. `opendir` supplies a close-on-exec directory stream.
+Windows uses non-inheritable handles; Linux and macOS use close-on-exec file
+descriptors. macOS uses the fixed-signature `openx_np` to avoid variadic
+`open` and set close-on-exec atomically; exclusive creation applies the process
+umask to mode `0666`. `opendir` supplies a close-on-exec directory stream.
+`replaceFile` publishes a closed file with `MoveFileExW`, `renameat`, or
+`rename`, without a cross-filesystem copy fallback. It does not flush data
+or metadata or coordinate competing lockfile writers.
 Directory enumeration uses the same cursor for the owned API and
 `listDirectory`. [Process owners](../../specs/18-host.md#183-child-processes)
 are created by the same launcher as `runProcess`; the scoped owner consumes
 and reaps the child on explicit wait or on normal destruction.
 
 Host queries live in `lib/System/queries*.joyeer`. Windows uses wide
-environment and directory APIs, `GetTickCount64`, and `FILETIME`; POSIX
-queries the native environment, directory and `clock_gettime` without a
-host subprocess. Linux uses raw calls and the inherited environment vector,
-not libc. See the [validation record](supported-features.md#standard-library-validation).
+environment, directory, and process-image APIs, `GetTickCount64`, and
+`FILETIME`. Linux uses raw calls (including `/proc/self/exe`) and the inherited
+environment vector, not libc. macOS queries the current process image with
+`proc_pidpath`. See the [validation record](supported-features.md#standard-library-validation).
 
 What the runtime still provides to them:
 
@@ -320,12 +335,33 @@ the whole of `System` now calls only `kernel32`, including the legacy narrow-pat
 codes). On Linux the file, directory and process operations are system calls
 (`filesystem_linux.joyeer`, `process_linux.joyeer`); macOS calls libSystem.
 
-On macOS ARM64, file I/O still uses stdio. The file primitives check the
-stream error even after a short transfer. They clear `EINTR` before
-returning progress so the next call can resume without repeating bytes.
-The [native fixture](../../tests/lib/System/macos-fixture.c) checks the
-filesystem and spawn layouts against the SDK headers and injects `EINTR`
-before and after partial file transfers and before `waitpid` succeeds.
+The macOS file primitives retry `openx_np`, `read`, and `write` on `EINTR`
+and return short successful transfers as progress. They close each descriptor
+once and capture `errno` before cleanup. The
+[native fixture](../../tests/lib/System/macos-fixture.c) checks the filesystem
+and spawn layouts against the SDK headers and injects `EINTR` before and after
+short transfers and before `waitpid` succeeds. The native run of the descriptor
+path and the Mach-O no-stdio import gates remain open in [plan 0008](../plan/0008-runtime-in-joyeer.md).
+
+The end-to-end filesystem and process cases passed on Windows ARM64 and Linux
+AArch64 (WSL2) in both Debug and Release, compiling the fixtures at `-O0`,
+`-O2`, and with full debug information. The child saw the exact inherited
+value, including its space and `=`. The assertions distinguish an absent file
+from an absent parent (Windows codes 2 and 3, Linux `ENOENT` 2 for both),
+preserve the directory-read and exclusive-create error codes, and distinguish
+an absent executable from a non-directory working path.
+
+### Linux filesystem layout
+
+On 2026-11-28, Clang 22.1.8 compiled layout assertions for both
+`x86_64-linux-gnu` and `aarch64-linux-gnu` against the installed Linux UAPI
+`linux/stat.h` and the upstream
+[`linux/dirent.h` from v6.18](https://github.com/torvalds/linux/blob/v6.18/include/linux/dirent.h).
+`struct statx` is 256 bytes with a two-byte `stx_mode` at offset 28;
+`struct linux_dirent64` has a two-byte `d_reclen` at offset 16 and `d_name`
+starts at offset 19. These are the offsets `filesystem_linux.joyeer` uses.
+The assertions check both target layouts; native `System` tests on AArch64
+under WSL2 separately exercised both syscalls.
 
 ### Reader allocation costs
 

@@ -1,0 +1,2 @@
+// spec: 01-lexical.md §1.7
+func text(value: Int): String { return "\(value)" }

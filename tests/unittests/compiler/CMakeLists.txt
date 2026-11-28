@@ -38,7 +38,7 @@ target_compile_definitions(CompilerParserTests PRIVATE
 )
 
 joyeer_discover_tests(CompilerParserTests
-        PROPERTIES LABELS parser
+        PROPERTIES LABELS parser TIMEOUT 30
 )
 
 add_executable(CompilerNameResolutionTests
@@ -239,10 +239,6 @@ if(JOYEER_CLANG_EXECUTABLE)
     find_program(JOYEER_LLVM_PDBUTIL_EXECUTABLE
             NAMES llvm-pdbutil llvm-pdbutil.exe
             HINTS "${JOYEER_LLVM_BIN_DIR}"
-    )
-    find_program(JOYEER_DSYMUTIL_EXECUTABLE
-            NAMES dsymutil
-            HINTS "${JOYEER_LLVM_BIN_DIR}" /usr/bin
     )
     target_link_libraries(LLVMFixtureGenerator
             JoyeerCompilerCore
@@ -1049,7 +1045,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                         -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/deinit.joyeer
                         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-deinit-gfull-O${level}${CMAKE_EXECUTABLE_SUFFIX}
-                        "-DCOMPILER_ARGS=-O${level};-gfull"
+                        "-DCOMPILER_ARGS=-O${level};${joyeer_test_native_debug}"
                         -DEXPECTED_OUTPUT=10\n2\n1\n20\n100\n3\n100\n4\n200\n200\n5\n6\n30\n40\n8\n7\n
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
@@ -1375,7 +1371,7 @@ none
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                     -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/methods.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/methods-debug${CMAKE_EXECUTABLE_SUFFIX}
-                    "-DCOMPILER_ARGS=-O0;-gfull"
+                    "-DCOMPILER_ARGS=-O0;${joyeer_test_native_debug}"
                     "-DEXPECTED_OUTPUT=${methods_output}"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
@@ -1395,7 +1391,7 @@ none
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                     -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/propagation.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/propagation-debug${CMAKE_EXECUTABLE_SUFFIX}
-                    "-DCOMPILER_ARGS=-O0;-gfull"
+                    "-DCOMPILER_ARGS=-O0;${joyeer_test_native_debug}"
                     "-DEXPECTED_OUTPUT=${propagation_output}"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
@@ -1427,7 +1423,7 @@ none
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                     -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/control_flow_arithmetic.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/control-flow-arithmetic-debug${CMAKE_EXECUTABLE_SUFFIX}
-                    "-DCOMPILER_ARGS=-O0;-gfull"
+                    "-DCOMPILER_ARGS=-O0;${joyeer_test_native_debug}"
                     "-DEXPECTED_OUTPUT=control flow arithmetic ok\n"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
@@ -1439,7 +1435,7 @@ none
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                     -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/dictionary_get.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/dictionary-get-debug${CMAKE_EXECUTABLE_SUFFIX}
-                    "-DCOMPILER_ARGS=-O0;-gfull"
+                    "-DCOMPILER_ARGS=-O0;${joyeer_test_native_debug}"
                     "-DEXPECTED_OUTPUT=dictionary get ok\n"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
@@ -1454,7 +1450,7 @@ none
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                         -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/dict_debug_scopes.joyeer
                         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/dict-debug-scopes-O${level}${CMAKE_EXECUTABLE_SUFFIX}
-                        "-DCOMPILER_ARGS=-O${level};-gfull"
+                        "-DCOMPILER_ARGS=-O${level};${joyeer_test_native_debug}"
                         "-DEXPECTED_OUTPUT=6\nagain\n2\none\nchanged\nv\nnone\n29\n3\n"
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
@@ -1462,9 +1458,9 @@ none
                 LABELS "e2e;llvm-backend;runtime;debug-info;optimization"
                 TIMEOUT 60)
     endforeach()
-    # The verification runs: a debug location corrupted after optimization (a test-build fault injection) fails the
-    # compile instead of reaching the object file. Only where the backend was built with its test hooks.
-    if(JOYEER_BACKEND_TEST_HOOKS)
+    # The executable fixture deliberately tests full native debug information.
+    # IR-only and non-debug configurations cannot exercise this injection.
+    if(JOYEER_BACKEND_TEST_HOOKS AND (NOT APPLE OR JOYEER_DSYMUTIL_EXECUTABLE))
         add_test(NAME E2EOptimizedDebugInfoIsVerified
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
@@ -1484,7 +1480,7 @@ none
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                     -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/unit_values.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/unit-values-debug${CMAKE_EXECUTABLE_SUFFIX}
-                    "-DCOMPILER_ARGS=-O0;-gfull"
+                    "-DCOMPILER_ARGS=-O0;${joyeer_test_native_debug}"
                     "-DEXPECTED_OUTPUT=${unit_values_output}"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
@@ -1790,7 +1786,7 @@ abcdabcd
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                     -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/typed_array_access.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-checked-debug${CMAKE_EXECUTABLE_SUFFIX}
-                    "-DCOMPILER_ARGS=-O3;-gfull"
+                    "-DCOMPILER_ARGS=-O3;${joyeer_test_native_debug}"
                     "-DEXPECTED_OUTPUT=${typed_array_output}"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
@@ -1947,12 +1943,17 @@ abcdabcd
         if(fixture IN_LIST joyeer_equivalence_excluded)
             continue()
         endif()
+        set(equivalence_args)
+        if(fixture STREQUAL "stdin_lines")
+            list(APPEND equivalence_args "-DPROGRAM_STDIN_FILE=${JOYEER_TESTS_DIR}/e2e/stdin_lines_input.txt")
+        endif()
         add_test(NAME E2EOptimizationEquivalence_${fixture}
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                         -DINPUT_FILE=${fixture_path}
                         -DOUTPUT_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/equivalence-${fixture}
                         -DCMAKE_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
+                        ${equivalence_args}
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyOptimizationEquivalence.cmake
         )
         set_tests_properties(E2EOptimizationEquivalence_${fixture} PROPERTIES
@@ -1974,6 +1975,40 @@ endfunction()
 
 add_joyeer_rejected_regression(ParserGenericsRejectsMissingConstraint parser
         generic_constraint parser.expected-type)
+function(add_joyeer_deferred_regression fixture stage diagnostic)
+    add_joyeer_rejected_regression("DiagnosticsRejectsDeferred.${fixture}" "${stage}"
+            "deferred_${fixture}" "${diagnostic}")
+endfunction()
+
+add_joyeer_deferred_regression(coalescing parser "lexer[.]unsupported-syntax.*'[?][?]'")
+add_joyeer_deferred_regression(optional_chaining parser "lexer[.]unsupported-syntax.*'[?][.]'")
+add_joyeer_deferred_regression(interpolation parser "lexer[.]invalid-string-escape")
+add_joyeer_deferred_regression(parameter_default parser "parser[.]missing-comma.*function parameters")
+add_joyeer_deferred_regression(import_alias parser "parser[.]same-line-items")
+add_joyeer_deferred_regression(import_wildcard parser "parser[.]expected-token.*module name component")
+add_joyeer_deferred_regression(import_reexport parser "parser[.]expected-declaration.*'import'")
+add_joyeer_deferred_regression(init parser "lexer[.]unsupported-syntax.*'init'")
+add_joyeer_deferred_regression(enum_deinit parser "parser[.]invalid-deinit.*not in an enum")
+add_joyeer_deferred_regression(inout_iteration parser "parser[.]unsupported-syntax.*inout iteration")
+add_joyeer_deferred_regression(labeled_loop parser "parser[.]same-line-items")
+add_joyeer_deferred_regression(protocol_refinement parser "parser[.]expected-block.*protocol body")
+add_joyeer_deferred_regression(conditional_conformance parser "lexer[.]unsupported-syntax.*'where'")
+add_joyeer_deferred_regression(explicit_type_arguments parser "parser[.]chained-comparison")
+add_joyeer_deferred_regression(record_literal parser "parser[.]same-line-items")
+add_joyeer_deferred_regression(wrapping_arithmetic parser "parser[.]expected-expression.*after '&'")
+add_joyeer_deferred_regression(logical_compound_assignment parser "lexer[.]unsupported-syntax.*'&&='")
+add_joyeer_deferred_regression(trailing_closure parser "parser[.]same-line-items")
+add_joyeer_deferred_regression(match_guard parser "lexer[.]unsupported-syntax.*'where'")
+add_joyeer_deferred_regression(range_pattern parser "parser[.]expected-token.*after the match pattern")
+add_joyeer_deferred_regression(alternative_pattern parser "parser[.]expected-token.*after the match pattern")
+add_joyeer_deferred_regression(contract_clauses parser "parser[.]expected-block.*'requires'")
+add_joyeer_deferred_regression(implicit_self name-resolution "name-resolution[.]undefined-name.*'count'")
+add_joyeer_deferred_regression(builtin_extension name-resolution "name-resolution[.]invalid-extension-target")
+
+foreach(annotation IN ITEMS spec property)
+    add_joyeer_rejected_regression(TypeRejectsDeferredAnnotation_${annotation} type-checking
+            deferred_contract_annotations "type-checking[.]invalid-annotation[]]: unknown annotation '@${annotation}'")
+endforeach()
 add_joyeer_rejected_regression(NameResolutionGenericsRejectsEscapedParameter name-resolution
         generic_scope name-resolution.undefined-type)
 add_joyeer_rejected_regression(TypeGenericsRejectsUnboundedCopy type-checking

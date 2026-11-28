@@ -288,14 +288,24 @@ bool needsCRuntime(const std::filesystem::path& objectFile) {
 
 LinkResult Linker::emitObject(
         const std::string& llvmIR,
-        const LinkOptions& options) const {
+        const LinkOptions& options,
+        bool sanitizeRuntime) const {
     LinkResult result;
     const auto report = [&](LinkDiagnosticId id, std::string message) {
         result.diagnostics.push_back({id, std::move(message)});
     };
+#if !defined(JOYEER_SANITIZE_RUNTIME)
+    if (sanitizeRuntime) {
+        report(LinkDiagnosticId::toolFailure, "runtime AddressSanitizer emission is unavailable");
+        return result;
+    }
+#endif
     if (options.outputFile.empty() || pathsAlias(options.outputFile, options.sourceFile) ||
-        std::any_of(options.nativeLibraries.begin(), options.nativeLibraries.end(),
-                [&](const auto& path) { return pathsAlias(options.outputFile, path); })) {
+        std::any_of(options.nativeLinkInputs.begin(), options.nativeLinkInputs.end(),
+                [&](const auto& input) {
+                    const auto* path = std::get_if<std::filesystem::path>(&input);
+                    return path != nullptr && pathsAlias(options.outputFile, *path);
+                })) {
         report(LinkDiagnosticId::fileError, "object output path is empty or collides with an input file");
         return result;
     }
@@ -327,8 +337,11 @@ LinkResult Linker::emitObject(
         options.module.get(),
     };
     BackendDiagnostic diagnostic;
-    const auto objectStatus = joyeer_backend_emit_object(
-            &objectOptions, collectBackendDiagnostic, &diagnostic);
+    auto emit = joyeer_backend_emit_object;
+#if defined(JOYEER_SANITIZE_RUNTIME)
+    if (sanitizeRuntime) emit = joyeer_backend_emit_asan_runtime_object;
+#endif
+    const auto objectStatus = emit(&objectOptions, collectBackendDiagnostic, &diagnostic);
     if (objectStatus != JOYEER_BACKEND_SUCCESS || !isNonemptyRegularFile(options.outputFile)) {
         report(objectStatus == JOYEER_BACKEND_FILE_ERROR
                         ? LinkDiagnosticId::fileError : LinkDiagnosticId::toolFailure,
@@ -431,13 +444,76 @@ LinkResult Linker::link(
         options.debugSymbolTool,
         options.sourceFile,
     };
-    for (const auto& library : options.nativeLibraries) {
+    for (const auto& directory : options.nativeSearchPaths) {
         filesystemError.clear();
-        if (library.empty() || !std::filesystem::is_regular_file(library, filesystemError) || filesystemError) {
-            report(LinkDiagnosticId::fileError, "native library must be a regular file: '" + utf8Path(library) + "'");
+        if (!std::filesystem::is_directory(directory, filesystemError) || filesystemError) {
+            report(LinkDiagnosticId::fileError, "native search path must be a directory: '" + utf8Path(directory) + "'");
             return result;
         }
-        protectedFiles.push_back(library);
+#if defined(__APPLE__)
+        if (pathIsWithin(directory, dsymDirectory) || pathsAlias(directory, dsymDirectory)) {
+            report(LinkDiagnosticId::fileError, "dSYM output path contains a native search directory");
+            return result;
+        }
+#endif
+    }
+    std::vector<std::string> logicalLibraryNames;
+    for (const auto& input : options.nativeLinkInputs) {
+        if (const auto* library = std::get_if<std::filesystem::path>(&input)) {
+            filesystemError.clear();
+            if (library->empty() || !std::filesystem::is_regular_file(*library, filesystemError) || filesystemError) {
+                report(LinkDiagnosticId::fileError, "native library must be a regular file: '" + utf8Path(*library) + "'");
+                return result;
+            }
+            protectedFiles.push_back(*library);
+            continue;
+        }
+        const auto& name = std::get<std::string>(input);
+        if (!isNativeLibraryName(name)) {
+            report(LinkDiagnosticId::fileError, "invalid logical native library name");
+            return result;
+        }
+        logicalLibraryNames.push_back(name);
+    }
+#if defined(_WIN32)
+    if (!options.nativeSearchPaths.empty() || !logicalLibraryNames.empty()) {
+        logicalLibraryNames.insert(logicalLibraryNames.end(), {"libcmt", "kernel32", "ws2_32", "libvcruntime"});
+    }
+#elif defined(__APPLE__)
+    if (!options.nativeSearchPaths.empty()) logicalLibraryNames.emplace_back("System");
+#else
+    if (!options.nativeSearchPaths.empty()) {
+        logicalLibraryNames.insert(logicalLibraryNames.end(), {"c", "gcc", "gcc_s", "pthread"});
+    }
+#endif
+    for (const auto& name : logicalLibraryNames) {
+        // The linker can select any flavor, even through an SDK fallback
+        // directory. Do not remove an output named for one of those inputs.
+#if defined(_WIN32)
+        const auto filenames = {name + ".lib"};
+#elif defined(__APPLE__)
+        const auto filenames = {"lib" + name + ".tbd", "lib" + name + ".dylib", "lib" + name + ".a"};
+#else
+        const auto filenames = {"lib" + name + ".so", "lib" + name + ".a"};
+#endif
+#if defined(_WIN32)
+        // COFF also searches the current directory implicitly.
+        protectedFiles.emplace_back(*filenames.begin());
+#endif
+        for (const auto& directory : options.nativeSearchPaths) {
+            for (const auto& filename : filenames) protectedFiles.push_back(directory / filename);
+        }
+        if (std::any_of(filenames.begin(), filenames.end(), [&](const auto& filename) {
+                if (pathsAlias(options.outputFile, options.outputFile.parent_path() / filename)) return true;
+#if defined(_WIN32)
+                return pathsAlias(pdbFile, pdbFile.parent_path() / filename);
+#else
+                return false;
+#endif
+            })) {
+            report(LinkDiagnosticId::fileError, "native output path collides with a native library name");
+            return result;
+        }
     }
     auto collidesWithProtectedFile = [&](const std::filesystem::path& path) {
         return std::any_of(
@@ -630,7 +706,7 @@ LinkResult Linker::link(
 #endif
     // A program that never calls the C library starts at its own entry point and links
     // the runtime archive by symbol, which leaves out the C `wmain` wrapper.
-    const bool ownEntry = options.nativeLibraries.empty() && !needsCRuntime(objectFile);
+    const bool ownEntry = options.nativeLinkInputs.empty() && !needsCRuntime(objectFile);
     std::vector<std::string> lldArguments {
         "lld-link",
         "/NOLOGO",
@@ -640,7 +716,8 @@ LinkResult Linker::link(
         "/MANIFESTUAC:level='asInvoker' uiAccess='false'",
         "/OUT:" + outputPath,
         objectPath,
-        runtimePath,
+    };
+    const std::vector<std::string> platformLibraries {
         // The runtime is Joyeer objects, which no longer carry a default-library
         // directive for the C runtime, so name the static one (/MT) explicitly.
         "libcmt.lib",
@@ -701,8 +778,6 @@ LinkResult Linker::link(
         "-o",
         outputPath,
         objectPath,
-        runtimePath,
-        "-lSystem",
     };
     if (options.optimizationLevel != OptimizationLevel::O0) {
         lldArguments.emplace_back("-dead_strip");
@@ -720,12 +795,35 @@ LinkResult Linker::link(
 #if !defined(_WIN32) && !defined(__APPLE__)
     lldArguments.emplace_back("-Wl,--start-group");
 #endif
-    for (const auto& library : options.nativeLibraries) {
-        lldArguments.push_back(utf8Path(absoluteNormalized(library)));
+    for (const auto& directory : options.nativeSearchPaths) {
+#if defined(_WIN32)
+        lldArguments.push_back("/LIBPATH:" + utf8Path(directory));
+#else
+        lldArguments.push_back("-L" + utf8Path(directory));
+#endif
     }
+    for (const auto& input : options.nativeLinkInputs) {
+        if (const auto* file = std::get_if<std::filesystem::path>(&input)) {
+            lldArguments.push_back(utf8Path(absoluteNormalized(*file)));
+        } else {
+            const auto& name = std::get<std::string>(input);
+#if defined(_WIN32)
+            lldArguments.push_back(name + ".lib");
+#elif defined(__APPLE__)
+            lldArguments.push_back("-l" + name);
+#else
+            lldArguments.push_back("-Wl,-l," + name);
+#endif
+        }
+    }
+    lldArguments.push_back(runtimePath);
+#if defined(_WIN32)
+    lldArguments.insert(lldArguments.end(), platformLibraries.begin(), platformLibraries.end());
+#elif defined(__APPLE__)
+    lldArguments.emplace_back("-lSystem");
+#endif
 #if !defined(_WIN32) && !defined(__APPLE__)
     // Native libraries can reference runtime allocation helpers.
-    lldArguments.push_back(runtimePath);
     lldArguments.emplace_back("-Wl,--end-group");
     // Tasks start threads through pthread. glibc 2.34 and later and musl keep it in libc and the
     // library is empty there; older glibc needs it (decision 0018).

@@ -38,9 +38,11 @@ The signatures below are public functions of `System`:
 func readFileUtf8(path: String): Result<String, FileSystemError>
 func readFilePrefix(path: String, maximumBytes: Int): Result<String, FileSystemError>
 func writeFileNew(path: String, contents: String): Result<Void, FileSystemError>
+func replaceFile(source: String, destination: String): Result<Void, FileSystemError>
 func createDirectory(path: String): Result<Void, FileSystemError>
 func listDirectory(path: String): Result<[String], FileSystemError>
 func fileKind(path: String): Result<FileKind, FileSystemError>
+func isExecutableFile(path: String): Result<Bool, FileSystemError>
 func removeFile(path: String): Result<Void, FileSystemError>
 func removeDirectory(path: String): Result<Void, FileSystemError>
 func joinPath(base: String, path: String): Result<String, FileSystemError>
@@ -81,6 +83,18 @@ platform code (or the platform's invalid-input code for rejected input).
   enforced by creation itself, not by an earlier existence check. Failure
   after creation can leave a partial new file; this operation is not an
   atomic-publication guarantee.
+- `replaceFile` publishes an already written, closed, ordinary file at a
+  different destination on the same filesystem. The destination may be
+  absent or an existing file; it may not be a directory. The operation
+  uses a native rename with replacement and never copies bytes or deletes
+  the old target as a separate step. The caller must own the source entry,
+  must not change its contents during publication, and must use distinct
+  source and destination entries, not aliases. Windows alternate streams
+  and device namespaces are invalid; only drive and UNC forms of extended
+  paths are admitted. This is a namespace operation, not a
+  guarantee that contents or directory entries survive a crash. It does
+  not lock competing publishers or protect path traversal from concurrent
+  ancestor changes.
 - `createDirectory` creates exactly one directory. An existing destination or
   missing parent is an error; it does not recursively create parents.
 - `listDirectory` returns names, not full paths, and omits `.` and `..`.
@@ -90,6 +104,18 @@ platform code (or the platform's invalid-input code for rejected input).
 - `fileKind` inspects the final entry without following a symbolic link.
   Platform reparse entries that must not be treated as ordinary files or
   directories are reported as `Symlink` or `Other`.
+- `isExecutableFile` is a discovery check for an ordinary regular file, not a
+  guarantee that it will execute. It rejects final links. On POSIX it checks
+  `X_OK` with the process's real IDs; on Windows it checks for a
+  case-insensitive `.exe` suffix. Missing entries, non-directories in the
+  path, denied access, and other kinds yield `false`; invalid paths and
+  other host errors are reported. This check is not atomic with a later
+  launch or a defense against concurrent path changes.
+- On POSIX, `readSymbolicLink(path: String): Result<String, FileSystemError>`
+  reads a link's stored target without following the final entry. The target
+  can be relative; it is not resolved against either the caller or the link's
+  directory. Invalid UTF-8 and targets of 4096 bytes or more are errors, never
+  replacement or truncation.
 - `removeFile` removes a file or the final link itself, not a directory tree
   or a link's target.
 - `removeDirectory` removes an empty directory only. It never recursively
@@ -112,8 +138,46 @@ Recursive cleanup is not exposed in this first interface. A future cleanup
 operation for tool-owned outputs must anchor traversal and not follow links;
 an unsafe check-then-recurse substitute is not part of this contract.
 
-Replacement, atomic replacement, canonicalization, arbitrary-byte POSIX paths,
+Crash-durable replacement, canonicalization, arbitrary-byte POSIX paths,
 and recursive cleanup are deferred. See §18.9 for sequential owned handles.
+
+#### Physical identity for bounded document loading (provisional)
+
+`System.readIdentifiedFilePrefix(path: String, maximumBytes: Int)` returns
+`Result<IdentifiedFilePrefix, FileSystemError>`. The result has public read-only
+fields `contents: String` and `identity: FileIdentity`. Reject a negative limit
+before validating the path under §18.1. Open without following a final symbolic
+link or equivalent reparse entry. On Windows, reject alternate streams and
+other extended namespaces besides drive and UNC paths. Verify ordinary
+regular-file kind and obtain the identity
+from the opened file before reading any bytes. A zero limit still performs
+these checks; a FIFO or pipe is rejected without waiting for a peer. This is
+not a general I/O timeout. The same-handle guarantee applies to results
+returned by `System`, not caller-constructed records.
+
+`System.directoryIdentity(path: String)` returns
+`Result<FileIdentity, FileSystemError>` for the directory at the resolved path.
+It follows directory aliases and supports comparing the source bases for two
+manifest paths without enumerating the directory. Both operations use
+non-inheritable handles. After a successful open they attempt close once;
+an earlier failure takes precedence over a close error. Errors return
+neither contents nor an identity. A native error keeps its code. If metadata
+instead shows a wrong kind, an unavailable identity, or an alternate data
+stream with no native error, report the platform's invalid-argument code
+(`EINVAL` or `ERROR_INVALID_PARAMETER`).
+
+`FileIdentity` is copyable and has no public constructor or portable numeric
+representation; its `Equatable` conformance compares native volume/device and
+file identifiers. An unavailable identity is an error, not a path-string
+fallback. Identities are for deduplication within one load, not persistent cache
+keys. They do not stabilize file contents, anchor subsequent path operations,
+or make traversal across a directory tree race-free.
+
+On Windows, `System.normalizedAbsolutePath(path: String)` returns
+`Result<String, FileSystemError>` and applies Win32 lexical full-path
+normalization to a valid path. It does not open the path, require it to
+exist, or resolve links or reparse points. It is not available on POSIX,
+where folding `..` before traversing a symlink can change the target.
 
 #### Compatibility
 
@@ -588,6 +652,7 @@ public enum HostQueryError {
 
 public func environmentVariable(name: String): Result<String?, HostQueryError>
 public func currentDirectory(): Result<String, HostQueryError>
+public func executablePath(): Result<String, HostQueryError>
 ```
 
 Lookups do not mutate process state. An environment name is nonempty, valid
@@ -602,6 +667,13 @@ the contract; Linux looks up the environment inherited at startup.
 environment variable. It can fail if the current directory cannot be named.
 Results are not guaranteed stable across calls, and they neither resolve
 arbitrary paths nor establish filesystem confinement.
+
+`executablePath` returns the absolute path reported by the host for the
+current process image, not `argv[0]` or a path relative to the current
+directory. Linux requires `/proc/self/exe`; macOS queries the current PID;
+Windows reads the main module's name. Each rejects overlong or malformed
+text rather than truncating it. The path is not a permanent file identity;
+renames and deleted executables follow the host's reporting behavior.
 
 The error cases preserve native codes: `InvalidInput` uses `EINVAL` or
 `ERROR_INVALID_PARAMETER`, `InvalidEncoding` uses `EILSEQ` or

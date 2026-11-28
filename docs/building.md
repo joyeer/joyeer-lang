@@ -71,6 +71,16 @@ filtered CTest runs are only for focused iteration.
 Linux runtime tests use the SDK's `llvm-nm`; on AArch64 they also use
 `llvm-objdump` to distinguish C startup imports from program references.
 
+For generated Linux programs, the raw `System` syscall path requires Linux 4.11
+or newer for [`statx`](https://man7.org/linux/man-pages/man2/statx.2.html#HISTORY).
+This is a syscall floor, not validation of a distribution running that kernel.
+There is no glibc `statx` wrapper dependency. The minimum glibc for a linked
+program follows the startup objects and libraries in its link environment.
+For example, the Ubuntu 26.04 ARM64 link imports `__libc_start_main@GLIBC_2.34`;
+[AArch64 programs linked and run against glibc 2.31](decisions/0016-thread-primitives.md#gating-and-the-link)
+use the matching older startup and, when needed, `libpthread.so.0`. This is not
+a glibc compatibility promise for the compiler or third-party native libraries.
+
 The Debug presets also set `JOYEER_BACKEND_TEST_HOOKS=ON`: the backend verifies
 the optimized module again and accepts a test fault injection. It is off by
 default and in the Release presets, which build the packages; never enable it
@@ -97,6 +107,36 @@ Use `--report FILE` to save results, `--no-retry` to disable failed-test
 reruns, and `--help` for other options. Validate each native architecture
 separately; one platform's results do not establish another's acceptance.
 
+For new language regressions, cite the most specific applicable spec section
+with a `// spec: 04-memory.md §4.2` comment. Run `python3 scripts/spec-coverage.py`
+(`python` on Windows) to list numbered sections with no explicit citations.
+The report rejects invalid citations; a citation records traceability, not
+proof that every case in a section is covered.
+
+For local sanitizer checks, configure a separate Debug build tree with
+`-DJOYEER_SANITIZE_HOST=ON`. This instruments the C++ compiler, backend, and
+C++ test drivers with MSVC AddressSanitizer or GCC/Clang ASan and UBSan.
+It does not instrument the Joyeer-emitted runtime archive, generated
+programs, or dependencies already built into the LLVM SDK. Use the existing
+host toolchain's sanitizer runtime; do not redistribute these builds.
+
+On native Linux, add `-DJOYEER_SANITIZE_RUNTIME=ON` in a separate test build
+with GCC or Clang to instrument the Joyeer-emitted runtime core. It builds a
+test-only archive, not the normal runtime or a shipped program:
+
+```text
+cmake --build <sanitizer-build> --target RuntimeAsanProbe
+ctest --test-dir <sanitizer-build> -R RuntimeAddressSanitizer --output-on-failure
+```
+
+The probe checks both a valid read and AddressSanitizer detection of a
+one-byte overread inside the runtime. Only the test build's explicit
+`--emit-asan-runtime-object` operation enables that instrumentation;
+ordinary objects and executables use the uninstrumented runtime. ASan
+does not automatically track
+the logical bounds of the runtime's custom allocator's internal blocks.
+The host and runtime options are independent and can be enabled together.
+
 ### Fern bootstrap and acceptance
 
 The default build bootstraps fern with the new compiler; no installed fern
@@ -104,10 +144,48 @@ is needed. Debug uses `-O0 -gfull`, Release uses `-O2 -g0`. On macOS, Debug
 falls back to `-g0` if `dsymutil` is unavailable. Debug PDB/dSYM sidecars,
 when produced, are tracked build outputs.
 
+Subsequent macOS native Debug builds run by fern pass `-gauto`, so they
+follow the selected compiler's `dsymutil` configuration. Explicit `-gfull`
+requests still require `dsymutil` for native executable output.
+To verify a macOS configuration without it, pass
+`--define JOYEER_DSYMUTIL_EXECUTABLE=` to `scripts/validate.py` in a separate
+validation checkout. Tests that require a dSYM are not registered there;
+the explicit missing-tool diagnostic and ordinary native workflows still run.
+
 The [fern gates](../tests/fern/CMakeLists.txt) cover bootstrap regeneration,
 self-build, workspaces, and relocated installs. They require `BUILD_TESTING`
 and `JOYEER_BUILD_FERN`, independently of the C++ unit-test option.
 `-DJOYEER_BUILD_FERN=OFF` disables bootstrap and these gates.
+
+### Toolchain library layout
+
+The compiler and fern sit beside `lib/`, which contains `JoyeerRuntime.lib` or
+`libJoyeerRuntime.a`, `index.toml`, and the source modules `Foundation`, `System`,
+and optional `Compression`. Development builds stage this layout under `bin/`;
+the `JoyeerRuntime` and `StandardLibrary` install components install the
+archive and the modules/index separately. Fern reads the index beside the
+compiler it selects. See [fern discovery](impl/fern.md#2-commands-and-selection)
+and the [compiler CLI](impl/backend.md#2-cli) for their respective overrides.
+
+On 2026-11-28 at `a362c88`, Windows ARM64 and Linux AArch64 (Ubuntu 26.04.1
+under WSL2), both with LLVM/LLD 22.1.8, passed unfiltered `scripts/validate.py`
+in Debug and Release without retries. Per configuration, Windows passed
+2260/2260 CTests and Linux passed 2235/2235; both passed all 7 root `fern test`
+targets. Each run included `Fern.Installed` (component inventories and relocated
+fern workflows) and `InstalledCompilerNativeHello`. See the
+[x86-64 results](decisions/0031-equatable.md#platform-validation) and
+[macOS ARM64 relocation results](impl/fern.md#macos-arm64-toolchain-validation).
+These layout gates do not establish standalone distributable packaging.
+
+### Native validation workflow
+
+The [Native validation workflow](../.github/workflows/validate.yml) runs
+weekly and supports manual dispatch on the default branch. Set the repository
+variable `JOYEER_NATIVE_RUNNERS` to `enabled` after provisioning self-hosted
+runners with the `joyeer-native` label, the native toolchains above,
+`LLVM_HOME`, and Python 3.9+. On Windows set `JOYEER_VCVARSALL` to the installed
+`vcvarsall.bat`. The workflow does not acquire compilers or SDKs or run
+untrusted pull request code on self-hosted runners.
 
 ## Local Debug installation
 
@@ -124,7 +202,8 @@ python3 scripts/install-debug.py
 ```
 
 The [installer](../scripts/install-debug.py) requires Python 3.9+ and CMake.
-It selects the native Debug preset, installs into `~/.joyeer/bin`, updates
+It selects the native Debug preset, installs the toolchain and its bundled
+standard modules into `~/.joyeer/bin`, updates
 the user PATH or shell profile, and installs the [Joyeer agent skill](../skills/README.md).
 **Open a new terminal or restart your IDE afterward.**
 
@@ -146,20 +225,22 @@ Homebrew-backed macOS installs retain the dependencies described below.
 
 ## Release staging
 
-**Local staging is not a redistributable release.** Third-party license/notice
-assembly is still required before redistribution.
+**Local staging is not a redistributable release.** Audit native dependencies
+and their actual redistribution terms before distributing a package.
 
 Use your platform's Release preset, with `LLVM_HOME` set:
 
 ```text
-cmake --preset <release-preset> -DINSTALL_GTEST=OFF
+cmake --preset <release-preset> -DINSTALL_GTEST=OFF -DJOYEER_BACKEND_TEST_HOOKS=OFF -DJOYEER_SANITIZE_HOST=OFF -DJOYEER_SANITIZE_RUNTIME=OFF
 cmake --build --preset <release-preset>
 ctest --preset <release-preset>
-cmake --install out/build/<release-preset> --prefix out/package/joyeer
+python3 scripts/stage_release.py --build-dir out/build/<release-preset> --notice-dir <reviewed-notices> --output-dir <new-stage>
 ```
 
 `INSTALL_GTEST=OFF` excludes GoogleTest from installation, not testing.
-Keep LLVM SDKs and test tools out of product packages.
+Use `python` on Windows. The stage must not exist, and its parent must
+already exist. The script installs only the selected product components,
+not the SDK or test tools; it refuses test-hook and sanitizer builds.
 
 - `JoyeerRuntime` installs the compiler and backend at the prefix, the static
   runtime archive under `<prefix>/lib/`, and the Joyeer license.
@@ -169,11 +250,32 @@ Keep LLVM SDKs and test tools out of product packages.
   explicitly.
 
 Keep the compiler, backend, and runtime in this layout, with matching architectures.
-Stage releases into a clean prefix so unused artifacts from an earlier layout aren't packaged.
 The concurrency, enum-role and collections preludes (`lib/Runtime/{concurrency,roles,collections}.joyeer`)
 are embedded in that compiler and aren't installed as separate source files.
-Before redistribution, assemble applicable LLVM/LLD, support-library,
-Windows LibXml2, Linux Clang, and other dependency notices.
+
+Collect the exact notice files from the build's SDKs and dependencies in
+`--notice-dir`: `LLVM.txt`, `LLD.txt`, `Platform.txt`, plus `LibXml2.txt`
+on Windows or `Clang.txt` on Linux. `Platform.txt` records the SDK and
+support-library audit; add any other required notices as separate `.txt`
+files. The script copies them verbatim and writes a sorted relative-path
+inventory with each file's size and SHA-256. It does not infer a license
+from a binary, supply missing legal text, or certify redistribution.
+Compression already carries the miniz notice in its module package.
+An interrupted or failed stage is not a publishable package; use a new
+destination on retry.
+
+`Fern.Installed` verifies separate components, the combined inventory
+(including Moss and Compression when enabled), and relocation to a path
+with spaces and Unicode. Inspect the staged dependencies separately with
+`llvm-readobj --coff-imports` on Windows, `readelf -d` on Linux, or
+`otool -L` on macOS, and verify any transitive SDK dependencies on the
+intended deployment host.
+
+On Linux AArch64 under WSL2, an LLVM/LLD 22.1.8 production Release build
+staged 42 files and ran the relocated compiler, fern, and Moss. The
+backend still needed the SDK's shared `libLLVM.so.22.1`, zlib, and zstd
+in addition to the system runtime; this is relocation evidence on the
+build host, not a standalone distribution.
 
 **Shared SDK limitation:** the backend follows the SDK's LLVM linkage on
 Linux and macOS. With a shared SDK (such as LLVM's Ubuntu packages or

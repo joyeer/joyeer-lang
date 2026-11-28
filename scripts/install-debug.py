@@ -148,6 +148,15 @@ def inspect_debug_build(build_dir: Path, source_dir: Path, system: str) -> Debug
     else:
         raise InstallError(f"Unsupported operating system: {system}.")
 
+    stdlib_dir = binary_dir / "lib"
+    artifacts["lib/index.toml"] = stdlib_dir / "index.toml"
+    modules = ["Foundation", "System"]
+    if cache.get("JOYEER_BUILD_COMPRESSION", "").upper() in {"1", "ON", "YES", "TRUE", "Y"}:
+        modules.append("Compression")
+    for module in modules:
+        manifest = f"{module}/project.toml"
+        artifacts[f"lib/{manifest}"] = stdlib_dir / manifest
+
     for artifact in artifacts.values():
         require_file(artifact, "Debug artifact")
     for symbol in symbols.values():
@@ -357,7 +366,7 @@ def install_debug(args: argparse.Namespace, source_dir: Path, system: str) -> No
     cmake = shutil.which("cmake")
     if cmake is None:
         raise InstallError("CMake is not on PATH; install CMake before running this script.")
-    components = ["JoyeerRuntime"]
+    components = ["JoyeerRuntime", "StandardLibrary"]
     if build.install_fern:
         components.append("PRODUCT")
     for component in components:

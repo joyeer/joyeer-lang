@@ -317,15 +317,11 @@ obligations of C. They exist so that the runtime itself can be written in
 Joyeer ([decision 0005](../docs/decisions/0005-runtime-unsafe-memory.md)); they add
 no pointer type, no address arithmetic beyond `Int`, and no dereference syntax.
 
-#### 19.4.6 Runtime capabilities still proposed ⏳
+#### 19.4.6 Runtime bulk memory and system calls
 
-One operation the runtime plan ([runtime plan](../docs/plan/0008-runtime-in-joyeer.md)) may
-want has **no decision** yet and is rejected by the compiler: for a runtime that
-does not depend on the C library, a Linux system-call intrinsic. It would follow
-the rules of §19.4.5: a reserved symbol, an exact signature, and authorized units
-only. Byte comparison (`memcmp`) is deliberately not an intrinsic: LLVM has no
-inline form of it, so a runtime unit imports the C library's `memcmp` with
-`@c_extern` until it can compare words itself.
+The bulk-memory and Linux syscall intrinsics are listed in §19.4.5. Byte
+comparison (`memcmp`) is not an intrinsic: LLVM has no inline form of it,
+so a runtime unit that needs it uses a target-provided native binding.
 
 #### 19.4.7 Core units, `Never` results, data symbols and the program entry point
 
@@ -438,6 +434,10 @@ and any required archive extraction or dynamic-export policy. Neither
 annotation locates a library, compiles C, imports a header, or adds a native
 dependency to a module manifest.
 
+Toolchains may accept a concrete library artifact or a logical library name
+and search directories. Such inputs are build configuration, not part of a
+Joyeer native declaration; they do not grant native-binding authorization.
+
 The selected provider may be static or dynamically linked without changing
 the declaration. Library selection and runtime search/deployment policy
 belong to the build target. Explicit runtime loading and symbol lookup
@@ -514,7 +514,7 @@ bare byte pointers), output parameters, and owned native result storage need a s
 source representation and lifetime/initialization contract before they can
 appear in these signatures.
 
-The [memory-boundary proposal](../docs/plan/0002-c-interop.md#32-native-memory-design-needed-no-accepted-syntax)
+The [memory-boundary proposal](../docs/plan/0002-c-interop.md#native-memory-implemented-boundary-and-remaining-design)
 tracks those decisions separately, including whether a mechanism remains
 runtime-only. It is not an implicit approval of `Optional` pointer layouts,
 C-compatible ordinary structs, callbacks, variadic calls, or a general

@@ -30,6 +30,9 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
+#if defined(JOYEER_SANITIZE_RUNTIME)
+#include "llvm/Transforms/Instrumentation/AddressSanitizer.h"
+#endif
 #include "llvm/Transforms/Utils/Cloning.h"
 #if defined(_WIN32)
 #include "llvm/WindowsDriver/MSVCPaths.h"
@@ -136,6 +139,7 @@ std::string sourceDiagnostic(const llvm::SMDiagnostic& diagnostic) {
 
 JoyeerBackendStatus emitObject(
         const JoyeerBackendObjectOptions& options,
+        [[maybe_unused]] bool sanitizeRuntime,
         JoyeerBackendDiagnosticCallback diagnosticCallback,
         void* diagnosticContext) {
     static const bool targetInitializationFailed = [] {
@@ -259,6 +263,16 @@ JoyeerBackendStatus emitObject(
             ? passBuilder.buildO0DefaultPipeline(requestedOptimization)
             : passBuilder.buildPerModuleDefaultPipeline(requestedOptimization);
     optimizationPipeline.run(*module, moduleAnalyses);
+#if defined(JOYEER_SANITIZE_RUNTIME)
+    if (sanitizeRuntime) {
+        for (auto& function : *module) {
+            if (!function.isDeclaration()) function.addFnAttr(llvm::Attribute::SanitizeAddress);
+        }
+        llvm::ModulePassManager sanitizer;
+        sanitizer.addPass(llvm::AddressSanitizerPass(llvm::AddressSanitizerOptions{}));
+        sanitizer.run(*module, moduleAnalyses);
+    }
+#endif
 #if defined(JOYEER_VERIFY_OPTIMIZED_IR)
     // Test builds verify the module again after the pipeline, debug info included (0026 known gap (a), decision
     // 0027): an inlining that leaves a location outside its function's subprogram fails the compile here instead of
@@ -586,8 +600,11 @@ extern "C" int joyeer_backend_has_macho_linker(void) {
 #endif
 }
 
-extern "C" JoyeerBackendStatus joyeer_backend_emit_object(
+namespace {
+
+JoyeerBackendStatus emitCheckedObject(
         const JoyeerBackendObjectOptions* options,
+        bool sanitizeRuntime,
         JoyeerBackendDiagnosticCallback diagnosticCallback,
         void* diagnosticContext) {
     if (options == nullptr ||
@@ -601,8 +618,15 @@ extern "C" JoyeerBackendStatus joyeer_backend_emit_object(
                 "invalid native backend object options");
         return JOYEER_BACKEND_INVALID_ARGUMENT;
     }
+#if defined(JOYEER_SANITIZE_RUNTIME)
+    if (sanitizeRuntime && (options->module == nullptr || !options->module->isCoreRuntimeObject)) {
+        report(diagnosticCallback, diagnosticContext, JOYEER_BACKEND_INVALID_ARGUMENT,
+                "sanitizer emission requires a verified runtime core object");
+        return JOYEER_BACKEND_INVALID_ARGUMENT;
+    }
+#endif
     try {
-        return emitObject(*options, diagnosticCallback, diagnosticContext);
+        return emitObject(*options, sanitizeRuntime, diagnosticCallback, diagnosticContext);
     } catch (const std::exception& error) {
         report(
                 diagnosticCallback,
@@ -618,6 +642,24 @@ extern "C" JoyeerBackendStatus joyeer_backend_emit_object(
     }
     return JOYEER_BACKEND_INTERNAL_ERROR;
 }
+
+} // namespace
+
+extern "C" JoyeerBackendStatus joyeer_backend_emit_object(
+        const JoyeerBackendObjectOptions* options,
+        JoyeerBackendDiagnosticCallback diagnosticCallback,
+        void* diagnosticContext) {
+    return emitCheckedObject(options, false, diagnosticCallback, diagnosticContext);
+}
+
+#if defined(JOYEER_SANITIZE_RUNTIME)
+extern "C" JoyeerBackendStatus joyeer_backend_emit_asan_runtime_object(
+        const JoyeerBackendObjectOptions* options,
+        JoyeerBackendDiagnosticCallback diagnosticCallback,
+        void* diagnosticContext) {
+    return emitCheckedObject(options, true, diagnosticCallback, diagnosticContext);
+}
+#endif
 
 extern "C" JoyeerBackendStatus joyeer_backend_link_coff(
         const JoyeerBackendLinkOptions* options,

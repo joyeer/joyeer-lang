@@ -1,0 +1,7 @@
+// spec: 11-annotations.md §11.1
+@spec("description")
+func described() {}
+
+// spec: 11-annotations.md §11.2
+@property(true)
+func sample() {}

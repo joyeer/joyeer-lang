@@ -121,6 +121,14 @@ joyeer_backend_emit_object(
         const JoyeerBackendObjectOptions* options,
         JoyeerBackendDiagnosticCallback diagnosticCallback,
         void* diagnosticContext);
+#if defined(JOYEER_SANITIZE_RUNTIME)
+/* Test builds only; ordinary object emission never runs the sanitizer. */
+JOYEER_BACKEND_API JoyeerBackendStatus
+joyeer_backend_emit_asan_runtime_object(
+        const JoyeerBackendObjectOptions* options,
+        JoyeerBackendDiagnosticCallback diagnosticCallback,
+        void* diagnosticContext);
+#endif
 JOYEER_BACKEND_API JoyeerBackendStatus
 joyeer_backend_link_coff(
         const JoyeerBackendLinkOptions* options,

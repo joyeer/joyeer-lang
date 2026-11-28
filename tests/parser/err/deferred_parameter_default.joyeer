@@ -1,0 +1,2 @@
+// spec: 03-declarations.md §3.2
+func answer(value: Int = 42): Int { return value }

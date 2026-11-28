@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace joyeer {
@@ -47,6 +48,20 @@ struct ModuleSources {
     std::string name;
     std::vector<std::filesystem::path> files;
 };
+
+using NativeLinkInput = std::variant<std::filesystem::path, std::string>;
+
+[[nodiscard]] inline bool isNativeLibraryName(std::string_view name) {
+    const auto alphanumeric = [](char value) {
+        return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z') ||
+                (value >= '0' && value <= '9');
+    };
+    if (name.empty() || !alphanumeric(name.front())) return false;
+    for (const char value : name) {
+        if (!alphanumeric(value) && value != '_' && value != '.' && value != '+' && value != '-') return false;
+    }
+    return true;
+}
 
 [[nodiscard]] inline bool isModuleName(std::string_view name) {
     bool start = true;

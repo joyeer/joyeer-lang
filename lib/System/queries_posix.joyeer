@@ -16,6 +16,14 @@ private func getcwdP(buffer: inout [UInt8], size: Int): Int
 @c_extern(symbol: "clock_gettime", pointer: "stamp")
 private func clockGettimeP(clock: UInt32, stamp: inout [UInt8]): Int32
 
+@platform(macos)
+@c_extern(symbol: "getpid")
+private func getPid(): Int32
+
+@platform(macos)
+@c_extern(symbol: "proc_pidpath", pointer: "buffer")
+private func procPidPath(pid: Int32, buffer: inout [UInt8], size: UInt32): Int32
+
 @platform(posix)
 func nativeEnvironmentVariable(name: String): Result<String?, HostQueryError> {
     var slot = cEnvironment()
@@ -78,6 +86,29 @@ func nativeCurrentDirectory(): Result<String, HostQueryError> {
         size = size * 2
     }
     return .Err(.OutOfRange(queryOverflowCode()))
+}
+
+@platform(linux)
+func nativeExecutablePath(): Result<String, HostQueryError> {
+    let capacity = 4096
+    var buffer = zeroBuffer(count: capacity)
+    let length = nativeReadLink(path: nativePathBytes(text: "/proc/self/exe"), buffer: &buffer)
+    if length < 0 { return .Err(.QueryFailed(0 - length)) }
+    if length >= capacity { return .Err(.OutOfRange(queryOverflowCode())) }
+    if length == 0 || buffer[0] != b'/' { return .Err(.QueryFailed(invalidInputCode())) }
+    return .Ok(stringFromBytes(bytes: buffer, count: length))
+}
+
+@platform(macos)
+func nativeExecutablePath(): Result<String, HostQueryError> {
+    // PROC_PIDPATHINFO_MAXSIZE; the kernel reports the loaded process image.
+    let capacity = 4096
+    var buffer = zeroBuffer(count: capacity)
+    let length = procPidPath(pid: getPid(), buffer: &buffer, size: capacity as UInt32) as Int
+    if length <= 0 { return .Err(.QueryFailed(cErrno() as Int)) }
+    if length >= capacity { return .Err(.OutOfRange(queryOverflowCode())) }
+    if buffer[0] != b'/' { return .Err(.QueryFailed(invalidInputCode())) }
+    return .Ok(stringFromBytes(bytes: buffer, count: length))
 }
 
 @platform(linux)

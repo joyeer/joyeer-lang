@@ -13,8 +13,11 @@ struct ModuleSpec {
     let output: String
     let sources: [String]
     let dependencies: [String]
+    let pathDependencies: [String]
     let nativeLibraries: [String]
     let nativeBindings: Bool
+    var nativeSearchPaths: [String]
+    var nativeNames: [String]
     let pos: Int
 }
 
@@ -114,7 +117,7 @@ func validModuleName(name: String): Bool {
     return !componentStart
 }
 
-private func manifestSourcePath(path: String): Bool {
+private func manifestRelativePath(path: String, allowParent: Bool): Bool {
     if path.count == 0 { return false }
     let windows = System.isWindows()
     if isPathSeparator(byte: path[0], windows: windows) { return false }
@@ -143,12 +146,11 @@ private func manifestSourcePath(path: String): Bool {
         }
         if boundary {
             let length = index - start
-            if length == 2 {
-                if path[start] == b'.' && path[start + 1] == b'.' { return false }
-            }
+            let parent = length == 2 && path[start] == b'.' && path[start + 1] == b'.'
+            if parent && !allowParent { return false }
             let dot = length == 1 && path[start] == b'.'
-            if index == path.count && (length == 0 || dot) { return false }
-            if windows && length > 0 && !dot {
+            if index == path.count && (length == 0 || (dot && !allowParent)) { return false }
+            if windows && length > 0 && !dot && !parent {
                 let last = path[index - 1]
                 if last == b'.' || last == b' ' { return false }
                 var stemEnd = start
@@ -164,6 +166,10 @@ private func manifestSourcePath(path: String): Bool {
         index = index + 1
     }
     return true
+}
+
+private func manifestSourcePath(path: String): Bool {
+    return manifestRelativePath(path: path, allowParent: false)
 }
 
 func validArtifactModuleName(name: String): Bool {
@@ -321,7 +327,7 @@ private func manifestKey(p: inout ManifestCursor): Result<String, ToolError> {
     return .Ok(key)
 }
 
-private func manifestHeader(p: inout ManifestCursor): Result<ManifestTable, ToolError> {
+private func manifestHeader(p: inout ManifestCursor, allowNative: Bool): Result<ManifestTable, ToolError> {
     let pos = p.pos
     if p.pos >= p.input.count || manifestCurrent(p: p) != b'[' {
         return .Err(ToolError(message: "expected [module] or [workspace]", pos: pos))
@@ -333,8 +339,14 @@ private func manifestHeader(p: inout ManifestCursor): Result<ManifestTable, Tool
         manifestAdvance(p: &p)
     }
     manifestHorizontal(p: &p)
-    let name = manifestBareKey(p: &p)?
+    var name = manifestBareKey(p: &p)?
     manifestHorizontal(p: &p)
+    if allowNative && !array && name == "native" && p.pos < p.input.count && manifestCurrent(p: p) == b'.' {
+        manifestAdvance(p: &p)
+        manifestHorizontal(p: &p)
+        name = "native." + manifestBareKey(p: &p)?
+        manifestHorizontal(p: &p)
+    }
     if p.pos >= p.input.count || manifestCurrent(p: p) != b']' {
         return .Err(ToolError(message: "expected closing table bracket; dotted tables are unsupported", pos: p.pos))
     }
@@ -561,6 +573,19 @@ private func manifestString(p: inout ManifestCursor): Result<String, ToolError> 
     return .Err(ToolError(message: "unterminated single-line string", pos: pos))
 }
 
+private func manifestNativeName(name: String): Bool {
+    if name.count == 0 { return false }
+    if !manifestLetter(byte: name[0]) && !manifestDigit(byte: name[0]) { return false }
+    var index = 1
+    while index < name.count {
+        let byte = name[index]
+        if !manifestLetter(byte: byte) && !manifestDigit(byte: byte) &&
+            byte != b'_' && byte != b'.' && byte != b'+' && byte != b'-' { return false }
+        index = index + 1
+    }
+    return true
+}
+
 private func manifestArray(p: inout ManifestCursor, category: String): Result<[String], ToolError> {
     let pos = p.pos
     if p.pos >= p.input.count || manifestCurrent(p: p) != b'[' {
@@ -591,6 +616,20 @@ private func manifestArray(p: inout ManifestCursor, category: String): Result<[S
                 return .Err(ToolError(message: description + " must be a relative file path without parent traversal: " + value, pos: itemPos))
             }
             key = manifestSourceKey(path: value)
+        } else if category == "path-dependencies" {
+            if !manifestRelativePath(path: value, allowParent: true) {
+                return .Err(ToolError(message: "path dependency must be a relative directory: " + value, pos: itemPos))
+            }
+        } else if category == "native-search" {
+            if value != "." && !manifestSourcePath(path: value) {
+                return .Err(ToolError(message: "native search path must be a relative directory without parent traversal: " + value,
+                    pos: itemPos))
+            }
+            key = manifestSourceKey(path: value)
+        } else if category == "native-libs" {
+            if !manifestNativeName(name: value) {
+                return .Err(ToolError(message: "invalid logical native library name: " + value, pos: itemPos))
+            }
         } else if category == "members" {
             if value != "." && !manifestSourcePath(path: value) {
                 return .Err(ToolError(message: "workspace member must be a relative directory without parent traversal: " + value, pos: itemPos))
@@ -634,15 +673,21 @@ private func manifestModuleBody(p: inout ManifestCursor, pos: Int): Result<Modul
     var output = ""
     var sources: [String] = []
     var dependencies: [String] = []
+    var pathDependencies: [String] = []
     var nativeLibraries: [String] = []
     var nativeBindings = false
+    var nativeSearchPaths: [String] = []
+    var nativeNames: [String] = []
     var hasName = false
     var hasKind = false
     var hasOutput = false
     var hasSources = false
     var hasDependencies = false
+    var hasPathDependencies = false
     var hasNativeLibraries = false
     var hasNativeBindings = false
+    var hasNativeSearch = false
+    var hasNativeNames = false
     while p.pos < p.input.count {
         manifestTrivia(p: &p)?
         if p.pos >= p.input.count || manifestCurrent(p: p) == b'[' { break }
@@ -681,10 +726,22 @@ private func manifestModuleBody(p: inout ManifestCursor, pos: Int): Result<Modul
             if hasDependencies { return .Err(ToolError(message: "duplicate module.dependencies", pos: keyPos)) }
             dependencies = manifestArray(p: &p, category: "dependencies")?
             hasDependencies = true
+        } else if key == "path-dependencies" {
+            if hasPathDependencies { return .Err(ToolError(message: "duplicate module.path-dependencies", pos: keyPos)) }
+            pathDependencies = manifestArray(p: &p, category: "path-dependencies")?
+            hasPathDependencies = true
         } else if key == "native-libraries" {
             if hasNativeLibraries { return .Err(ToolError(message: "duplicate module.native-libraries", pos: keyPos)) }
             nativeLibraries = manifestArray(p: &p, category: "native-libraries")?
             hasNativeLibraries = true
+        } else if key == "native-search" {
+            if hasNativeSearch { return .Err(ToolError(message: "duplicate module.native-search", pos: keyPos)) }
+            nativeSearchPaths = manifestArray(p: &p, category: "native-search")?
+            hasNativeSearch = true
+        } else if key == "native-libs" {
+            if hasNativeNames { return .Err(ToolError(message: "duplicate module.native-libs", pos: keyPos)) }
+            nativeNames = manifestArray(p: &p, category: "native-libs")?
+            hasNativeNames = true
         } else if key == "native-bindings" {
             if hasNativeBindings { return .Err(ToolError(message: "duplicate module.native-bindings", pos: keyPos)) }
             if substring(text: p.input, start: p.pos, end: p.pos + 4) == "true" {
@@ -708,6 +765,9 @@ private func manifestModuleBody(p: inout ManifestCursor, pos: Int): Result<Modul
     if kind == "source" && hasOutput {
         return .Err(ToolError(message: "source modules do not declare an output artifact", pos: pos))
     }
+    if kind == "source" && (hasNativeSearch || hasNativeNames) {
+        return .Err(ToolError(message: "source modules do not declare native link names or search directories", pos: pos))
+    }
     if kind != "source" && !hasOutput {
         return .Err(ToolError(message: "bin/test modules require module.output", pos: pos))
     }
@@ -715,8 +775,47 @@ private func manifestModuleBody(p: inout ManifestCursor, pos: Int): Result<Modul
         return .Err(ToolError(message: "bin/test module name must also be a valid artifact-directory component", pos: pos))
     }
     return .Ok(ModuleSpec(name: name, kind: kind, output: output,
-        sources: sources, dependencies: dependencies, nativeLibraries: nativeLibraries,
-        nativeBindings: nativeBindings, pos: pos))
+        sources: sources, dependencies: dependencies, pathDependencies: pathDependencies, nativeLibraries: nativeLibraries,
+        nativeBindings: nativeBindings, nativeSearchPaths: nativeSearchPaths, nativeNames: nativeNames, pos: pos))
+}
+
+@platform(windows)
+private func nativePlatformTable(): String { return "native.windows" }
+
+@platform(linux)
+private func nativePlatformTable(): String { return "native.linux" }
+
+@platform(macos)
+private func nativePlatformTable(): String { return "native.macos" }
+
+private func manifestNativeTable(p: inout ManifestCursor, spec: inout ModuleSpec, active: Bool): Result<Void, ToolError> {
+    var hasSearch = false
+    var hasNames = false
+    while true {
+        manifestTrivia(p: &p)?
+        if p.pos >= p.input.count || manifestCurrent(p: p) == b'[' { return .Ok(()) }
+        let keyPos = p.pos
+        let key = manifestKey(p: &p)?
+        if key == "libs" {
+            if hasNames { return .Err(ToolError(message: "duplicate native table libs", pos: keyPos)) }
+            let names = manifestArray(p: &p, category: "native-libs")?
+            if active {
+                for name in names { &spec.nativeNames.append(element: name) }
+            }
+            hasNames = true
+        } else if key == "search" {
+            if hasSearch { return .Err(ToolError(message: "duplicate native table search", pos: keyPos)) }
+            let paths = manifestArray(p: &p, category: "native-search")?
+            if active {
+                for path in paths { &spec.nativeSearchPaths.append(element: path) }
+            }
+            hasSearch = true
+        } else {
+            return .Err(ToolError(message: "unknown native platform key: " + key, pos: keyPos))
+        }
+        manifestLineEnd(p: &p)?
+    }
+    return .Ok(())
 }
 
 private func manifestWorkspaceBody(p: inout ManifestCursor, pos: Int): Result<[String], ToolError> {
@@ -783,14 +882,33 @@ func parseManifest(contents: String): Result<ModuleSpec, ToolError> {
     var p = ManifestCursor(input: contents, pos: 0)
     manifestPrefix(p: &p, expected: 1)?
     if p.pos >= contents.count { return .Err(ToolError(message: "missing [module] table", pos: p.pos)) }
-    let table = manifestHeader(p: &p)?
+    let table = manifestHeader(p: &p, allowNative: false)?
     if table.name != "module" || table.array {
         return .Err(ToolError(message: "one project.toml defines one [module]; migrate earlier [package]/[[modules]]/[[targets]] projects to workspace.toml", pos: table.pos))
     }
-    let spec = manifestModuleBody(p: &p, pos: table.pos)?
-    manifestTrivia(p: &p)?
-    if p.pos != contents.count {
-        return .Err(ToolError(message: "only one [module] table is allowed; use workspace.toml for multiple modules", pos: p.pos))
+    var spec = manifestModuleBody(p: &p, pos: table.pos)?
+    var platforms: [String] = []
+    while p.pos < contents.count {
+        manifestTrivia(p: &p)?
+        if p.pos == contents.count { break }
+        let platform = manifestHeader(p: &p, allowNative: true)?
+        if platform.name == "module" {
+            return .Err(ToolError(message: "only one [module] table is allowed; use workspace.toml for multiple modules", pos: platform.pos))
+        }
+        if platform.array || (platform.name != "native.windows" && platform.name != "native.linux" &&
+            platform.name != "native.macos") {
+            return .Err(ToolError(message: "unknown native platform table: " + platform.name, pos: platform.pos))
+        }
+        if spec.kind == "source" {
+            return .Err(ToolError(message: "source modules do not declare native link names or search directories", pos: platform.pos))
+        }
+        for earlier in platforms {
+            if earlier == platform.name {
+                return .Err(ToolError(message: "duplicate native platform table: " + platform.name, pos: platform.pos))
+            }
+        }
+        &platforms.append(element: platform.name)
+        manifestNativeTable(p: &p, spec: &spec, active: platform.name == nativePlatformTable())?
     }
     return .Ok(spec)
 }
@@ -842,7 +960,7 @@ func parseWorkspace(contents: String): Result<[String], ToolError> {
     var p = ManifestCursor(input: contents, pos: 0)
     manifestPrefix(p: &p, expected: 1)?
     if p.pos >= contents.count { return .Err(ToolError(message: "missing [workspace] table", pos: p.pos)) }
-    let table = manifestHeader(p: &p)?
+    let table = manifestHeader(p: &p, allowNative: false)?
     if table.name != "workspace" || table.array {
         return .Err(ToolError(message: "workspace.toml permits only [workspace]", pos: table.pos))
     }

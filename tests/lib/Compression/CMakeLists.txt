@@ -14,7 +14,7 @@ endif()
 # Compression imports System (readFilePrefix), and these programs compile with
 # --no-stdlib, so System and the Foundation it needs are named explicitly.
 set(compression_system_args "")
-foreach(source IN ITEMS Foundation/text.joyeer Foundation/checksum.joyeer
+foreach(source IN ITEMS Foundation/text.joyeer Foundation/checksum.joyeer Foundation/sha256.joyeer
         System/path.joyeer System/messages.joyeer System/owned_files.joyeer System/filesystem.joyeer
         System/filesystem_windows.joyeer System/filesystem_posix.joyeer System/filesystem_linux.joyeer
         System/legacy_file.joyeer System/process.joyeer System/process_windows.joyeer
@@ -28,7 +28,7 @@ endforeach()
 string(APPEND compression_system_args "--runtime-module;System;")
 foreach(profile IN ITEMS Debug Optimized)
     if(profile STREQUAL Debug)
-        set(flags -O0 -gfull)
+        set(flags -O0 ${joyeer_test_native_debug})
     else()
         set(flags -O2 -g0)
     endif()

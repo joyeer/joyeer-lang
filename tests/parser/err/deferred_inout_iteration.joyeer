@@ -1,0 +1,4 @@
+// spec: 06-statements.md §6.3
+func reset(values: inout [Int]) {
+    for &value in values { value = 0 }
+}

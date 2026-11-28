@@ -127,12 +127,26 @@ TEST_F(LexerTest, ClassifiesAnnotationPunctuationAndNames) {
     EXPECT_EQ(source->tokens.front()->span.length, 1u);
 }
 
+// spec: 01-lexical.md §1.4
 TEST_F(LexerTest, ReservesDeferredWordsButLeavesRemovedEffectsAsIdentifiers) {
     lex("where yield defer performs pure");
 
     expectKinds({deferredKeyword, deferredKeyword, deferredKeyword,
                  identifier, identifier, endOfFile});
     ASSERT_EQ(diagnostics.errors.size(), 3u);
+}
+
+// spec: 01-lexical.md §1.4
+TEST_F(LexerTest, ReportsEachReservedWordAsUnsupportedSyntax) {
+    for (const auto* word : {"async", "await", "actor", "throws", "try", "catch", "defer", "is",
+                              "class", "trait", "macro", "invariant", "result", "unsafe", "package", "Any",
+                              "where", "yield", "subscript", "indirect", "init"}) {
+        SCOPED_TRACE(word);
+        lex(word);
+        expectKinds({deferredKeyword, endOfFile});
+        ASSERT_EQ(diagnostics.errors.size(), 1u);
+        EXPECT_EQ(diagnostics.errors[0].code, "lexer.unsupported-syntax");
+    }
 }
 
 TEST_F(LexerTest, DeinitIsAKeywordNotADeferredWord) {
@@ -275,6 +289,7 @@ TEST_F(LexerTest, DiagnosesRadixOverflow) {
     EXPECT_EQ(diagnostics.errors[0].message, Diagnostics::errorIntegerLiteralOverflow);
 }
 
+// spec: 01-lexical.md §1.5
 TEST_F(LexerTest, RejectsMalformedNumbersAsWholeTokens) {
     lex("0x 0b2 0o8 0xg 0x_1 0x1_ 0b1__0 12abc 1_ 1__0");
 

@@ -72,8 +72,10 @@ Option 2.
   [§18.2](../../specs/18-host.md#182-filesystem-operations) bounds the logical
   read and storage growth, not the number of allocations. See
   [reader allocation costs](../impl/runtime.md#reader-allocation-costs).
-- Platform bindings: macOS still uses the deprecated `readdir_r`. Linux now
-  calls `getdents64` and `statx` directly, so it needs neither libc wrapper.
+- Platform bindings: macOS still uses the deprecated `readdir_r`, but the
+  file bindings now use fixed-signature `openx_np` and descriptor I/O rather
+  than stdio. Linux calls `getdents64` and `statx` directly, so it needs
+  neither libc wrapper.
 - Tests: `tests/c-interop/pointers.joyeer` with a C fixture (both profiles),
   unit tests for accepted and rejected declarations and malformed IR,
   `tests/lib/System/filesystem.joyeer` (over a hundred differential

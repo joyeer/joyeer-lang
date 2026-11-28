@@ -1,0 +1,156 @@
+// SHA-256 compression and padding as defined by FIPS 180-4, sections 5 and 6.
+private let roundConstants: [UInt32] = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+]
+
+public struct Sha256State {
+    private var hash: [UInt32]
+    private var block: [UInt8]
+    private var used: Int
+    private var count: UInt64
+}
+
+public func sha256Start(): Sha256State {
+    var block: [UInt8] = []
+    for _ in 0..<64 { &block.append(element: 0) }
+    return Sha256State(hash: [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19],
+        block: block, used: 0, count: 0)
+}
+
+private func rotateRight(word: UInt32, bits: Int): UInt32 {
+    return (word >> bits) | (word << (32 - bits))
+}
+
+private func sha256Block(hash: inout [UInt32], block: borrowing [UInt8], start: Int) {
+    var words: [UInt32] = []
+    for index in 0..<16 {
+        let at = start + index * 4
+        let first = (block[at] as UInt32) << 24
+        let second = (block[at + 1] as UInt32) << 16
+        let third = (block[at + 2] as UInt32) << 8
+        &words.append(element: first | second | third | (block[at + 3] as UInt32))
+    }
+    for index in 16..<64 {
+        let left = words[index - 15]
+        let right = words[index - 2]
+        let s0 = rotateRight(word: left, bits: 7) ^ rotateRight(word: left, bits: 18) ^ (left >> 3)
+        let s1 = rotateRight(word: right, bits: 17) ^ rotateRight(word: right, bits: 19) ^ (right >> 10)
+        let next = words[index - 16] + s0 + words[index - 7] + s1
+        &words.append(element: next)
+    }
+    var a = hash[0]
+    var b = hash[1]
+    var c = hash[2]
+    var d = hash[3]
+    var e = hash[4]
+    var f = hash[5]
+    var g = hash[6]
+    var h = hash[7]
+    for index in 0..<64 {
+        let s1 = rotateRight(word: e, bits: 6) ^ rotateRight(word: e, bits: 11) ^ rotateRight(word: e, bits: 25)
+        let choice = (e & f) ^ (~e & g)
+        let t1 = h + s1 + choice + roundConstants[index] + words[index]
+        let s0 = rotateRight(word: a, bits: 2) ^ rotateRight(word: a, bits: 13) ^ rotateRight(word: a, bits: 22)
+        let majority = (a & b) ^ (a & c) ^ (b & c)
+        h = g
+        g = f
+        f = e
+        e = d + t1
+        d = c
+        c = b
+        b = a
+        a = t1 + s0 + majority
+    }
+    &hash[0] = hash[0] + a
+    &hash[1] = hash[1] + b
+    &hash[2] = hash[2] + c
+    &hash[3] = hash[3] + d
+    &hash[4] = hash[4] + e
+    &hash[5] = hash[5] + f
+    &hash[6] = hash[6] + g
+    &hash[7] = hash[7] + h
+}
+
+public func sha256Update(state: inout Sha256State, bytes: borrowing [UInt8]): Bool {
+    let length = bytes.count as UInt64
+    let maximumBytes: UInt64 = 0x1fffffffffffffff
+    if length > maximumBytes - state.count { return false }
+    if length == 0 { return true }
+    &state.count = state.count + length
+    var position = 0
+    if state.used != 0 {
+        var used = state.used
+        while used < 64 && position < bytes.count {
+            &state.block[used] = bytes[position]
+            used = used + 1
+            position = position + 1
+        }
+        if used < 64 {
+            &state.used = used
+            return true
+        }
+        sha256Block(hash: &state.hash, block: state.block, start: 0)
+        &state.used = 0
+    }
+    while bytes.count - position >= 64 {
+        sha256Block(hash: &state.hash, block: bytes, start: position)
+        position = position + 64
+    }
+    var used = 0
+    while position < bytes.count {
+        &state.block[used] = bytes[position]
+        used = used + 1
+        position = position + 1
+    }
+    &state.used = used
+    return true
+}
+
+public func sha256Digest(state: borrowing Sha256State): String {
+    var hash = state.hash
+    var block = state.block
+    var used = state.used
+    &block[used] = 0x80
+    used = used + 1
+    if used > 56 {
+        while used < 64 {
+            &block[used] = 0
+            used = used + 1
+        }
+        sha256Block(hash: &hash, block: block, start: 0)
+        used = 0
+    }
+    while used < 56 {
+        &block[used] = 0
+        used = used + 1
+    }
+    let bitCount = state.count << 3
+    for index in 0..<8 {
+        &block[56 + index] = (bitCount >> ((7 - index) * 8)) &as UInt8
+    }
+    sha256Block(hash: &hash, block: block, start: 0)
+    let digits = "0123456789abcdef"
+    var digest = ""
+    for index in 0..<8 {
+        let word = hash[index]
+        for nibble in 0..<8 {
+            let digit = ((word >> ((7 - nibble) * 4)) & 15) as Int
+            digest = digest + byteToString(value: digits[digit])
+        }
+    }
+    return digest
+}
+
+public func sha256(bytes: borrowing [UInt8]): String? {
+    var state = sha256Start()
+    if !sha256Update(state: &state, bytes: bytes) { return nil }
+    return .Some(sha256Digest(state: state))
+}

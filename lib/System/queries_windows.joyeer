@@ -3,6 +3,10 @@
 private func getCurrentDirectoryW(size: UInt32, buffer: inout [UInt8]): UInt32
 
 @platform(windows)
+@c_extern(symbol: "GetModuleFileNameW", pointer: "buffer")
+private func getModuleFileNameW(module: Int, buffer: inout [UInt8], size: UInt32): UInt32
+
+@platform(windows)
 @c_extern(symbol: "GetEnvironmentVariableW", pointer: "name", pointer: "buffer")
 private func getEnvironmentVariableW(name: [UInt8], buffer: inout [UInt8], size: UInt32): UInt32
 
@@ -43,6 +47,19 @@ func nativeCurrentDirectory(): Result<String, HostQueryError> {
         size = length
     }
     return .Err(.QueryFailed(122))
+}
+
+@platform(windows)
+func nativeExecutablePath(): Result<String, HostQueryError> {
+    var size: UInt32 = 256
+    while size <= 32768 {
+        var buffer = zeroBuffer(count: (size as Int) * 2)
+        let length = getModuleFileNameW(module: 0, buffer: &buffer, size: size)
+        if length == 0 { return .Err(.QueryFailed(getLastErrorW() as Int)) }
+        if length < size { return decodedText(buffer: buffer, length: length as Int) }
+        size = size * 2
+    }
+    return .Err(.OutOfRange(534))
 }
 
 @platform(windows)

@@ -339,8 +339,13 @@ sysroot is the compiler executable's directory unless `--sysroot <dir>`
 overrides it. Standard modules are loaded only when imported, may import each
 other, and bring their native archives into the link only then. `--print-sysroot`
 prints the root, and `--no-stdlib` disables the lookup. A supplied module with a
-standard module's name takes precedence over the toolchain's copy. See
-[toolchain library resolution](../plan/0006-toolchain-libraries.md).
+standard module's name takes precedence over the toolchain's copy. The index's
+compiler version, target and configuration must match the running compiler
+(`toolchain.library-mismatch`). Standard-module native library paths must be
+relative without parent traversal (`toolchain.library-invalid`). The runtime
+archive stays relative to the compiler executable even with `--sysroot`.
+Neither lookup searches environment variables or `PATH`. See
+[toolchain library staging and validation](../building.md#toolchain-library-layout).
 
 CLI source paths resolve against the process working directory, including
 dependency paths, not against the first source file or another module.
@@ -436,7 +441,12 @@ enable line tables in the host format; `-gfull` adds lexical scopes, source
 variables, and physical type metadata. `-gdwarf` selects DWARF 4, and
 `-gcodeview` selects CodeView on Windows. Format selection and enable/disable
 options compose in command-line order; for example `-gdwarf -g0 -g` produces
-DWARF line tables. Debug and optimization are orthogonal: `-O0` marks the
+DWARF line tables. `-gauto` is `-gfull` except for macOS executable output:
+if the selected compiler has no configured `dsymutil` path or that file
+is missing, it emits a native executable without debug information. A
+later explicit debug option cancels the fallback, and a configured tool
+that fails still causes a build error. LLVM IR and object output do not
+need `dsymutil`. Debug and optimization are orthogonal: `-O0` marks the
 compile unit unoptimized, while `-O1`…`-O3` carry optimized debug flags without
 changing the emitted pre-optimization instructions.
 

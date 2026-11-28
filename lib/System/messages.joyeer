@@ -15,6 +15,15 @@ public func fileSystemMessage(error: FileSystemError): String {
     }
 }
 
+public func hostQueryMessage(error: HostQueryError): String {
+    return match error {
+        .InvalidInput(code) => "invalid host query input (platform code " + decimalString(value: code) + ")",
+        .InvalidEncoding(code) => "invalid host text encoding (platform code " + decimalString(value: code) + ")",
+        .QueryFailed(code) => "host query failed (platform code " + decimalString(value: code) + ")",
+        .OutOfRange(code) => "host query result out of range (platform code " + decimalString(value: code) + ")",
+    }
+}
+
 public func processMessage(error: ProcessError): String {
     return match error {
         .InvalidInput(code) => "invalid process input (platform code " + decimalString(value: code) + ")",

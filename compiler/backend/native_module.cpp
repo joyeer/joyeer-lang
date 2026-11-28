@@ -53,6 +53,16 @@ extern "C" JoyeerBackendStatus joyeer_backend_build_module(
         for (const auto& diagnostic : diagnostics) reportIRDiagnostic(callback, context, diagnostic);
         if (!diagnostics.empty()) return JOYEER_BACKEND_INVALID_IR;
         module->hasEntryPoint = builder.hasEntryPoint;
+#if defined(JOYEER_SANITIZE_RUNTIME)
+        module->isCoreRuntimeObject = source.isRuntimeObject;
+        bool rootDefinition = false;
+        for (const auto& function : source.functions) {
+            if (!function.isRootModule || function.blocks.empty()) continue;
+            rootDefinition = true;
+            module->isCoreRuntimeObject &= function.coreContext;
+        }
+        module->isCoreRuntimeObject &= rootDefinition;
+#endif
         *result = module.release();
         return JOYEER_BACKEND_SUCCESS;
     } catch (const std::exception& error) {

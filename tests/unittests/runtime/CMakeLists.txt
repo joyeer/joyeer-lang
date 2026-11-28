@@ -18,6 +18,33 @@ joyeer_discover_tests(RuntimeTests
         PROPERTIES LABELS runtime
 )
 
+if(JOYEER_SANITIZE_RUNTIME)
+    add_executable(RuntimeAsanProbe asan_probe.c)
+    target_compile_options(RuntimeAsanProbe PRIVATE -g -fsanitize=address)
+    target_link_options(RuntimeAsanProbe PRIVATE -fsanitize=address)
+    target_link_libraries(RuntimeAsanProbe PRIVATE JoyeerAsanRuntime)
+    add_dependencies(RuntimeAsanProbe JoyeerToolchain)
+    foreach(mode IN ITEMS valid invalid)
+        add_test(NAME "RuntimeAddressSanitizer.${mode}"
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROBE=$<TARGET_FILE:RuntimeAsanProbe>" "-DMODE=${mode}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/verifyAsanRuntime.cmake")
+        set_tests_properties("RuntimeAddressSanitizer.${mode}" PROPERTIES
+            LABELS "runtime;sanitizer;native" TIMEOUT 30
+            ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
+    endforeach()
+    add_test(NAME RuntimeAddressSanitizer.PlainExecutable
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/asan-isolation"
+            "-DEXPECTED_OUTPUT=42\nnative\n8\n42\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties(RuntimeAddressSanitizer.PlainExecutable PROPERTIES
+        LABELS "runtime;sanitizer;native" TIMEOUT 60
+        ENVIRONMENT "JOYEER_TEST_ASAN_RUNTIME=1")
+endif()
+
 # The whole suite again with one thread sleeping for the run, so every runtime function takes its
 # locks (decision 0017): a lock cannot be tested by a program that never starts a thread.
 add_test(NAME RuntimeTestsThreadedMode COMMAND RuntimeTests)
@@ -48,7 +75,7 @@ endif()
 
 foreach(mode IN ITEMS O0 O2 FullDebug)
     if(mode STREQUAL "FullDebug")
-        set(host_compiler_args "-O0;-gfull")
+        set(host_compiler_args "-O0;${joyeer_test_native_debug}")
     else()
         set(host_compiler_args "-${mode}")
     endif()
@@ -94,6 +121,8 @@ foreach(mode IN ITEMS O0 O2 FullDebug)
             E2EPortableFilesystem${mode} E2ESynchronousProcess${mode} E2EModuleHost${mode}
             PROPERTIES LABELS "e2e;runtime;host;ownership" TIMEOUT 120
     )
+    set_tests_properties(E2ESynchronousProcess${mode} PROPERTIES
+            ENVIRONMENT "JOYEER_PROCESS_TEST_INHERITED=parent value=kept")
 endforeach()
 
 add_executable(RuntimeOptionsTests
@@ -296,7 +325,7 @@ if(WIN32 AND JOYEER_RUNTIME_NM_EXECUTABLE)
                 "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/c-interop/target-architecture.joyeer"
                 "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/own-entry-imports.exe"
                 "-DREADOBJ=${JOYEER_RUNTIME_READOBJ_EXECUTABLE}"
-                "-DCOMPILER_ARGS=-O0;-g0;--module-name;runtime.own_entry;--runtime-module;runtime.own_entry"
+                "-DCOMPILER_ARGS=-O0;-g0;--module-name;runtime.own_entry;--runtime-module;runtime.own_entry;--link-path;${CMAKE_CURRENT_BINARY_DIR}"
                 "-DEXPECTED_IMPORTS=${own_entry_imports}"
                 -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
         add_test(NAME RuntimeCRuntimeProgramKeepsTheCStartup
@@ -363,6 +392,44 @@ if(WIN32 AND JOYEER_RUNTIME_NM_EXECUTABLE)
         set_tests_properties(RuntimeChannelProgramHasNoCRuntime
             PROPERTIES LABELS "runtime;native;entry;channels" TIMEOUT 120)
     endif()
+endif()
+
+# Unoptimized objects can retain unused System entry points. Allow only the
+# module's descriptor, directory, process, clock, and socket operations.
+if(APPLE)
+    if(NOT JOYEER_RUNTIME_NM_EXECUTABLE)
+        message(FATAL_ERROR "macOS runtime tests need llvm-nm from the LLVM SDK.")
+    endif()
+    set(joyeer_macos_runtime_imports
+        __error _exit atexit dyld_stub_binder isatty memcmp memcpy memmove memset mmap munmap
+        os_unfair_lock_lock os_unfair_lock_trylock os_unfair_lock_unlock pthread_sigmask sleep)
+    set(joyeer_macos_system_imports
+        _NSGetEnviron accept access bind clock_gettime close closedir connect fcntl filesec_free fstat
+        filesec_init filesec_set_property getcwd getpid getsockname getsockopt kevent64 kqueue listen lstat
+        mkdir opendir openx_np poll posix_spawn posix_spawn_file_actions_addchdir_np
+        posix_spawn_file_actions_destroy posix_spawn_file_actions_init proc_pidpath read readdir_r readlink recv rename rmdir
+        send setsockopt socket unlink waitpid write)
+    foreach(fixture IN ITEMS filesystem process read_file stdin_lines)
+        set(required_imports write)
+        if(fixture STREQUAL "filesystem" OR fixture STREQUAL "read_file")
+            list(APPEND required_imports openx_np)
+        endif()
+        foreach(level IN ITEMS 0 2)
+            set(test_name "RuntimeSystemProgramHasNoStdio_${fixture}O${level}")
+            add_test(NAME "${test_name}"
+                COMMAND "${CMAKE_COMMAND}"
+                    "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+                    "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/e2e/${fixture}.joyeer"
+                    "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/system-${fixture}-O${level}"
+                    "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
+                    -DMACHO=ON
+                    "-DCOMPILER_ARGS=-O${level};-g0"
+                    "-DREQUIRED_IMPORTS=${required_imports}"
+                    "-DALLOWED_IMPORTS=${joyeer_macos_runtime_imports};${joyeer_macos_system_imports}"
+                    -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
+            set_tests_properties("${test_name}" PROPERTIES LABELS "runtime;native;entry;host" TIMEOUT 120)
+        endforeach()
+    endforeach()
 endif()
 
 # On Linux `System` calls the kernel directly (decision 0011): a program that uses each

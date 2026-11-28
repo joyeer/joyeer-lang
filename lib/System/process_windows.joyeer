@@ -176,20 +176,28 @@ private func lowerAscii(byte: UInt8): Int {
 }
 
 @platform(windows)
-private func absolute(text: String): Result<String, ProcessError> {
-    let path = nativePathBytes(text: text)
+func windowsFullPath(path: [UInt8]): Result<String, Int> {
     var probe = zeroBuffer(count: 2)
     let length = fullPathW(path: path, length: 0, buffer: &probe, filePart: 0) as Int
-    if length == 0 { return .Err(classifyProcessError(code: processLastErrorW() as Int)) }
+    if length == 0 { return .Err(processLastErrorW() as Int) }
+    if length > 32768 { return .Err(insufficientBuffer) }
     var buffer = zeroBuffer(count: length * 2)
     let actual = fullPathW(path: path, length: length as UInt32, buffer: &buffer, filePart: 0) as Int
-    if actual == 0 { return .Err(classifyProcessError(code: processLastErrorW() as Int)) }
-    if actual >= length { return .Err(classifyProcessError(code: insufficientBuffer)) }
+    if actual == 0 { return .Err(processLastErrorW() as Int) }
+    if actual >= length { return .Err(insufficientBuffer) }
     var name: [UInt8] = []
-    if !decodeName(data: buffer, start: 0, units: length, into: &name) {
-        return .Err(classifyProcessError(code: 1113))
+    if !decodeName(data: buffer, start: 0, units: actual + 1, into: &name) {
+        return .Err(1113)
     }
     return .Ok(stringFromBytes(bytes: name, count: name.count))
+}
+
+@platform(windows)
+private func absolute(text: String): Result<String, ProcessError> {
+    return match windowsFullPath(path: nativePathBytes(text: text)) {
+        .Ok(path) => .Ok(path),
+        .Err(code) => .Err(classifyProcessError(code: code)),
+    }
 }
 
 @platform(windows)

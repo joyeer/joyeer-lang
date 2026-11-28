@@ -28,12 +28,12 @@ private func validProject(project: borrowing Project): Bool {
 private func manifestBoundary(args: [String]): Int {
     if args.count < 2 { return 21 }
     if args[1] == "project" {
-        let options = match parseCli(args: ["check", "--compiler", "unused",
+        var options = match parseCli(args: ["check", "--compiler", "unused",
             "--workspace", args[0]]) {
             .Ok(value) => value,
             .Err(_) => { return 29 },
         }
-        return match loadProject(options: options) {
+        return match loadProject(options: &options) {
             .Ok(project) => {
                 if args.count != 3 || decimalString(value: project.modules.count) != args[2] { return 30 }
                 if !validProject(project: project) { return 32 }

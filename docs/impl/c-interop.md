@@ -45,7 +45,8 @@ not a variadically promoted `double`. These rules also apply to
 compiler-generated C runtime calls. Native targets outside the admitted
 x86-64/ARM64 Windows MSVC, Linux, and macOS families are diagnosed.
 
-The core runtime is mostly still C; its first functions (`joyeer_host_valid_utf8`, string equality and ordering) are Joyeer objects built by [decision 0008](../decisions/0008-runtime-core-build-shape.md). The host operations already use this boundary:
+The core runtime is built from Joyeer objects as described in
+[decision 0008](../decisions/0008-runtime-core-build-shape.md). The host operations use this boundary:
 `System` implements them in Joyeer over `@c_extern` bindings
 ([runtime](runtime.md#host-operations)).
 
@@ -180,12 +181,22 @@ responsibilities, not per-function annotation arguments.
 
 The compiler also accepts repeatable `--link-library <file>` arguments.
 Each path resolves against the compiler working directory, must be a regular
-file, and is protected against output/PDB cleanup collisions. No library-name
-search or shell flags are inferred. COFF/Mach-O receive explicit inputs;
-ELF groups the native archives and runtime to resolve inter-archive references.
+file, and is protected against output/PDB cleanup collisions. No other input
+is inferred from the file or a binding. ELF groups the native archives and
+runtime to resolve inter-archive references.
 Files are checked in validation/text/object modes too, but linking occurs only
 for executable output. Native provider deployment remains the caller's job.
 Fern's optional module fields are described in [its manifest contract](fern.md).
+
+With executable output (`-o`), `--link-lib <name>` selects a library by logical
+name and `--link-path <dir>` adds an existing search directory. Both repeat.
+Names start with an ASCII letter or digit and otherwise allow only letters,
+digits, `_`, `.`, `+`, and `-`. Search directories resolve against the compiler's
+working directory. COFF receives `/LIBPATH:` and `<name>.lib`; Mach-O and ELF
+receive `-L` and `-l`. Directory order and the relative order of explicit and
+logical library inputs are preserved; the linker chooses the library flavor.
+Missing libraries fail the link. Invalid names, directories, or output modes
+report `driver.native-library-error`. There is no shell or linker passthrough.
 
 This is ordinary link-time selection of a dynamic dependency. It does not
 implement `dlopen`, `LoadLibrary`, function-address lookup, header import,
@@ -296,9 +307,22 @@ establish acceptance on other platforms or a complete implementation of §19.
 
 ### Native validation evidence
 
-The current macOS ARM64 record covers scalars and buffers. The Windows x64
-record below describes the historical `Int`/`Void` slice; complete scalar
-validation is recorded separately for Windows ARM64.
+Both Debug and Release passed the following native scalar and buffer gates
+with LLVM/LLD 22.1.8. Each count is for one configuration.
+
+| Target | Build inputs | Unfiltered CTest | `c-interop` cases included |
+|---|---|---:|---:|
+| Windows ARM64 | `a362c88`, MSVC 14.52.37025 | 2260/2260 | 158/158 |
+| Linux AArch64 | `a362c88`, GCC 15.2, glibc 2.43, Ubuntu 26.04.1 (WSL2) | 2235/2235 | 158/158 |
+| macOS ARM64 | `5c21924e`, macOS 26.5 SDK and deployment target | 2230/2230 | 158/158 |
+
+The ARM64 Windows and Linux runs on 2026-11-28 included the C callers and
+callees, both static/shared providers, target-derived C types, mixed register
+and stack arguments, and signature/target rejection. The historical Windows
+x64 record below covered the initial `Int`/`Void` slice. Other full
+[x86-64 results](../decisions/0031-equatable.md#platform-validation) do not
+enumerate the scalar ABI cases; the per-target case evidence remains open in
+[plan 0002](../plan/0002-c-interop.md#platform-acceptance).
 
 #### macOS ARM64
 
@@ -380,6 +404,4 @@ Windows SDK 10.0.28000.0, and LLVM/LLD 22.1.8:
   x86-64 and ARM64 on Windows, Linux, and macOS. This is ABI inspection,
   not native execution on those other hosts.
 
-Complete scalar native acceptance on Windows x64 and Linux remains open
-until measured on those targets. These gates do not establish native
-memory safety, general user FFI, or production runtime migration.
+These gates do not establish native memory safety or general user FFI.

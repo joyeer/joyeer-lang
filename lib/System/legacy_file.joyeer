@@ -8,11 +8,9 @@
 
 private let readChunk: Int = 65536
 
-// Each primitive returns a result of at least 0 on success (the open one a handle
-// above 0), or the negated errno.
+// Each primitive returns a result of at least 0 on success, or the negated errno.
 
-// POSIX opens the path with the portable primitives (a file descriptor on Linux, a stream on
-// macOS), which return the same negated errno.
+// POSIX opens the path with the same descriptor primitives as the portable APIs.
 @platform(posix)
 private func openLegacy(path: [UInt8]): Int {
     return nativeOpenRead(path: path)

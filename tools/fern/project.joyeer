@@ -9,6 +9,7 @@ struct ProjectModule {
 
 struct Project {
     let modules: [ProjectModule]
+    let rootCount: Int
     let directory: String
 }
 
@@ -21,6 +22,7 @@ struct ProjectError {
 // Original text is needed only until cross-manifest validation finishes.
 private struct LoadedModule {
     let spec: ModuleSpec
+    let identity: FileIdentity
     let directory: String
     let path: String
     let contents: String
@@ -31,7 +33,7 @@ private struct GraphError {
     let message: String
 }
 
-private func readManifest(path: String): Result<String, ToolError> {
+private func requireRegularManifest(path: String): Result<Void, ToolError> {
     let regular = match fileKind(path: path) {
         .Ok(kind) => match kind {
             .File => true,
@@ -47,6 +49,11 @@ private func readManifest(path: String): Result<String, ToolError> {
     if !regular {
         return .Err(ToolError(message: "manifest must be an ordinary regular file: " + path, pos: -1))
     }
+    return .Ok(())
+}
+
+private func readManifest(path: String): Result<String, ToolError> {
+    requireRegularManifest(path: path)?
     // Classification and reading are separate host operations, not confinement.
     return match readFilePrefix(path: path, maximumBytes: 65537) {
         .Ok(contents) => .Ok(contents),
@@ -63,11 +70,28 @@ private func projectDocument(path: String): Result<String, ProjectError> {
 }
 
 private func projectModule(path: String, directory: String): Result<LoadedModule, ProjectError> {
-    let contents = projectDocument(path: path)?
-    return match parseManifest(contents: contents) {
-        .Ok(spec) => .Ok(LoadedModule(spec: spec, directory: directory,
-            path: path, contents: contents)),
-        .Err(error) => .Err(ProjectError(error: error, path: path, contents: contents)),
+    let document = identifiedManifest(path: path)?
+    return parseProjectModule(path: path, directory: directory, document: document)
+}
+
+private func identifiedManifest(path: String): Result<IdentifiedFilePrefix, ProjectError> {
+    match requireRegularManifest(path: path) {
+        .Ok(_) => {},
+        .Err(error) => { return .Err(ProjectError(error: error, path: path, contents: "")) },
+    }
+    return match readIdentifiedFilePrefix(path: path, maximumBytes: 65537) {
+        .Ok(document) => .Ok(document),
+        .Err(error) => .Err(ProjectError(error: ToolError(message: "cannot read ordinary manifest '" +
+            path + "': " + fileSystemMessage(error: error), pos: -1), path: path, contents: "")),
+    }
+}
+
+private func parseProjectModule(path: String, directory: String,
+    document: borrowing IdentifiedFilePrefix): Result<LoadedModule, ProjectError> {
+    return match parseManifest(contents: document.contents) {
+        .Ok(spec) => .Ok(LoadedModule(spec: spec, identity: document.identity,
+            directory: directory, path: path, contents: document.contents)),
+        .Err(error) => .Err(ProjectError(error: error, path: path, contents: document.contents)),
     }
 }
 
@@ -87,6 +111,96 @@ private func projectModuleIndex(modules: borrowing [LoadedModule], name: String)
     return -1
 }
 
+private func moduleIdentityIndex(modules: borrowing [LoadedModule], identity: FileIdentity): Int {
+    var index = 0
+    while index < modules.count {
+        if modules[index].identity == identity { return index }
+        index = index + 1
+    }
+    return -1
+}
+
+private func sourceDirectoryIdentity(directory: String, manifest: String): Result<FileIdentity, ProjectError> {
+    return match directoryIdentity(path: directory) {
+        .Ok(identity) => .Ok(identity),
+        .Err(error) => .Err(ProjectError(error: ToolError(message: "cannot identify source directory '" +
+            directory + "': " + fileSystemMessage(error: error), pos: -1), path: manifest, contents: "")),
+    }
+}
+
+@platform(windows)
+private func dependencyDirectory(base: String, relative: String): Result<String, ProjectError> {
+    let path = projectJoin(base: base, path: relative)?
+    return match normalizedAbsolutePath(path: path) {
+        .Ok(directory) => .Ok(directory),
+        .Err(error) => .Err(ProjectError(error: ToolError(message: "cannot resolve dependency directory '" +
+            path + "': " + fileSystemMessage(error: error), pos: -1), path: path, contents: "")),
+    }
+}
+
+@platform(posix)
+private func dependencyDirectory(base: String, relative: String): Result<String, ProjectError> {
+    return projectJoin(base: base, path: relative)
+}
+
+private func containsEdge(edges: borrowing [Int], destination: Int): Bool {
+    for previous in edges {
+        if previous == destination { return true }
+    }
+    return false
+}
+
+private func loadPathDependencies(loaded: inout [LoadedModule]): Result<[[Int]], ProjectError> {
+    var edges: [[Int]] = []
+    var owner = 0
+    var probes = 0
+    while owner < loaded.count {
+        var direct: [Int] = []
+        let paths = loaded[owner].spec.pathDependencies
+        let base = loaded[owner].directory
+        for relative in paths {
+            if probes >= 4096 {
+                return .Err(ProjectError(error: ToolError(message: "project exceeds 4096 path dependency references",
+                    pos: loaded[owner].spec.pos), path: loaded[owner].path, contents: loaded[owner].contents))
+            }
+            probes = probes + 1
+            let directory = dependencyDirectory(base: base, relative: relative)?
+            let path = projectJoin(base: directory, path: "project.toml")?
+            let document = identifiedManifest(path: path)?
+            var destination = moduleIdentityIndex(modules: loaded, identity: document.identity)
+            if destination >= 0 {
+                let earlier = loaded[destination].path
+                let existingDirectory = loaded[destination].directory
+                if existingDirectory != directory {
+                    let first = sourceDirectoryIdentity(directory: existingDirectory, manifest: earlier)?
+                    let second = sourceDirectoryIdentity(directory: directory, manifest: path)?
+                    if first != second {
+                        return .Err(ProjectError(error: ToolError(
+                            message: "same manifest has different source directories: '" + earlier + "' and '" + path + "'",
+                            pos: -1), path: path, contents: ""))
+                    }
+                }
+            } else {
+                if loaded.count >= 256 {
+                    return .Err(ProjectError(error: ToolError(message: "project exceeds 256 modules at '" + path + "'",
+                        pos: loaded[owner].spec.pos), path: loaded[owner].path, contents: loaded[owner].contents))
+                }
+                let module = parseProjectModule(path: path, directory: directory, document: document)?
+                destination = loaded.count
+                &loaded.append(element: module)
+            }
+            if loaded[destination].spec.kind != "source" {
+                return .Err(ProjectError(error: ToolError(message: "path dependency must name a source module: " + path,
+                    pos: loaded[owner].spec.pos), path: loaded[owner].path, contents: loaded[owner].contents))
+            }
+            if !containsEdge(edges: direct, destination: destination) { &direct.append(element: destination) }
+        }
+        &edges.append(element: direct)
+        owner = owner + 1
+    }
+    return .Ok(edges)
+}
+
 private func projectIsStandard(standard: borrowing [String], name: String): Bool {
     var index = 0
     while index < standard.count {
@@ -96,30 +210,63 @@ private func projectIsStandard(standard: borrowing [String], name: String): Bool
     return false
 }
 
+@platform(windows)
+private func compilerIndexPath(compiler: String): Result<String, ProjectError> {
+    return .Ok(compiler)
+}
+
+@platform(posix)
+private func compilerIndexPath(compiler: String): Result<String, ProjectError> {
+    var path = compiler
+    var traversed = 0
+    while true {
+        match fileKind(path: path) {
+            .Ok(.Symlink) => {},
+            .Ok(_) => { return .Ok(path) },
+            .Err(.NotFound(_)) => { return .Ok(path) },
+            .Err(error) => {
+                return .Err(ProjectError(error: ToolError(message: "cannot inspect compiler '" + path +
+                    "': " + fileSystemMessage(error: error), pos: -1), path: path, contents: ""))
+            },
+        }
+        if traversed >= 40 {
+            return .Err(ProjectError(error: ToolError(message: "too many links resolving compiler '" +
+                compiler + "'", pos: -1), path: compiler, contents: ""))
+        }
+        let destination = match readSymbolicLink(path: path) {
+            .Ok(value) => value,
+            .Err(error) => {
+                return .Err(ProjectError(error: ToolError(message: "cannot read compiler link '" + path +
+                    "': " + fileSystemMessage(error: error), pos: -1), path: path, contents: ""))
+            },
+        }
+        path = projectJoin(base: pathDirectory(path: path, windows: false), path: destination)?
+        traversed = traversed + 1
+    }
+    return .Ok(path)
+}
+
 // Standard modules ship with the compiler and are resolved by it, so they
 // contribute no workspace edge and never appear in the loaded project. A
 // compiler without lib/index.toml has no standard modules.
 private func projectStandardModules(compiler: String): Result<[String], ProjectError> {
-    var directory = pathDirectory(path: compiler, windows: System.isWindows())
-    if directory.count == 0 { directory = "." }
-    let libraryDirectory = match toolJoin(base: directory, path: "lib") {
-        .Ok(joined) => joined,
-        .Err(_) => { return .Ok([]) },
-    }
-    let path = match toolJoin(base: libraryDirectory, path: "index.toml") {
-        .Ok(joined) => joined,
-        .Err(_) => { return .Ok([]) },
-    }
-    let present = match fileKind(path: path) {
-        .Ok(kind) => match kind {
-            .File => true,
-            .Directory => false,
-            .Symlink => false,
-            .Other => false,
+    let executable = compilerIndexPath(compiler: compiler)?
+    let directory = pathDirectory(path: executable, windows: System.isWindows())
+    let libraryDirectory = projectJoin(base: directory, path: "lib")?
+    let path = projectJoin(base: libraryDirectory, path: "index.toml")?
+    match fileKind(path: path) {
+        .Ok(.File) => {},
+        .Err(.NotFound(_)) => { return .Ok([]) },
+        .Err(.NotDirectory(_)) => { return .Ok([]) },
+        .Ok(_) => {
+            return .Err(ProjectError(error: ToolError(message: "standard module index must be an ordinary file: " +
+                path, pos: -1), path: path, contents: ""))
         },
-        .Err(_) => false,
+        .Err(error) => {
+            return .Err(ProjectError(error: ToolError(message: "cannot inspect standard module index '" + path +
+                "': " + fileSystemMessage(error: error), pos: -1), path: path, contents: ""))
+        },
     }
-    if !present { return .Ok([]) }
     let contents = projectDocument(path: path)?
     return match parseStandardIndex(contents: contents) {
         .Ok(names) => .Ok(names),
@@ -128,8 +275,8 @@ private func projectStandardModules(compiler: String): Result<[String], ProjectE
 }
 
 private func projectModuleEdges(spec: borrowing ModuleSpec, modules: borrowing [LoadedModule],
-    standard: borrowing [String], owner: Int): Result<[Int], GraphError> {
-    var edges: [Int] = []
+    standard: borrowing [String], paths: [Int], owner: Int): Result<[Int], GraphError> {
+    var edges = paths
     var index = 0
     while index < spec.dependencies.count {
         let name = spec.dependencies[index]
@@ -138,18 +285,34 @@ private func projectModuleEdges(spec: borrowing ModuleSpec, modules: borrowing [
             return .Err(GraphError(moduleIndex: owner, message: "module '" + spec.name +
                 "' has unknown dependency '" + name + "' in the loaded project"))
         }
-        if destination >= 0 { &edges.append(element: destination) }
+        if destination >= 0 && !containsEdge(edges: edges, destination: destination) {
+            &edges.append(element: destination)
+        }
         index = index + 1
     }
     return .Ok(edges)
 }
 
-private func projectGraph(modules: borrowing [LoadedModule], standard: borrowing [String]): Result<[[Int]], GraphError> {
+private func needsStandardModules(modules: borrowing [LoadedModule]): Bool {
+    var index = 0
+    while index < modules.count {
+        for dependency in modules[index].spec.dependencies {
+            if projectModuleIndex(modules: modules, name: dependency) < 0 { return true }
+        }
+        index = index + 1
+    }
+    return false
+}
+
+private func projectGraph(modules: borrowing [LoadedModule], standard: borrowing [String],
+    pathEdges: borrowing [[Int]]): Result<[[Int]], GraphError> {
     var index = 0
     while index < modules.count {
         let name = modules[index].spec.name
-        if projectModuleIndex(modules: modules, name: name) != index {
-            return .Err(GraphError(moduleIndex: index, message: "duplicate logical module name: " + name))
+        let first = projectModuleIndex(modules: modules, name: name)
+        if first != index {
+            return .Err(GraphError(moduleIndex: index, message: "duplicate logical module name: " + name +
+                " in '" + modules[first].path + "' and '" + modules[index].path + "'"))
         }
         if modules[index].spec.kind != "source" {
             var previous = 0
@@ -169,7 +332,8 @@ private func projectGraph(modules: borrowing [LoadedModule], standard: borrowing
     var stack: [Int] = []
     index = 0
     while index < modules.count {
-        let destinations = projectModuleEdges(spec: modules[index].spec, modules: modules, standard: standard, owner: index)?
+        let destinations = projectModuleEdges(spec: modules[index].spec, modules: modules, standard: standard,
+            paths: pathEdges[index], owner: index)?
         &edges.append(element: destinations)
         &colors.append(element: 0)
         &offsets.append(element: 0)
@@ -283,7 +447,7 @@ private func projectLoadWorkspace(path: String, directory: String, depth: Int,
     return .Ok(())
 }
 
-func loadProject(options: borrowing CliOptions): Result<Project, ProjectError> {
+func loadProject(options: inout CliOptions): Result<Project, ProjectError> {
     var loaded: [LoadedModule] = []
     let windows = System.isWindows()
     var directory = pathDirectory(path: options.manifestPath, windows: windows)
@@ -294,8 +458,18 @@ func loadProject(options: borrowing CliOptions): Result<Project, ProjectError> {
         directory = pathDirectory(path: options.workspacePath, windows: windows)
         projectLoadWorkspace(path: options.workspacePath, directory: directory, depth: 0, loaded: &loaded)?
     }
-    let standard = projectStandardModules(compiler: options.compiler)?
-    let edges = match projectGraph(modules: loaded, standard: standard) {
+    let rootCount = loaded.count
+    let pathEdges = loadPathDependencies(loaded: &loaded)?
+    var standard: [String] = []
+    if needsStandardModules(modules: loaded) {
+        let compiler = match discoverCompiler(explicit: options.compiler) {
+            .Ok(path) => path,
+            .Err(error) => { return .Err(ProjectError(error: error, path: "", contents: "")) },
+        }
+        &options.compiler = compiler
+        standard = projectStandardModules(compiler: compiler)?
+    }
+    let edges = match projectGraph(modules: loaded, standard: standard, pathEdges: pathEdges) {
         .Ok(dependencies) => dependencies,
         .Err(error) => {
             let owner = error.moduleIndex
@@ -311,5 +485,5 @@ func loadProject(options: borrowing CliOptions): Result<Project, ProjectError> {
             dependencyIndexes: edges[index]))
         index = index + 1
     }
-    return .Ok(Project(modules: modules, directory: directory))
+    return .Ok(Project(modules: modules, rootCount: rootCount, directory: directory))
 }

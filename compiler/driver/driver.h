@@ -11,9 +11,10 @@ public:
     int run();
 
 private:
-    CompilerService* compiler;
     CommandLineArguments::Ptr arguments;
     Diagnostics* diagnostics;
+    joyeer::DebugInfoOptions debugInfo;
+    CompilerService compiler;
 };
 
 #endif

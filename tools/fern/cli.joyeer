@@ -1,8 +1,9 @@
 import Foundation
+import System
 
 struct CliOptions {
     let command: String
-    let compiler: String
+    var compiler: String
     let manifestPath: String
     let workspacePath: String
     let release: Bool
@@ -151,9 +152,6 @@ func parseCli(args: [String]): Result<CliOptions, ToolError> {
             index = index + 1
         }
     }
-    if project && compiler.count == 0 {
-        return .Err(ToolError(message: command + " requires --compiler <explicit executable path>", pos: -1))
-    }
     if command == "init" {
         if directory.count == 0 || name.count == 0 {
             return .Err(ToolError(message: "init requires <directory> and --name <logical module name>", pos: -1))
@@ -182,21 +180,116 @@ func parseCli(args: [String]): Result<CliOptions, ToolError> {
         directory: directory, name: name, kind: kind, output: output, binDir: binDir, childArgs: childArgs))
 }
 
+private func compilerEnvironment(name: String): Result<String?, ToolError> {
+    return match environmentVariable(name: name) {
+        .Ok(value) => .Ok(value),
+        .Err(error) => .Err(ToolError(message: "cannot read " + name + ": " +
+            hostQueryMessage(error: error), pos: -1)),
+    }
+}
+
+private func absoluteSearchDirectory(path: String, windows: Bool): Bool {
+    if path.count == 0 { return false }
+    if !windows { return path[0] == b'/' }
+    if path.count >= 2 && isPathSeparator(byte: path[0], windows: true) &&
+        isPathSeparator(byte: path[1], windows: true) {
+        return !(path.count >= 4 && path[2] == b'.' && isPathSeparator(byte: path[3], windows: true))
+    }
+    if path.count < 3 || path[1] != b':' || !isPathSeparator(byte: path[2], windows: true) {
+        return false
+    }
+    let drive = path[0]
+    return (drive >= b'A' && drive <= b'Z') || (drive >= b'a' && drive <= b'z')
+}
+
+private func compilerCandidate(path: String): Result<Bool, ToolError> {
+    return match isExecutableFile(path: path) {
+        .Ok(usable) => .Ok(usable),
+        .Err(error) => .Err(ToolError(message: "cannot inspect compiler candidate '" + path +
+            "': " + fileSystemMessage(error: error), pos: -1)),
+    }
+}
+
+private func compilerOnPath(paths: String, name: String, windows: Bool): Result<String?, ToolError> {
+    let delimiter = if windows { b';' } else { b':' }
+    var start = 0
+    var end = 0
+    var quoted = false
+    while end <= paths.count {
+        if end == paths.count || (!quoted && paths[end] == delimiter) {
+            var first = start
+            var last = end
+            if windows && last - first >= 2 && paths[first] == b'"' && paths[last - 1] == b'"' {
+                first = first + 1
+                last = last - 1
+            }
+            if !quoted {
+                let directory = substring(text: paths, start: first, end: last)
+                if absoluteSearchDirectory(path: directory, windows: windows) {
+                    let candidate = toolJoin(base: directory, path: name)?
+                    if compilerCandidate(path: candidate)? { return .Ok(.Some(candidate)) }
+                }
+            }
+            start = end + 1
+        } else if windows && paths[end] == b'"' {
+            quoted = !quoted
+        }
+        end = end + 1
+    }
+    return .Ok(nil)
+}
+
+func discoverCompiler(explicit: String): Result<String, ToolError> {
+    if explicit.count != 0 { return .Ok(explicit) }
+    match compilerEnvironment(name: "JOYEER_COMPILER")? {
+        .Some(path) => {
+            if path.count == 0 {
+                return .Err(ToolError(message: "JOYEER_COMPILER must name a nonempty executable path", pos: -1))
+            }
+            return .Ok(path)
+        },
+        .None => {},
+    }
+    let image = match executablePath() {
+        .Ok(path) => path,
+        .Err(error) => {
+            return .Err(ToolError(message: "cannot locate the fern executable: " +
+                hostQueryMessage(error: error) + "; use --compiler <path>", pos: -1))
+        },
+    }
+    let windows = System.isWindows()
+    let name = "joyeer" + executableSuffix()
+    let sibling = toolJoin(base: pathDirectory(path: image, windows: windows), path: name)?
+    if compilerCandidate(path: sibling)? { return .Ok(sibling) }
+
+    match compilerEnvironment(name: "PATH")? {
+        .Some(paths) => {
+            match compilerOnPath(paths: paths, name: name, windows: windows)? {
+                .Some(candidate) => { return .Ok(candidate) },
+                .None => {},
+            }
+        },
+        .None => {},
+    }
+    return .Err(ToolError(message: "cannot find joyeer beside fern or on PATH; use --compiler <path> or JOYEER_COMPILER", pos: -1))
+}
+
 func printHelp() {
     print(value: "fern 0.1.0 - local Joyeer module and workspace manager\n" +
         "Usage:\n" +
         "  fern --help\n" +
         "  fern --version\n" +
         "  fern init <directory> --name <module> [--kind source|bin|test] [--output <name>]\n" +
-        "  fern check|build|run|test --compiler <path> [project options] [--module <name>]\n" +
+        "  fern check|build|run|test [--compiler <path>] [project options] [--module <name>]\n" +
         "Project options: --manifest-path <project.toml> OR --workspace <workspace.toml>, --release, --verbose\n" +
         "build --bin-dir <dir>: write each built executable to <dir>/<output> in place (no build-N generation).\n" +
         "Default input: project.toml in the current directory; no upward discovery.\n" +
         "Module schema 1: one [module], explicit sources/dependencies, kind, and bin/test output.\n" +
         "Workspace schema 1: one [workspace] with explicit member directories.\n" +
         "check selects all module kinds; build/run select bin; test selects test.\n" +
-        "run/test forward arguments after '--'. Compiler paths are explicit; no shell or PATH lookup.\n" +
-        "Debug: -O0 -gfull. Release: -O2 -g0. Selected modules always rebuild.\n" +
+        "run/test forward arguments after '--'. Compiler: --compiler, JOYEER_COMPILER, beside fern,\n" +
+        "then absolute PATH directories. No shell is used.\n" +
+        "Debug: -O0 -gfull (macOS native: -gauto). Release: -O2 -g0. Selected modules always rebuild.\n" +
         "Outputs: target/<profile>/<module>/build-1 through build-128; no automatic cleanup.\n" +
         "Limits: 65536 bytes/manifest, 4096 bytes/string, 256 members, 1024 entries/array.\n" +
         "Status: 0 success, 1 manifest/build/host failure, 2 usage/selection error.")

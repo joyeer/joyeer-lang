@@ -22,10 +22,14 @@ struct CommandLineArguments {
     std::vector<std::string> runtimeModules;
     std::vector<std::string> coreModules;       // --runtime-core-module; also in runtimeModules
     std::vector<std::filesystem::path> nativeLibraries;
+    std::vector<joyeer::NativeLinkInput> nativeLinkInputs;
+    std::vector<std::filesystem::path> nativeSearchPaths;
     std::filesystem::path sysroot;       // --sysroot; empty means the executable's directory
     bool standardLibrary = true;         // --no-stdlib clears it
     bool printSysroot = false;
     bool reportInstantiations = false;
+    bool automaticDebug = false;          // -gauto permits missing macOS native symbol tooling
+    bool sanitizeRuntimeObject = false;  // test-only object emission mode
 
     bool accepted = false;
     joyeer::OutputMode outputMode = joyeer::OutputMode::validate;

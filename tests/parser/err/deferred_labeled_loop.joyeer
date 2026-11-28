@@ -1,0 +1,4 @@
+// spec: 06-statements.md §6.5
+func stop() {
+    while true { break outer }
+}
